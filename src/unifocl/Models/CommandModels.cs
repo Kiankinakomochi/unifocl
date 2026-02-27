@@ -1,6 +1,6 @@
 internal sealed record CommandSpec(string Signature, string Description, string Trigger);
-internal sealed record DaemonStartOptions(int Port, string? UnityPath, bool Headless);
-internal sealed record DaemonServiceOptions(int Port, string? UnityPath, bool Headless);
+internal sealed record DaemonStartOptions(int Port, string? UnityPath, string? ProjectPath, bool Headless);
+internal sealed record DaemonServiceOptions(int Port, string? UnityPath, string? ProjectPath, bool Headless, int InactivityTimeoutSeconds);
 internal sealed record DaemonInstance(
     int Port,
     int Pid,
