@@ -1,0 +1,13 @@
+# .NET build outputs
+**/bin/
+**/obj/
+
+# IDE files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS files
+.DS_Store
