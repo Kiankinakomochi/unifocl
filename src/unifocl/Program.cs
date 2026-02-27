@@ -2,16 +2,54 @@ using Spectre.Console;
 
 var commands = new List<CommandSpec>
 {
-    new("/help", "Show available commands and usage examples"),
-    new("/hierarchy", "Switch to hierarchy mode"),
-    new("/project", "Switch to project mode"),
-    new("/inspect", "Switch to inspector mode"),
-    new("/ref", "Refresh Unity snapshot indices"),
-    new("/clear", "Clear the screen and redraw startup UI"),
-    new("/exit", "Exit unifocl")
+    // Project/session lifecycle
+    new("/open <path>", "Open project (starts/attaches daemon, loads project)", "/open"),
+    new("/new <project-name> [unity-version]", "Bootstrap a new Unity project", "/new"),
+    new("/clone <git-url>", "Clone repo and set local CLI bridge config", "/clone"),
+    new("/recent [n]", "List recently opened projects", "/recent"),
+    new("/close", "Detach from current project (return to boot)", "/close"),
+    new("/switch <recent-index|path>", "Convenience wrapper for recent + open", "/switch"),
+    new("/status", "Show daemon/editor/project/session status", "/status"),
+    new("/doctor", "Run diagnostics for environment and tooling", "/doctor"),
+    new("/logs [daemon|unity] [-f]", "Tail or follow daemon/unity logs", "/logs"),
+
+    // Daemon control
+    new("/daemon start [--port 8080] [--unity <path>] [--headless]", "Start always-warm daemon", "/daemon start"),
+    new("/daemon stop", "Stop daemon", "/daemon stop"),
+    new("/daemon restart", "Restart daemon", "/daemon restart"),
+    new("/daemon ps", "Show instances, ports, uptime, project", "/daemon ps"),
+    new("/daemon attach <port>", "Attach CLI to existing daemon", "/daemon attach"),
+    new("/daemon detach", "Detach CLI and keep daemon alive", "/daemon detach"),
+
+    // Discovery
+    new("/scan [--root <dir>] [--depth n]", "Find Unity projects under a directory", "/scan"),
+    new("/info <path>", "Read project metadata (Unity version/name/paths)", "/info"),
+    new("/unity detect", "List installed Unity editors", "/unity detect"),
+    new("/unity set <path>", "Set default Unity editor path", "/unity set"),
+
+    // Configuration
+    new("/config get <key>", "Read configuration value", "/config get"),
+    new("/config set <key> <value>", "Write configuration value", "/config set"),
+    new("/config list", "List current configuration", "/config list"),
+    new("/config reset", "Reset configuration to defaults", "/config reset"),
+
+    // Onboarding
+    new("/init", "Run first-run setup wizard", "/init"),
+    new("/install-hook", "Install/validate Unity editor bridge", "/install-hook"),
+    new("/help [topic]", "Show help by topic", "/help"),
+    new("/examples", "Show common next-step flows", "/examples"),
+    new("/keybinds", "Show modal keybinds/shortcuts", "/keybinds"),
+    new("/shortcuts", "Alias for keybinds", "/shortcuts"),
+
+    // Utilities
+    new("/update", "Check for CLI updates", "/update"),
+    new("/version", "Show CLI and protocol version", "/version"),
+    new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
+    new("/exit", "Exit unifocl", "/exit"),
+    new("/clear", "Clear and redraw boot screen", "/clear")
 };
 
-RenderStartup(commands);
+RenderStartup();
 
 while (true)
 {
@@ -23,36 +61,44 @@ while (true)
     }
 
     var input = rawInput.Trim();
-
     if (string.IsNullOrWhiteSpace(input))
     {
         continue;
     }
 
-    if (input.StartsWith('/'))
+    if (!input.StartsWith('/'))
     {
-        var command = input.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0].ToLowerInvariant();
-
-        switch (command)
-        {
-            case "/help":
-                RenderCommandSection(commands);
-                break;
-            case "/clear":
-                RenderStartup(commands);
-                break;
-            case "/exit":
-                AnsiConsole.MarkupLine("[grey]Session closed.[/]");
-                return;
-            default:
-                ShowSuggestions(input, commands, "Command not recognized");
-                break;
-        }
-
+        AnsiConsole.MarkupLine("[grey]Boot mode is slash-first. Type [aqua]/[/] to see available commands.[/]");
         continue;
     }
 
-    ShowSuggestions(input, commands, "Intent matches");
+    if (input == "/")
+    {
+        ShowSuggestions("/", commands, "Boot Commands");
+        continue;
+    }
+
+    var matched = MatchCommand(input, commands);
+    if (matched is null)
+    {
+        ShowSuggestions(input, commands, "Intellisense");
+        continue;
+    }
+
+    if (matched.Trigger == "/exit")
+    {
+        AnsiConsole.MarkupLine("[grey]Session closed.[/]");
+        return;
+    }
+
+    if (matched.Trigger == "/clear")
+    {
+        RenderStartup();
+        continue;
+    }
+
+    AnsiConsole.MarkupLine($"[deepskyblue1]Stub:[/] [bold]{Markup.Escape(matched.Signature)}[/]");
+    WriteMockCommandStream(input);
 }
 
 static string? ReadInput()
@@ -66,7 +112,7 @@ static string? ReadInput()
     return AnsiConsole.Ask<string>("[bold deepskyblue1]unifocl[/] [grey]>[/]");
 }
 
-static void RenderStartup(List<CommandSpec> commands)
+static void RenderStartup()
 {
     AnsiConsole.Clear();
     AnsiConsole.Write(
@@ -113,56 +159,68 @@ static void RenderStartup(List<CommandSpec> commands)
                               '^:I!ii!l;"'                  
 """;
 
-    AnsiConsole.Write(
-        new Panel(new Markup($"[grey]{Markup.Escape(logo)}[/]"))
-            .Header("[bold]ASCII Logo[/]")
-            .Border(BoxBorder.Rounded)
-            .Expand());
-
+    AnsiConsole.MarkupLine($"[grey]{Markup.Escape(logo)}[/]");
     AnsiConsole.WriteLine();
-    RenderCommandSection(commands);
-}
-
-static void RenderCommandSection(List<CommandSpec> commands)
-{
-    var table = new Table()
-        .Border(TableBorder.Rounded)
-        .Title("[bold]Command Section[/]")
-        .AddColumn("[aqua]Input[/]")
-        .AddColumn("[aqua]Behavior[/]");
-
-    foreach (var command in commands)
-    {
-        table.AddRow(command.Name, command.Description);
-    }
-
-    AnsiConsole.Write(table);
-    AnsiConsole.MarkupLine("[grey]Type /command for direct actions, or plain text to see intent/intellisense matches.[/]");
+    AnsiConsole.MarkupLine("[grey]No project attached. Type [aqua]/[/] to explore boot commands.[/]");
 }
 
 static void ShowSuggestions(string query, List<CommandSpec> commands, string title)
 {
     var normalized = query.Trim().ToLowerInvariant();
     var matches = commands
-        .Where(c => c.Name.Contains(normalized, StringComparison.OrdinalIgnoreCase)
+        .Where(c => c.Signature.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase)
-                    || normalized.Contains(c.Name.TrimStart('/'), StringComparison.OrdinalIgnoreCase))
-        .Take(5)
+                    || c.Trigger.StartsWith(normalized, StringComparison.OrdinalIgnoreCase)
+                    || normalized.StartsWith(c.Trigger, StringComparison.OrdinalIgnoreCase))
+        .Take(14)
         .ToList();
 
     if (matches.Count == 0)
     {
-        AnsiConsole.MarkupLine($"[red]{title}:[/] no matches for [yellow]{Markup.Escape(query)}[/]. Try [aqua]/help[/].");
+        AnsiConsole.MarkupLine($"[red]{title}:[/] no matches for [yellow]{Markup.Escape(query)}[/].");
         return;
     }
 
-    var list = new Rows(matches.Select(m =>
-        new Markup($"[aqua]{Markup.Escape(m.Name)}[/] [grey]- {Markup.Escape(m.Description)}[/]")));
+    var table = new Table()
+        .Border(TableBorder.Rounded)
+        .Title($"[bold]{Markup.Escape(title)}[/]")
+        .AddColumn("[aqua]Command[/]")
+        .AddColumn("[grey]Description[/]");
 
-    AnsiConsole.Write(
-        new Panel(list)
-            .Header($"[bold]{Markup.Escape(title)}[/]")
-            .Border(BoxBorder.Rounded));
+    foreach (var match in matches)
+    {
+        table.AddRow(Markup.Escape(match.Signature), Markup.Escape(match.Description));
+    }
+
+    AnsiConsole.Write(table);
 }
 
-internal sealed record CommandSpec(string Name, string Description);
+static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
+{
+    var normalized = input.Trim().ToLowerInvariant();
+
+    return commands
+        .OrderByDescending(c => c.Trigger.Length)
+        .FirstOrDefault(c => normalized == c.Trigger
+                             || normalized.StartsWith(c.Trigger + " ", StringComparison.OrdinalIgnoreCase));
+}
+
+static void WriteMockCommandStream(string input)
+{
+    var lines = new[]
+    {
+        "[grey]stream[/]: validating command payload",
+        "[grey]stream[/]: checking daemon reachability",
+        "[grey]stream[/]: loading mock capability graph",
+        "[grey]stream[/]: command stub executed",
+        "[green]stream[/]: done"
+    };
+
+    foreach (var line in lines)
+    {
+        AnsiConsole.MarkupLine($"{line} [dim]({Markup.Escape(input)})[/]");
+        Thread.Sleep(110);
+    }
+}
+
+internal sealed record CommandSpec(string Signature, string Description, string Trigger);
