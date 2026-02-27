@@ -3,6 +3,7 @@ using System.Text;
 
 internal sealed class ProjectCommandRouterService
 {
+    private readonly InspectorModeService _inspectorModeService = new();
     private readonly ProjectViewService _projectViewService = new();
 
     public async Task<bool> TryHandleProjectCommandAsync(
@@ -25,6 +26,15 @@ internal sealed class ProjectCommandRouterService
 
         var tokens = Tokenize(input);
         if (tokens.Count == 0)
+        {
+            return true;
+        }
+
+        if (await _inspectorModeService.TryHandleInspectorCommandAsync(
+                input,
+                tokens,
+                session,
+                log))
         {
             return true;
         }
