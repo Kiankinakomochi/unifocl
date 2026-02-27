@@ -29,7 +29,7 @@ var commands = new List<CommandSpec>
     new("/logs [daemon|unity] [-f]", "Tail or follow daemon/unity logs", "/logs"),
 
     // Daemon control
-    new("/daemon start [--port 8080] [--unity <path>] [--headless]", "Start always-warm daemon", "/daemon start"),
+    new("/daemon start [--port 8080] [--unity <path>] [--project <path>] [--headless]", "Start always-warm daemon", "/daemon start"),
     new("/daemon stop", "Stop daemon", "/daemon stop"),
     new("/daemon restart", "Restart daemon", "/daemon restart"),
     new("/daemon ps", "Show instances, ports, uptime, project", "/daemon ps"),
@@ -70,6 +70,7 @@ var daemonRuntime = new DaemonRuntime(runtimePath);
 var session = new CliSessionState();
 var daemonControlService = new DaemonControlService();
 var projectLifecycleService = new ProjectLifecycleService();
+var projectCommandRouterService = new ProjectCommandRouterService();
 SeedBootLog(streamLog);
 RenderInitialLog(streamLog);
 
@@ -90,7 +91,16 @@ while (true)
 
     if (!input.StartsWith('/'))
     {
-        AppendLog(streamLog, "[grey]system[/]: boot mode is slash-first; type / to see available commands");
+        var handledProjectCommand = await projectCommandRouterService.TryHandleProjectCommandAsync(
+            input,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        if (!handledProjectCommand)
+        {
+            AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
+        }
         continue;
     }
 
@@ -133,10 +143,12 @@ while (true)
             streamLog);
         continue;
     }
-    if (projectLifecycleService.TryHandleLifecycleCommand(
+    if (await projectLifecycleService.TryHandleLifecycleCommandAsync(
             input,
             matched,
             session,
+            daemonControlService,
+            daemonRuntime,
             line => AppendLog(streamLog, line)))
     {
         continue;

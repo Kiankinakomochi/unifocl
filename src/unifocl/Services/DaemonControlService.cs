@@ -7,6 +7,8 @@ using System.Text;
 
 internal sealed class DaemonControlService
 {
+    private const int DefaultInactivityTimeoutSeconds = 600;
+
     public async Task HandleDaemonCommandAsync(
         string input,
         string trigger,
@@ -53,7 +55,9 @@ internal sealed class DaemonControlService
 
         var port = 8080;
         string? unityPath = null;
+        string? projectPath = null;
         var headless = false;
+        var ttlSeconds = DefaultInactivityTimeoutSeconds;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -78,13 +82,32 @@ internal sealed class DaemonControlService
                     unityPath = args[i + 1];
                     i++;
                     break;
+                case "--project":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing --project value for daemon service.";
+                        return true;
+                    }
+
+                    projectPath = args[i + 1];
+                    i++;
+                    break;
+                case "--ttl-seconds":
+                    if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out ttlSeconds) || ttlSeconds < 1)
+                    {
+                        error = "Invalid --ttl-seconds value for daemon service.";
+                        return true;
+                    }
+
+                    i++;
+                    break;
                 case "--headless":
                     headless = true;
                     break;
             }
         }
 
-        options = new DaemonServiceOptions(port, unityPath, headless);
+        options = new DaemonServiceOptions(port, unityPath, projectPath, headless, ttlSeconds);
         return true;
     }
 
@@ -94,16 +117,24 @@ internal sealed class DaemonControlService
         var runtime = new DaemonRuntime(runtimePath);
         var pid = Environment.ProcessId;
         var startedAtUtc = DateTime.UtcNow;
-        var state = new DaemonInstance(options.Port, pid, startedAtUtc, options.UnityPath, options.Headless, null, DateTime.UtcNow);
+        var state = new DaemonInstance(options.Port, pid, startedAtUtc, options.UnityPath, options.Headless, options.ProjectPath, DateTime.UtcNow);
 
         runtime.Upsert(state);
         using var cts = new CancellationTokenSource();
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        var lastActivityUtc = DateTime.UtcNow;
+
         var heartbeatTask = Task.Run(async () =>
         {
             while (await timer.WaitForNextTickAsync(cts.Token))
             {
                 runtime.Upsert(state with { LastHeartbeatUtc = DateTime.UtcNow });
+
+                if (DateTime.UtcNow - lastActivityUtc >= TimeSpan.FromSeconds(options.InactivityTimeoutSeconds))
+                {
+                    cts.Cancel();
+                    break;
+                }
             }
         }, cts.Token);
 
@@ -129,11 +160,16 @@ internal sealed class DaemonControlService
                         case "PING":
                             await writer.WriteLineAsync("PONG");
                             break;
+                        case "TOUCH":
+                            lastActivityUtc = DateTime.UtcNow;
+                            await writer.WriteLineAsync("OK");
+                            break;
                         case "STOP":
                             await writer.WriteLineAsync("STOPPING");
                             cts.Cancel();
                             break;
                         default:
+                            lastActivityUtc = DateTime.UtcNow;
                             await writer.WriteLineAsync("ERR");
                             break;
                     }
@@ -164,6 +200,77 @@ internal sealed class DaemonControlService
         }
     }
 
+    public async Task<bool> EnsureProjectDaemonAsync(
+        string projectPath,
+        DaemonRuntime runtime,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var port = ComputeProjectDaemonPort(projectPath);
+        var existing = runtime.GetByPort(port);
+
+        if (existing is not null && await TrySendControlAsync(port, "PING", "PONG"))
+        {
+            session.AttachedPort = port;
+            await TrySendControlAsync(port, "TOUCH", "OK");
+            return true;
+        }
+
+        if (existing is not null)
+        {
+            runtime.Remove(port);
+        }
+
+        var startOptions = new DaemonStartOptions(
+            port,
+            ResolveDefaultUnityPath(),
+            projectPath,
+            Headless: true);
+
+        var started = await StartDaemonAsync(startOptions, runtime, log);
+        if (!started)
+        {
+            return false;
+        }
+
+        session.AttachedPort = port;
+        await TrySendControlAsync(port, "TOUCH", "OK");
+        return true;
+    }
+
+    public async Task<bool> TouchAttachedDaemonAsync(CliSessionState session)
+    {
+        if (session.AttachedPort is null)
+        {
+            return false;
+        }
+
+        return await TrySendControlAsync(session.AttachedPort.Value, "TOUCH", "OK");
+    }
+
+    public static bool IsUnityClientActiveForProject(string projectPath)
+    {
+        var lockFile = Path.Combine(projectPath, "Temp", "UnityLockfile");
+        if (!File.Exists(lockFile))
+        {
+            return false;
+        }
+
+        try
+        {
+            return Process.GetProcessesByName("Unity").Any() || Process.GetProcessesByName("Unity Editor").Any();
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    public static int ComputeProjectDaemonPort(string projectPath)
+    {
+        return 18080 + Math.Abs(projectPath.GetHashCode()) % 2000;
+    }
+
     private async Task HandleDaemonStartAsync(string input, DaemonRuntime runtime, Action<string> log)
     {
         if (!TryParseDaemonStartArgs(input, out var startOptions, out var parseError))
@@ -172,11 +279,16 @@ internal sealed class DaemonControlService
             return;
         }
 
+        await StartDaemonAsync(startOptions, runtime, log);
+    }
+
+    private async Task<bool> StartDaemonAsync(DaemonStartOptions startOptions, DaemonRuntime runtime, Action<string> log)
+    {
         var existing = runtime.GetByPort(startOptions.Port);
         if (existing is not null && ProcessUtil.IsAlive(existing.Pid) && await TrySendControlAsync(existing.Port, "PING", "PONG"))
         {
             log($"[yellow]daemon[/]: port {startOptions.Port} already has a running daemon (pid {existing.Pid})");
-            return;
+            return true;
         }
 
         if (existing is not null)
@@ -189,17 +301,18 @@ internal sealed class DaemonControlService
         if (process is null)
         {
             log("[red]daemon[/]: failed to start daemon process");
-            return;
+            return false;
         }
 
-        var ready = await WaitForDaemonReadyAsync(startOptions.Port, TimeSpan.FromSeconds(6));
+        var ready = await WaitForDaemonReadyAsync(startOptions.Port, TimeSpan.FromSeconds(25));
         if (!ready)
         {
             log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port}");
-            return;
+            return false;
         }
 
         log($"[green]daemon[/]: started [white]pid={process.Id}[/] [white]port={startOptions.Port}[/] [white]headless={startOptions.Headless}[/]");
+        return true;
     }
 
     private async Task HandleDaemonStopAsync(DaemonRuntime runtime, CliSessionState session, Action<string> log)
@@ -239,6 +352,7 @@ internal sealed class DaemonControlService
         var restartPort = target?.Port ?? 8080;
         var restartHeadless = target?.Headless ?? false;
         var restartUnity = target?.UnityPath;
+        var restartProject = target?.ProjectPath;
 
         if (target is not null)
         {
@@ -258,6 +372,7 @@ internal sealed class DaemonControlService
 
         var synthesized = $"/daemon start --port {restartPort}" +
                           (restartUnity is null ? string.Empty : $" --unity \"{restartUnity}\"") +
+                          (restartProject is null ? string.Empty : $" --project \"{restartProject}\"") +
                           (restartHeadless ? " --headless" : string.Empty);
         await HandleDaemonStartAsync(synthesized, runtime, log);
     }
@@ -359,7 +474,7 @@ internal sealed class DaemonControlService
     private static bool TryParseDaemonStartArgs(string input, out DaemonStartOptions options, out string error)
     {
         var tokens = TokenizeArgs(input);
-        options = new DaemonStartOptions(8080, null, false);
+        options = new DaemonStartOptions(8080, null, null, false);
         error = string.Empty;
 
         for (var i = 2; i < tokens.Count; i++)
@@ -387,6 +502,16 @@ internal sealed class DaemonControlService
                     options = options with { UnityPath = tokens[i + 1] };
                     i++;
                     break;
+                case "--project":
+                    if (i + 1 >= tokens.Count)
+                    {
+                        error = "missing value for --project";
+                        return false;
+                    }
+
+                    options = options with { ProjectPath = tokens[i + 1] };
+                    i++;
+                    break;
                 case "--headless":
                     options = options with { Headless = true };
                     break;
@@ -401,6 +526,36 @@ internal sealed class DaemonControlService
 
     private static ProcessStartInfo ResolveDaemonLaunch(DaemonStartOptions options)
     {
+        if (options.Headless && !string.IsNullOrWhiteSpace(options.UnityPath) && !string.IsNullOrWhiteSpace(options.ProjectPath))
+        {
+            var unityPsi = new ProcessStartInfo(options.UnityPath)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = false,
+                RedirectStandardError = false,
+                CreateNoWindow = true
+            };
+
+            unityPsi.ArgumentList.Add("-projectPath");
+            unityPsi.ArgumentList.Add(options.ProjectPath);
+            unityPsi.ArgumentList.Add("-batchmode");
+            unityPsi.ArgumentList.Add("-nographics");
+            unityPsi.ArgumentList.Add("-noUpm");
+            unityPsi.ArgumentList.Add("-vcsMode");
+            unityPsi.ArgumentList.Add("None");
+            unityPsi.ArgumentList.Add("-executeMethod");
+            unityPsi.ArgumentList.Add("CLIDaemon.StartServer");
+            unityPsi.ArgumentList.Add("--daemon-service");
+            unityPsi.ArgumentList.Add("--port");
+            unityPsi.ArgumentList.Add(options.Port.ToString());
+            unityPsi.ArgumentList.Add("--project");
+            unityPsi.ArgumentList.Add(options.ProjectPath);
+            unityPsi.ArgumentList.Add("--headless");
+            unityPsi.ArgumentList.Add("--ttl-seconds");
+            unityPsi.ArgumentList.Add(DefaultInactivityTimeoutSeconds.ToString());
+            return unityPsi;
+        }
+
         var processPath = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(processPath))
         {
@@ -410,13 +565,20 @@ internal sealed class DaemonControlService
         var daemonArgs = new List<string>
         {
             "--daemon-service",
-            "--port", options.Port.ToString()
+            "--port", options.Port.ToString(),
+            "--ttl-seconds", DefaultInactivityTimeoutSeconds.ToString()
         };
 
         if (options.UnityPath is not null)
         {
             daemonArgs.Add("--unity");
             daemonArgs.Add(options.UnityPath);
+        }
+
+        if (options.ProjectPath is not null)
+        {
+            daemonArgs.Add("--project");
+            daemonArgs.Add(options.ProjectPath);
         }
 
         if (options.Headless)
@@ -469,7 +631,7 @@ internal sealed class DaemonControlService
                 return true;
             }
 
-            await Task.Delay(120);
+            await Task.Delay(180);
         }
 
         return false;
@@ -493,6 +655,17 @@ internal sealed class DaemonControlService
         {
             return false;
         }
+    }
+
+    private static string? ResolveDefaultUnityPath()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("UNITY_PATH");
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+        {
+            return fromEnv;
+        }
+
+        return null;
     }
 
     private static string FormatUptime(DateTime startedAtUtc)

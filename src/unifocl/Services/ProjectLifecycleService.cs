@@ -5,22 +5,30 @@ using System.Text.Json;
 
 internal sealed class ProjectLifecycleService
 {
-    public bool TryHandleLifecycleCommand(
+    public async Task<bool> TryHandleLifecycleCommandAsync(
         string input,
         CommandSpec matched,
         CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
         Action<string> log)
     {
         return matched.Trigger switch
         {
-            "/open" => HandleOpen(input, matched, session, log),
-            "/new" => HandleNew(input, matched, session, log),
-            "/clone" => HandleClone(input, matched, session, log),
+            "/open" => await HandleOpenAsync(input, matched, session, daemonControlService, daemonRuntime, log),
+            "/new" => await HandleNewAsync(input, matched, session, daemonControlService, daemonRuntime, log),
+            "/clone" => await HandleCloneAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             _ => false
         };
     }
 
-    private bool HandleOpen(string input, CommandSpec matched, CliSessionState session, Action<string> log)
+    private async Task<bool> HandleOpenAsync(
+        string input,
+        CommandSpec matched,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count < 1)
@@ -30,11 +38,17 @@ internal sealed class ProjectLifecycleService
         }
 
         var projectPath = ResolveAbsolutePath(args[0], Directory.GetCurrentDirectory());
-        TryOpenProject(projectPath, session, log);
+        await TryOpenProjectAsync(projectPath, session, daemonControlService, daemonRuntime, log);
         return true;
     }
 
-    private bool HandleNew(string input, CommandSpec matched, CliSessionState session, Action<string> log)
+    private async Task<bool> HandleNewAsync(
+        string input,
+        CommandSpec matched,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count < 1)
@@ -98,7 +112,7 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]new[/]: step 5/5 open bootstrapped project");
-        if (TryOpenProject(projectPath, session, log))
+        if (await TryOpenProjectAsync(projectPath, session, daemonControlService, daemonRuntime, log))
         {
             log("[green]new[/]: Unity project scaffold ready");
         }
@@ -110,7 +124,13 @@ internal sealed class ProjectLifecycleService
         return true;
     }
 
-    private bool HandleClone(string input, CommandSpec matched, CliSessionState session, Action<string> log)
+    private async Task<bool> HandleCloneAsync(
+        string input,
+        CommandSpec matched,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count < 1)
@@ -160,7 +180,7 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]clone[/]: step 4/4 open cloned project");
-        if (TryOpenProject(targetPath, session, log))
+        if (await TryOpenProjectAsync(targetPath, session, daemonControlService, daemonRuntime, log))
         {
             log("[green]clone[/]: repository cloned and prepared");
         }
@@ -172,7 +192,12 @@ internal sealed class ProjectLifecycleService
         return true;
     }
 
-    private bool TryOpenProject(string projectPath, CliSessionState session, Action<string> log)
+    private static async Task<bool> TryOpenProjectAsync(
+        string projectPath,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
     {
         log($"[grey]open[/]: step 1/4 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
 
@@ -196,16 +221,42 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
-        log("[grey]open[/]: step 3/4 attach or start daemon session");
-        var daemonSession = EnsureDaemonSession(projectPath);
-        var daemonVerb = daemonSession.Created ? "started" : "attached";
-        log($"[grey]daemon[/]: {daemonVerb} project daemon on [white]127.0.0.1:{daemonSession.Port}[/]");
+        log("[grey]open[/]: step 3/4 route runtime by active Unity client lock");
+        var daemonPort = DaemonControlService.ComputeProjectDaemonPort(projectPath);
+        if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
+        {
+            session.AttachedPort = null;
+            SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, false));
+            log("[grey]daemon[/]: Unity editor lock detected; routing operations via InitializeOnLoad bridge");
+        }
+        else
+        {
+            var started = await daemonControlService.EnsureProjectDaemonAsync(projectPath, daemonRuntime, session, log);
+            if (!started)
+            {
+                log("[red]daemon[/]: failed to start or attach headless daemon");
+                return false;
+            }
+
+            SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
+            log($"[grey]daemon[/]: started headless daemon on [white]127.0.0.1:{daemonPort}[/]");
+        }
 
         session.CurrentProjectPath = projectPath;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
         log("[grey]open[/]: step 4/4 load project context");
         log($"[green]open[/]: attached [white]{Markup.Escape(Path.GetFileName(projectPath))}[/]");
         return true;
+    }
+
+    private static void SaveDaemonSession(string projectPath, DaemonSessionInfo session)
+    {
+        var daemonDir = Path.Combine(projectPath, ".unifocl");
+        Directory.CreateDirectory(daemonDir);
+        var daemonPath = Path.Combine(daemonDir, "daemon.session.json");
+        File.WriteAllText(
+            daemonPath,
+            JsonSerializer.Serialize(session, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
     }
 
     private static List<string> ParseCommandArgs(string input, string trigger)
@@ -370,36 +421,6 @@ internal sealed class ProjectLifecycleService
         {
             return OperationResult.Fail($"failed to write ProjectVersion.txt ({ex.Message})");
         }
-    }
-
-    private static DaemonSessionInfo EnsureDaemonSession(string projectPath)
-    {
-        var daemonDir = Path.Combine(projectPath, ".unifocl");
-        Directory.CreateDirectory(daemonDir);
-        var daemonPath = Path.Combine(daemonDir, "daemon.session.json");
-
-        try
-        {
-            if (File.Exists(daemonPath))
-            {
-                var existing = JsonSerializer.Deserialize<DaemonSessionInfo>(File.ReadAllText(daemonPath));
-                if (existing is not null && existing.Port > 0)
-                {
-                    return existing with { Created = false };
-                }
-            }
-        }
-        catch
-        {
-            // If file is corrupt we overwrite it below.
-        }
-
-        var port = 18080 + Math.Abs(projectPath.GetHashCode()) % 2000;
-        var session = new DaemonSessionInfo(port, DateTimeOffset.UtcNow, true);
-        File.WriteAllText(
-            daemonPath,
-            JsonSerializer.Serialize(session, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-        return session;
     }
 
     private static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
