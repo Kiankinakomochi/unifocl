@@ -51,7 +51,7 @@ var commands = new List<CommandSpec>
 };
 
 var streamLog = new List<string>();
-RenderBootHeader();
+SeedBootLog(streamLog);
 
 while (true)
 {
@@ -96,7 +96,7 @@ while (true)
     if (matched.Trigger == "/clear")
     {
         streamLog.Clear();
-        RenderBootHeader();
+        SeedBootLog(streamLog);
         continue;
     }
 
@@ -153,7 +153,6 @@ static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> str
 static void RenderComposerFrame(string input, List<CommandSpec> commands, List<string> streamLog)
 {
     AnsiConsole.Clear();
-    RenderBootHeader();
     RenderStreamLog(streamLog);
     AnsiConsole.MarkupLine("[grey]Input[/]");
     AnsiConsole.Markup($"[bold deepskyblue1]unifocl[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]");
@@ -175,7 +174,7 @@ static void RenderStreamLog(List<string> streamLog)
         return;
     }
 
-    var visible = streamLog.TakeLast(14);
+    var visible = streamLog.TakeLast(40);
     foreach (var line in visible)
     {
         AnsiConsole.MarkupLine(line);
@@ -184,15 +183,11 @@ static void RenderStreamLog(List<string> streamLog)
     AnsiConsole.WriteLine();
 }
 
-static void RenderBootHeader()
+static void SeedBootLog(List<string> streamLog)
 {
-    AnsiConsole.Write(
-        new FigletText("unifocl")
-            .LeftJustified()
-            .Color(Color.DeepSkyBlue1));
-
-    AnsiConsole.MarkupLine("[bold green]Welcome to unifocl[/]");
-    AnsiConsole.WriteLine();
+    streamLog.Add("[bold deepskyblue1]unifocl[/]");
+    streamLog.Add("[bold green]Welcome to unifocl[/]");
+    streamLog.Add(string.Empty);
 
     var logo = """
                        .;?tXOb*&%@$$$$@%&*bOXt];.                       
@@ -230,10 +225,14 @@ static void RenderBootHeader()
                               '^:I!ii!l;"'                  
 """;
 
-    AnsiConsole.MarkupLine($"[grey]{Markup.Escape(logo)}[/]");
-    AnsiConsole.WriteLine();
-    AnsiConsole.MarkupLine("[grey]No project attached.[/]");
-    AnsiConsole.WriteLine();
+    foreach (var line in logo.Split('\n'))
+    {
+        streamLog.Add($"[grey]{Markup.Escape(line)}[/]");
+    }
+
+    streamLog.Add(string.Empty);
+    streamLog.Add("[grey]No project attached.[/]");
+    streamLog.Add(string.Empty);
 }
 
 static void ShowSuggestions(string query, List<CommandSpec> commands)
