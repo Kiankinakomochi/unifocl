@@ -5,4 +5,5 @@ internal sealed class CliSessionState
     public DateTimeOffset? LastOpenedUtc { get; set; }
     public string FocusPath { get; set; } = "/Player";
     public InspectorContext? Inspector { get; set; }
+    public ProjectViewState ProjectView { get; } = new();
 }

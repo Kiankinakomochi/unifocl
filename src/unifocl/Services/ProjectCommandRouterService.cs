@@ -4,6 +4,7 @@ using System.Text;
 internal sealed class ProjectCommandRouterService
 {
     private readonly InspectorModeService _inspectorModeService = new();
+    private readonly ProjectViewService _projectViewService = new();
 
     public async Task<bool> TryHandleProjectCommandAsync(
         string input,
@@ -15,6 +16,11 @@ internal sealed class ProjectCommandRouterService
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
             log("[grey]system[/]: boot mode is slash-first; type / to see available commands");
+            return true;
+        }
+
+        if (await _projectViewService.TryHandleProjectViewCommandAsync(input, session, daemonControlService, daemonRuntime, log))
+        {
             return true;
         }
 
@@ -67,11 +73,6 @@ internal sealed class ProjectCommandRouterService
 
     private static bool IsFileBypassCommand(IReadOnlyList<string> tokens)
     {
-        if (tokens.Count >= 3 && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase) && tokens[1].Equals("script", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
         if (tokens.Count >= 2 && tokens[0].Equals("mkdir", StringComparison.OrdinalIgnoreCase))
         {
             return true;
@@ -118,29 +119,7 @@ internal sealed class ProjectCommandRouterService
             return true;
         }
 
-        var scriptName = tokens[2];
-        var sanitized = SanitizeTypeName(scriptName);
-        if (string.IsNullOrWhiteSpace(sanitized))
-        {
-            log("[red]fs[/]: invalid script name");
-            return true;
-        }
-
-        var scriptsDir = Path.Combine(projectPath, "Assets", "Scripts");
-        Directory.CreateDirectory(scriptsDir);
-        var targetPath = Path.Combine(scriptsDir, sanitized + ".cs");
-
-        if (File.Exists(targetPath))
-        {
-            log($"[yellow]fs[/]: script already exists [white]{Markup.Escape(targetPath)}[/]");
-            return true;
-        }
-
-        var content = BuildScriptTemplate(sanitized);
-        File.WriteAllText(targetPath, content);
-        log($"[green]fs[/]: created script [white]{Markup.Escape(targetPath)}[/] (daemon bypass)");
-        log("[grey]fs[/]: Unity will import and generate .meta when editor/daemon runs");
-        return true;
+        return false;
     }
 
     private static string ResolveProjectPath(string projectPath, string relativeOrAbsolute)
@@ -151,37 +130,6 @@ internal sealed class ProjectCommandRouterService
         }
 
         return Path.GetFullPath(Path.Combine(projectPath, relativeOrAbsolute));
-    }
-
-    private static string SanitizeTypeName(string raw)
-    {
-        var builder = new StringBuilder();
-        foreach (var ch in raw)
-        {
-            if (char.IsLetterOrDigit(ch) || ch == '_')
-            {
-                builder.Append(ch);
-            }
-        }
-
-        var value = builder.ToString();
-        if (value.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        if (!char.IsLetter(value[0]) && value[0] != '_')
-        {
-            value = "_" + value;
-        }
-
-        return value;
-    }
-
-    private static string BuildScriptTemplate(string typeName)
-    {
-        return
-$"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class {typeName} : MonoBehaviour{Environment.NewLine}{{{Environment.NewLine}    private void Start(){{ }}{Environment.NewLine}{Environment.NewLine}    private void Update(){{ }}{Environment.NewLine}}}{Environment.NewLine}";
     }
 
     private static List<string> Tokenize(string input)

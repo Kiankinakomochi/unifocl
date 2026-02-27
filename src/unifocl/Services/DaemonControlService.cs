@@ -118,6 +118,7 @@ internal sealed class DaemonControlService
         var pid = Environment.ProcessId;
         var startedAtUtc = DateTime.UtcNow;
         var state = new DaemonInstance(options.Port, pid, startedAtUtc, options.UnityPath, options.Headless, options.ProjectPath, DateTime.UtcNow);
+        var hierarchyBridge = new HierarchyDaemonBridge(options.ProjectPath);
 
         runtime.Upsert(state);
         using var cts = new CancellationTokenSource();
@@ -169,8 +170,16 @@ internal sealed class DaemonControlService
                             cts.Cancel();
                             break;
                         default:
-                            lastActivityUtc = DateTime.UtcNow;
-                            await writer.WriteLineAsync("ERR");
+                            if (hierarchyBridge.TryHandle(line, out var hierarchyResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await writer.WriteLineAsync(hierarchyResponse);
+                            }
+                            else
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await writer.WriteLineAsync("ERR");
+                            }
                             break;
                     }
 

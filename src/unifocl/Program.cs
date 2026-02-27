@@ -60,6 +60,7 @@ var commands = new List<CommandSpec>
     new("/update", "Check for CLI updates", "/update"),
     new("/version", "Show CLI and protocol version", "/version"),
     new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
+    new("/hierarchy", "Open hierarchy TUI mode", "/hierarchy"),
     new("/exit", "Exit unifocl", "/exit"),
     new("/clear", "Clear and redraw boot screen", "/clear")
 };
@@ -71,6 +72,7 @@ var session = new CliSessionState();
 var daemonControlService = new DaemonControlService();
 var projectLifecycleService = new ProjectLifecycleService();
 var projectCommandRouterService = new ProjectCommandRouterService();
+var hierarchyTui = new HierarchyTui();
 SeedBootLog(streamLog);
 RenderInitialLog(streamLog);
 
@@ -128,6 +130,16 @@ while (true)
         SeedBootLog(streamLog);
         AnsiConsole.Clear();
         RenderInitialLog(streamLog);
+        continue;
+    }
+
+    if (matched.Trigger == "/hierarchy")
+    {
+        await hierarchyTui.RunAsync(
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
         continue;
     }
 
