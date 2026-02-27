@@ -76,7 +76,7 @@ RenderInitialLog(streamLog);
 
 while (true)
 {
-    var rawInput = ReadInput(commands, streamLog);
+    var rawInput = ReadInput(commands, streamLog, session);
     if (rawInput is null)
     {
         AnsiConsole.MarkupLine("[grey]Input stream closed. Session ended.[/]");
@@ -158,21 +158,21 @@ while (true)
     WriteMockCommandStream(input, streamLog);
 }
 
-static string? ReadInput(List<CommandSpec> commands, List<string> streamLog)
+static string? ReadInput(List<CommandSpec> commands, List<string> streamLog, CliSessionState session)
 {
     if (Console.IsInputRedirected)
     {
-        AnsiConsole.Markup("[bold deepskyblue1]unifocl[/] [grey]>[/] ");
+        AnsiConsole.Markup($"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] ");
         return Console.ReadLine();
     }
 
-    return ReadInteractiveInput(commands, streamLog);
+    return ReadInteractiveInput(commands, streamLog, session);
 }
 
-static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> streamLog)
+static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> streamLog, CliSessionState session)
 {
     var input = new StringBuilder();
-    var renderedLines = RenderComposerFrame(input.ToString(), commands);
+    var renderedLines = RenderComposerFrame(input.ToString(), commands, session);
 
     while (true)
     {
@@ -201,22 +201,26 @@ static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> str
         }
 
         ClearComposerFrame(renderedLines);
-        renderedLines = RenderComposerFrame(input.ToString(), commands);
+        renderedLines = RenderComposerFrame(input.ToString(), commands, session);
     }
 }
 
-static int RenderComposerFrame(string input, List<CommandSpec> commands)
+static int RenderComposerFrame(string input, List<CommandSpec> commands, CliSessionState session)
 {
     var lines = new List<string>
     {
         "[grey]Input[/]",
-        $"[bold deepskyblue1]unifocl[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
+        $"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
     };
 
     if (input.StartsWith('/'))
     {
         lines.Add(string.Empty);
         lines.AddRange(GetSuggestionLines(input, commands));
+    }
+    else if (session.Inspector is not null)
+    {
+        lines.Add("[dim]Inspector commands: inspect [idx], ls, set <field> <value>, toggle <field|idx>, :i[/]");
     }
     else
     {
@@ -229,6 +233,17 @@ static int RenderComposerFrame(string input, List<CommandSpec> commands)
     }
 
     return lines.Count;
+}
+
+static string BuildPromptLabel(CliSessionState session)
+{
+    var context = session.Inspector;
+    if (context is null)
+    {
+        return "unifocl";
+    }
+
+    return context.PromptLabel;
 }
 
 static void ClearComposerFrame(int renderedLines)
