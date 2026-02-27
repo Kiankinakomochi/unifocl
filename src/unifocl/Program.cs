@@ -885,133 +885,7 @@ static List<string> TokenizeArgs(string input)
     return tokens;
 }
 
-internal sealed record CommandSpec(string Signature, string Description, string Trigger);
-internal sealed record DaemonStartOptions(int Port, string? UnityPath, bool Headless);
-internal sealed record DaemonServiceOptions(int Port, string? UnityPath, bool Headless);
-internal sealed record DaemonInstance(
-    int Port,
-    int Pid,
-    DateTime StartedAtUtc,
-    string? UnityPath,
-    bool Headless,
-    string? ProjectPath,
-    DateTime LastHeartbeatUtc);
-
-internal sealed class CliSessionState
-{
-    public int? AttachedPort { get; set; }
-}
-
-internal sealed class DaemonRuntime
-{
-    private readonly string _rootPath;
-    private readonly string _registryPath;
-    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
-
-    public DaemonRuntime(string rootPath)
-    {
-        _rootPath = rootPath;
-        _registryPath = Path.Combine(_rootPath, "daemons");
-        Directory.CreateDirectory(_registryPath);
-    }
-
-    public IEnumerable<DaemonInstance> GetAll()
-    {
-        foreach (var file in Directory.EnumerateFiles(_registryPath, "*.json"))
-        {
-            DaemonInstance? instance = null;
-            try
-            {
-                var json = File.ReadAllText(file);
-                instance = JsonSerializer.Deserialize<DaemonInstance>(json, _jsonOptions);
-            }
-            catch
-            {
-                // Ignore malformed files in runtime directory.
-            }
-
-            if (instance is not null && ProcessUtil.IsAlive(instance.Pid))
-            {
-                yield return instance;
-            }
-        }
-    }
-
-    public DaemonInstance? GetByPort(int port)
-    {
-        var path = GetPath(port);
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            var json = File.ReadAllText(path);
-            var state = JsonSerializer.Deserialize<DaemonInstance>(json, _jsonOptions);
-            return state is not null && ProcessUtil.IsAlive(state.Pid) ? state : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    public void Upsert(DaemonInstance instance)
-    {
-        var path = GetPath(instance.Port);
-        var json = JsonSerializer.Serialize(instance, _jsonOptions);
-        File.WriteAllText(path, json);
-    }
-
-    public void Remove(int port)
-    {
-        var path = GetPath(port);
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-    }
-
-    public void CleanStaleEntries()
-    {
-        foreach (var file in Directory.EnumerateFiles(_registryPath, "*.json"))
-        {
-            try
-            {
-                var json = File.ReadAllText(file);
-                var instance = JsonSerializer.Deserialize<DaemonInstance>(json, _jsonOptions);
-                if (instance is null || !ProcessUtil.IsAlive(instance.Pid))
-                {
-                    File.Delete(file);
-                }
-            }
-            catch
-            {
-                File.Delete(file);
-            }
-        }
-    }
-
-    private string GetPath(int port) => Path.Combine(_registryPath, $"{port}.json");
-}
-
-internal static class ProcessUtil
-{
-    public static bool IsAlive(int pid)
-    {
-        try
-        {
-            var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-}
-static bool TryHandleLifecycleCommand(string input, CommandSpec matched, SessionState session, List<string> streamLog)
+static bool TryHandleLifecycleCommand(string input, CommandSpec matched, CliSessionState session, List<string> streamLog)
 {
     return matched.Trigger switch
     {
@@ -1022,7 +896,7 @@ static bool TryHandleLifecycleCommand(string input, CommandSpec matched, Session
     };
 }
 
-static bool HandleOpen(string input, CommandSpec matched, SessionState session, List<string> streamLog)
+static bool HandleOpen(string input, CommandSpec matched, CliSessionState session, List<string> streamLog)
 {
     var args = ParseCommandArgs(input, matched.Trigger);
     if (args.Count < 1)
@@ -1036,7 +910,7 @@ static bool HandleOpen(string input, CommandSpec matched, SessionState session, 
     return true;
 }
 
-static bool HandleNew(string input, CommandSpec matched, SessionState session, List<string> streamLog)
+static bool HandleNew(string input, CommandSpec matched, CliSessionState session, List<string> streamLog)
 {
     var args = ParseCommandArgs(input, matched.Trigger);
     if (args.Count < 1)
@@ -1111,7 +985,7 @@ static bool HandleNew(string input, CommandSpec matched, SessionState session, L
     return true;
 }
 
-static bool HandleClone(string input, CommandSpec matched, SessionState session, List<string> streamLog)
+static bool HandleClone(string input, CommandSpec matched, CliSessionState session, List<string> streamLog)
 {
     var args = ParseCommandArgs(input, matched.Trigger);
     if (args.Count < 1)
@@ -1172,7 +1046,7 @@ static bool HandleClone(string input, CommandSpec matched, SessionState session,
     return true;
 }
 
-static bool TryOpenProject(string projectPath, SessionState session, List<string> streamLog)
+static bool TryOpenProject(string projectPath, CliSessionState session, List<string> streamLog)
 {
     AppendLog(streamLog, $"[grey]open[/]: step 1/4 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
 
@@ -1456,8 +1330,20 @@ static string SummarizeProcessError(ProcessResult result)
 }
 
 internal sealed record CommandSpec(string Signature, string Description, string Trigger);
-internal sealed record SessionState
+internal sealed record DaemonStartOptions(int Port, string? UnityPath, bool Headless);
+internal sealed record DaemonServiceOptions(int Port, string? UnityPath, bool Headless);
+internal sealed record DaemonInstance(
+    int Port,
+    int Pid,
+    DateTime StartedAtUtc,
+    string? UnityPath,
+    bool Headless,
+    string? ProjectPath,
+    DateTime LastHeartbeatUtc);
+
+internal sealed class CliSessionState
 {
+    public int? AttachedPort { get; set; }
     public string? CurrentProjectPath { get; set; }
     public DateTimeOffset? LastOpenedUtc { get; set; }
 }
@@ -1470,3 +1356,113 @@ internal sealed record OperationResult(bool Ok, string Error)
 
 internal sealed record DaemonSessionInfo(int Port, DateTimeOffset StartedAtUtc, bool Created);
 internal sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
+
+internal sealed class DaemonRuntime
+{
+    private readonly string _rootPath;
+    private readonly string _registryPath;
+    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+
+    public DaemonRuntime(string rootPath)
+    {
+        _rootPath = rootPath;
+        _registryPath = Path.Combine(_rootPath, "daemons");
+        Directory.CreateDirectory(_registryPath);
+    }
+
+    public IEnumerable<DaemonInstance> GetAll()
+    {
+        foreach (var file in Directory.EnumerateFiles(_registryPath, "*.json"))
+        {
+            DaemonInstance? instance = null;
+            try
+            {
+                var json = File.ReadAllText(file);
+                instance = JsonSerializer.Deserialize<DaemonInstance>(json, _jsonOptions);
+            }
+            catch
+            {
+                // Ignore malformed files in runtime directory.
+            }
+
+            if (instance is not null && ProcessUtil.IsAlive(instance.Pid))
+            {
+                yield return instance;
+            }
+        }
+    }
+
+    public DaemonInstance? GetByPort(int port)
+    {
+        var path = GetPath(port);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var state = JsonSerializer.Deserialize<DaemonInstance>(json, _jsonOptions);
+            return state is not null && ProcessUtil.IsAlive(state.Pid) ? state : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void Upsert(DaemonInstance instance)
+    {
+        var path = GetPath(instance.Port);
+        var json = JsonSerializer.Serialize(instance, _jsonOptions);
+        File.WriteAllText(path, json);
+    }
+
+    public void Remove(int port)
+    {
+        var path = GetPath(port);
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+
+    public void CleanStaleEntries()
+    {
+        foreach (var file in Directory.EnumerateFiles(_registryPath, "*.json"))
+        {
+            try
+            {
+                var json = File.ReadAllText(file);
+                var instance = JsonSerializer.Deserialize<DaemonInstance>(json, _jsonOptions);
+                if (instance is null || !ProcessUtil.IsAlive(instance.Pid))
+                {
+                    File.Delete(file);
+                }
+            }
+            catch
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    private string GetPath(int port) => Path.Combine(_registryPath, $"{port}.json");
+}
+
+internal static class ProcessUtil
+{
+    public static bool IsAlive(int pid)
+    {
+        try
+        {
+            var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+}
