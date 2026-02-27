@@ -51,12 +51,12 @@ var commands = new List<CommandSpec>
 };
 
 var streamLog = new List<string>();
-var streamScrollOffset = 0;
 SeedBootLog(streamLog);
+RenderInitialLog(streamLog);
 
 while (true)
 {
-    var rawInput = ReadInput(commands, streamLog, ref streamScrollOffset);
+    var rawInput = ReadInput(commands, streamLog);
     if (rawInput is null)
     {
         AnsiConsole.MarkupLine("[grey]Input stream closed. Session ended.[/]");
@@ -72,20 +72,18 @@ while (true)
     if (!input.StartsWith('/'))
     {
         AppendLog(streamLog, "[grey]system[/]: boot mode is slash-first; type / to see available commands");
-        streamScrollOffset = 0;
         continue;
     }
 
     if (input == "/")
     {
-        ShowSuggestions("/", commands);
         continue;
     }
 
     var matched = MatchCommand(input, commands);
     if (matched is null)
     {
-        ShowSuggestions(input, commands);
+        AppendLog(streamLog, $"[grey]system[/]: unknown command [white]{Markup.Escape(input)}[/]");
         continue;
     }
 
@@ -99,16 +97,17 @@ while (true)
     {
         streamLog.Clear();
         SeedBootLog(streamLog);
-        streamScrollOffset = 0;
+        AnsiConsole.Clear();
+        RenderInitialLog(streamLog);
         continue;
     }
 
-    streamScrollOffset = 0;
+    AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
     AppendLog(streamLog, $"[deepskyblue1]stub[/]: {Markup.Escape(matched.Signature)}");
-    WriteMockCommandStream(input, commands, streamLog, streamScrollOffset);
+    WriteMockCommandStream(input, streamLog);
 }
 
-static string? ReadInput(List<CommandSpec> commands, List<string> streamLog, ref int streamScrollOffset)
+static string? ReadInput(List<CommandSpec> commands, List<string> streamLog)
 {
     if (Console.IsInputRedirected)
     {
@@ -116,13 +115,13 @@ static string? ReadInput(List<CommandSpec> commands, List<string> streamLog, ref
         return Console.ReadLine();
     }
 
-    return ReadInteractiveInput(commands, streamLog, ref streamScrollOffset);
+    return ReadInteractiveInput(commands, streamLog);
 }
 
-static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> streamLog, ref int streamScrollOffset)
+static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> streamLog)
 {
     var input = new StringBuilder();
-    RenderComposerFrame(input.ToString(), commands, streamLog, streamScrollOffset);
+    var renderedLines = RenderComposerFrame(input.ToString(), commands);
 
     while (true)
     {
@@ -142,24 +141,6 @@ static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> str
             case ConsoleKey.Escape:
                 input.Clear();
                 break;
-            case ConsoleKey.PageUp:
-                streamScrollOffset = Math.Min(streamScrollOffset + 12, Math.Max(0, streamLog.Count - 1));
-                break;
-            case ConsoleKey.PageDown:
-                streamScrollOffset = Math.Max(0, streamScrollOffset - 12);
-                break;
-            case ConsoleKey.UpArrow:
-                streamScrollOffset = Math.Min(streamScrollOffset + 1, Math.Max(0, streamLog.Count - 1));
-                break;
-            case ConsoleKey.DownArrow:
-                streamScrollOffset = Math.Max(0, streamScrollOffset - 1);
-                break;
-            case ConsoleKey.Home:
-                streamScrollOffset = Math.Max(0, streamLog.Count - 1);
-                break;
-            case ConsoleKey.End:
-                streamScrollOffset = 0;
-                break;
             default:
                 if (!char.IsControl(key.KeyChar))
                 {
@@ -168,51 +149,52 @@ static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> str
                 break;
         }
 
-        RenderComposerFrame(input.ToString(), commands, streamLog, streamScrollOffset);
+        ClearComposerFrame(renderedLines);
+        renderedLines = RenderComposerFrame(input.ToString(), commands);
     }
 }
 
-static void RenderComposerFrame(string input, List<CommandSpec> commands, List<string> streamLog, int streamScrollOffset)
+static int RenderComposerFrame(string input, List<CommandSpec> commands)
 {
-    AnsiConsole.Clear();
-    RenderStreamLog(streamLog, streamScrollOffset);
-    AnsiConsole.MarkupLine("[grey]Input[/]");
-    AnsiConsole.Markup($"[bold deepskyblue1]unifocl[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]");
-    AnsiConsole.WriteLine();
+    var lines = new List<string>
+    {
+        "[grey]Input[/]",
+        $"[bold deepskyblue1]unifocl[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
+    };
 
     if (input.StartsWith('/'))
     {
-        ShowSuggestions(input, commands);
-        return;
+        lines.Add(string.Empty);
+        lines.AddRange(GetSuggestionLines(input, commands));
     }
-
-    AnsiConsole.MarkupLine("[dim]Type / to open command palette. Scroll logs: Up/Down, PgUp/PgDn, Home/End.[/]");
-}
-
-static void RenderStreamLog(List<string> streamLog, int streamScrollOffset)
-{
-    if (streamLog.Count == 0)
+    else
     {
-        return;
+        lines.Add("[dim]Type / to open command palette. Use your mouse wheel to scroll log history.[/]");
     }
 
-    const int viewportHeight = 40;
-    var clampedOffset = Math.Clamp(streamScrollOffset, 0, Math.Max(0, streamLog.Count - 1));
-    var endExclusive = Math.Max(0, streamLog.Count - clampedOffset);
-    var start = Math.Max(0, endExclusive - viewportHeight);
-    var visible = streamLog.Skip(start).Take(endExclusive - start);
-
-    foreach (var line in visible)
+    foreach (var line in lines)
     {
         AnsiConsole.MarkupLine(line);
     }
 
-    if (clampedOffset > 0)
-    {
-        AnsiConsole.MarkupLine($"[dim](scrolled up {clampedOffset} lines)[/]");
-    }
+    return lines.Count;
+}
 
-    AnsiConsole.WriteLine();
+static void ClearComposerFrame(int renderedLines)
+{
+    for (var i = 0; i < renderedLines; i++)
+    {
+        Console.Write("\u001b[1A");
+        Console.Write("\r\u001b[2K");
+    }
+}
+
+static void RenderInitialLog(List<string> streamLog)
+{
+    foreach (var line in streamLog)
+    {
+        AnsiConsole.MarkupLine(line);
+    }
 }
 
 static void SeedBootLog(List<string> streamLog)
@@ -267,7 +249,7 @@ static void SeedBootLog(List<string> streamLog)
     streamLog.Add(string.Empty);
 }
 
-static void ShowSuggestions(string query, List<CommandSpec> commands)
+static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> commands)
 {
     var normalized = query.Trim().ToLowerInvariant();
     var matches = commands
@@ -280,15 +262,11 @@ static void ShowSuggestions(string query, List<CommandSpec> commands)
 
     if (matches.Count == 0)
     {
-        AnsiConsole.MarkupLine($"[dim]no matches for {Markup.Escape(query)}[/]");
-        return;
+        return new[] { $"[dim]no matches for {Markup.Escape(query)}[/]" };
     }
 
-    AnsiConsole.WriteLine();
-    foreach (var match in matches)
-    {
-        AnsiConsole.MarkupLine($"[grey]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
-    }
+    return matches.Select(match =>
+        $"[grey]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
 }
 
 static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
@@ -301,7 +279,7 @@ static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
                              || normalized.StartsWith(c.Trigger + " ", StringComparison.OrdinalIgnoreCase));
 }
 
-static void WriteMockCommandStream(string input, List<CommandSpec> commands, List<string> streamLog, int streamScrollOffset)
+static void WriteMockCommandStream(string input, List<string> streamLog)
 {
     var lines = new[]
     {
@@ -315,7 +293,6 @@ static void WriteMockCommandStream(string input, List<CommandSpec> commands, Lis
     foreach (var line in lines)
     {
         AppendLog(streamLog, $"{line} [dim]({Markup.Escape(input)})[/]");
-        RenderComposerFrame(string.Empty, commands, streamLog, streamScrollOffset);
         Thread.Sleep(110);
     }
 }
@@ -323,6 +300,7 @@ static void WriteMockCommandStream(string input, List<CommandSpec> commands, Lis
 static void AppendLog(List<string> streamLog, string line)
 {
     streamLog.Add(line);
+    AnsiConsole.MarkupLine(line);
 }
 
 internal sealed record CommandSpec(string Signature, string Description, string Trigger);
