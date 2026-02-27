@@ -50,11 +50,12 @@ var commands = new List<CommandSpec>
     new("/clear", "Clear and redraw boot screen", "/clear")
 };
 
+var streamLog = new List<string>();
 RenderBootHeader();
 
 while (true)
 {
-    var rawInput = ReadInput(commands);
+    var rawInput = ReadInput(commands, streamLog);
     if (rawInput is null)
     {
         AnsiConsole.MarkupLine("[grey]Input stream closed. Session ended.[/]");
@@ -69,20 +70,20 @@ while (true)
 
     if (!input.StartsWith('/'))
     {
-        AnsiConsole.MarkupLine("[grey]Boot mode is slash-first. Type [aqua]/[/] to see available commands.[/]");
+        AppendLog(streamLog, "[grey]system[/]: boot mode is slash-first; type / to see available commands");
         continue;
     }
 
     if (input == "/")
     {
-        ShowSuggestions("/", commands, "Boot Commands");
+        ShowSuggestions("/", commands);
         continue;
     }
 
     var matched = MatchCommand(input, commands);
     if (matched is null)
     {
-        ShowSuggestions(input, commands, "Intellisense");
+        ShowSuggestions(input, commands);
         continue;
     }
 
@@ -94,15 +95,16 @@ while (true)
 
     if (matched.Trigger == "/clear")
     {
+        streamLog.Clear();
         RenderBootHeader();
         continue;
     }
 
-    AnsiConsole.MarkupLine($"[deepskyblue1]Stub:[/] [bold]{Markup.Escape(matched.Signature)}[/]");
-    WriteMockCommandStream(input);
+    AppendLog(streamLog, $"[deepskyblue1]stub[/]: {Markup.Escape(matched.Signature)}");
+    WriteMockCommandStream(input, commands, streamLog);
 }
 
-static string? ReadInput(List<CommandSpec> commands)
+static string? ReadInput(List<CommandSpec> commands, List<string> streamLog)
 {
     if (Console.IsInputRedirected)
     {
@@ -110,13 +112,13 @@ static string? ReadInput(List<CommandSpec> commands)
         return Console.ReadLine();
     }
 
-    return ReadInteractiveInput(commands);
+    return ReadInteractiveInput(commands, streamLog);
 }
 
-static string? ReadInteractiveInput(List<CommandSpec> commands)
+static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> streamLog)
 {
     var input = new StringBuilder();
-    RenderComposerFrame(input.ToString(), commands);
+    RenderComposerFrame(input.ToString(), commands, streamLog);
 
     while (true)
     {
@@ -144,24 +146,42 @@ static string? ReadInteractiveInput(List<CommandSpec> commands)
                 break;
         }
 
-        RenderComposerFrame(input.ToString(), commands);
+        RenderComposerFrame(input.ToString(), commands, streamLog);
     }
 }
 
-static void RenderComposerFrame(string input, List<CommandSpec> commands)
+static void RenderComposerFrame(string input, List<CommandSpec> commands, List<string> streamLog)
 {
     AnsiConsole.Clear();
     RenderBootHeader();
-    AnsiConsole.Markup($"[bold deepskyblue1]unifocl[/] [grey]>[/] {Markup.Escape(input)}");
+    RenderStreamLog(streamLog);
+    AnsiConsole.MarkupLine("[grey]Input[/]");
+    AnsiConsole.Markup($"[bold deepskyblue1]unifocl[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]");
     AnsiConsole.WriteLine();
 
     if (input.StartsWith('/'))
     {
-        ShowSuggestions(input, commands, "Intellisense");
+        ShowSuggestions(input, commands);
         return;
     }
 
-    AnsiConsole.MarkupLine("[grey]Type [aqua]/[/] to open command palette.[/]");
+    AnsiConsole.MarkupLine("[dim]Type / to open command palette.[/]");
+}
+
+static void RenderStreamLog(List<string> streamLog)
+{
+    if (streamLog.Count == 0)
+    {
+        return;
+    }
+
+    var visible = streamLog.TakeLast(14);
+    foreach (var line in visible)
+    {
+        AnsiConsole.MarkupLine(line);
+    }
+
+    AnsiConsole.WriteLine();
 }
 
 static void RenderBootHeader()
@@ -216,7 +236,7 @@ static void RenderBootHeader()
     AnsiConsole.WriteLine();
 }
 
-static void ShowSuggestions(string query, List<CommandSpec> commands, string title)
+static void ShowSuggestions(string query, List<CommandSpec> commands)
 {
     var normalized = query.Trim().ToLowerInvariant();
     var matches = commands
@@ -229,22 +249,15 @@ static void ShowSuggestions(string query, List<CommandSpec> commands, string tit
 
     if (matches.Count == 0)
     {
-        AnsiConsole.MarkupLine($"[red]{title}:[/] no matches for [yellow]{Markup.Escape(query)}[/].");
+        AnsiConsole.MarkupLine($"[dim]no matches for {Markup.Escape(query)}[/]");
         return;
     }
 
-    var table = new Table()
-        .Border(TableBorder.Rounded)
-        .Title($"[bold]{Markup.Escape(title)}[/]")
-        .AddColumn("[aqua]Command[/]")
-        .AddColumn("[grey]Description[/]");
-
+    AnsiConsole.WriteLine();
     foreach (var match in matches)
     {
-        table.AddRow(Markup.Escape(match.Signature), Markup.Escape(match.Description));
+        AnsiConsole.MarkupLine($"[grey]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
     }
-
-    AnsiConsole.Write(table);
 }
 
 static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
@@ -257,7 +270,7 @@ static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
                              || normalized.StartsWith(c.Trigger + " ", StringComparison.OrdinalIgnoreCase));
 }
 
-static void WriteMockCommandStream(string input)
+static void WriteMockCommandStream(string input, List<CommandSpec> commands, List<string> streamLog)
 {
     var lines = new[]
     {
@@ -270,9 +283,15 @@ static void WriteMockCommandStream(string input)
 
     foreach (var line in lines)
     {
-        AnsiConsole.MarkupLine($"{line} [dim]({Markup.Escape(input)})[/]");
+        AppendLog(streamLog, $"{line} [dim]({Markup.Escape(input)})[/]");
+        RenderComposerFrame(string.Empty, commands, streamLog);
         Thread.Sleep(110);
     }
+}
+
+static void AppendLog(List<string> streamLog, string line)
+{
+    streamLog.Add(line);
 }
 
 internal sealed record CommandSpec(string Signature, string Description, string Trigger);
