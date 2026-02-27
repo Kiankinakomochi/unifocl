@@ -1,4 +1,5 @@
 using Spectre.Console;
+using System.Text;
 
 var commands = new List<CommandSpec>
 {
@@ -49,11 +50,11 @@ var commands = new List<CommandSpec>
     new("/clear", "Clear and redraw boot screen", "/clear")
 };
 
-RenderStartup();
+RenderBootHeader();
 
 while (true)
 {
-    var rawInput = ReadInput();
+    var rawInput = ReadInput(commands);
     if (rawInput is null)
     {
         AnsiConsole.MarkupLine("[grey]Input stream closed. Session ended.[/]");
@@ -93,7 +94,7 @@ while (true)
 
     if (matched.Trigger == "/clear")
     {
-        RenderStartup();
+        RenderBootHeader();
         continue;
     }
 
@@ -101,7 +102,7 @@ while (true)
     WriteMockCommandStream(input);
 }
 
-static string? ReadInput()
+static string? ReadInput(List<CommandSpec> commands)
 {
     if (Console.IsInputRedirected)
     {
@@ -109,12 +110,62 @@ static string? ReadInput()
         return Console.ReadLine();
     }
 
-    return AnsiConsole.Ask<string>("[bold deepskyblue1]unifocl[/] [grey]>[/]");
+    return ReadInteractiveInput(commands);
 }
 
-static void RenderStartup()
+static string? ReadInteractiveInput(List<CommandSpec> commands)
+{
+    var input = new StringBuilder();
+    RenderComposerFrame(input.ToString(), commands);
+
+    while (true)
+    {
+        var key = Console.ReadKey(intercept: true);
+
+        switch (key.Key)
+        {
+            case ConsoleKey.Enter:
+                Console.WriteLine();
+                return input.ToString();
+            case ConsoleKey.Backspace:
+                if (input.Length > 0)
+                {
+                    input.Remove(input.Length - 1, 1);
+                }
+                break;
+            case ConsoleKey.Escape:
+                input.Clear();
+                break;
+            default:
+                if (!char.IsControl(key.KeyChar))
+                {
+                    input.Append(key.KeyChar);
+                }
+                break;
+        }
+
+        RenderComposerFrame(input.ToString(), commands);
+    }
+}
+
+static void RenderComposerFrame(string input, List<CommandSpec> commands)
 {
     AnsiConsole.Clear();
+    RenderBootHeader();
+    AnsiConsole.Markup($"[bold deepskyblue1]unifocl[/] [grey]>[/] {Markup.Escape(input)}");
+    AnsiConsole.WriteLine();
+
+    if (input.StartsWith('/'))
+    {
+        ShowSuggestions(input, commands, "Intellisense");
+        return;
+    }
+
+    AnsiConsole.MarkupLine("[grey]Type [aqua]/[/] to open command palette.[/]");
+}
+
+static void RenderBootHeader()
+{
     AnsiConsole.Write(
         new FigletText("unifocl")
             .LeftJustified()
@@ -161,7 +212,8 @@ static void RenderStartup()
 
     AnsiConsole.MarkupLine($"[grey]{Markup.Escape(logo)}[/]");
     AnsiConsole.WriteLine();
-    AnsiConsole.MarkupLine("[grey]No project attached. Type [aqua]/[/] to explore boot commands.[/]");
+    AnsiConsole.MarkupLine("[grey]No project attached.[/]");
+    AnsiConsole.WriteLine();
 }
 
 static void ShowSuggestions(string query, List<CommandSpec> commands, string title)
