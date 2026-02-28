@@ -10,6 +10,7 @@ internal sealed record DaemonInstance(
     string? ProjectPath,
     DateTime LastHeartbeatUtc);
 internal sealed record DaemonSessionInfo(int Port, DateTimeOffset StartedAtUtc, bool Created);
+internal sealed record RecentProjectEntry(string ProjectPath, DateTimeOffset LastOpenedUtc);
 internal sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
 internal sealed record OperationResult(bool Ok, string Error)
 {
