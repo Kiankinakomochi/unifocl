@@ -33,6 +33,8 @@ internal sealed class InspectorModeService
             "s" or
             "toggle" or
             "t" or
+            "f" or
+            "ff" or
             "make" or
             "mk" or
             "remove" or
@@ -94,6 +96,10 @@ internal sealed class InspectorModeService
                     ["set", .. tokens.Skip(1)],
                     session,
                     log);
+                return true;
+            case "f":
+            case "ff":
+                await HandleFuzzyFindAsync(input, tokens, session, log);
                 return true;
             case "make":
             case "mk":
@@ -222,6 +228,7 @@ internal sealed class InspectorModeService
                     entry.Index,
                     entry.Name,
                     null,
+                    null,
                     null));
 
             context.Components.Remove(entry);
@@ -266,6 +273,7 @@ internal sealed class InspectorModeService
                 context.SelectedComponentIndex,
                 context.SelectedComponentName,
                 field.Name,
+                null,
                 null));
         ReplaceField(context, field with { Value = newValue });
         AddStream(context, $"{context.PromptLabel} > {input}");
@@ -344,7 +352,8 @@ internal sealed class InspectorModeService
                     component.Index,
                     component.Name,
                     rootField.Name,
-                    newValue));
+                    newValue,
+                    null));
 
             AddStream(context, $"{context.PromptLabel} > {input}");
             AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {newValue}");
@@ -374,7 +383,8 @@ internal sealed class InspectorModeService
                 context.SelectedComponentIndex,
                 context.SelectedComponentName,
                 field.Name,
-                newValue));
+                newValue,
+                null));
 
         ReplaceField(context, field with { Value = newValue });
         AddStream(context, $"{context.PromptLabel} > {input}");
@@ -384,6 +394,74 @@ internal sealed class InspectorModeService
             AddStream(context, "[~] daemon bridge unavailable; applied to local inspector cache");
         }
 
+        _renderer.Render(context);
+    }
+
+    private async Task HandleFuzzyFindAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: fuzzy find requires inspect mode");
+            return;
+        }
+
+        if (tokens.Count < 2)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: f <query>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var query = string.Join(' ', tokens.Skip(1));
+        var payload = new InspectorBridgeRequest(
+            "find",
+            context.TargetPath,
+            context.SelectedComponentIndex,
+            context.SelectedComponentName,
+            null,
+            null,
+            query);
+        var responseJson = await SendBridgeRequestAsync(payload, session);
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+
+        if (!string.IsNullOrWhiteSpace(responseJson))
+        {
+            try
+            {
+                var response = JsonSerializer.Deserialize<InspectorBridgeSearchResponse>(responseJson, _jsonOptions);
+                if (response?.Ok == true && response.Results is not null)
+                {
+                    AppendInspectorFuzzyResults(context, query, response.Results.Select(x => x.Path));
+                    _renderer.Render(context);
+                    return;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        var localPaths = context.Depth == InspectorDepth.ComponentList
+            ? context.Components
+                .Select(c => c.Name)
+                .Where(name => FuzzyMatcher.TryScore(query, name, out _))
+                .Take(20)
+                .ToList()
+            : context.Fields
+                .Select(f => $"{context.SelectedComponentName}.{f.Name}")
+                .Where(path => FuzzyMatcher.TryScore(query, path, out _))
+                .Take(20)
+                .ToList();
+
+        AppendInspectorFuzzyResults(context, query, localPaths);
+        AddStream(context, "[~] daemon bridge unavailable; used local inspector cache");
         _renderer.Render(context);
     }
 
@@ -580,7 +658,7 @@ internal sealed class InspectorModeService
 
     private async Task<List<InspectorComponentEntry>?> TryFetchComponentsFromBridgeAsync(CliSessionState session, string targetPath)
     {
-        var payload = new InspectorBridgeRequest("list-components", targetPath, null, null, null, null);
+        var payload = new InspectorBridgeRequest("list-components", targetPath, null, null, null, null, null);
         var responseJson = await SendBridgeRequestAsync(payload, session);
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -607,7 +685,7 @@ internal sealed class InspectorModeService
 
     private async Task<List<InspectorFieldEntry>?> TryFetchFieldsFromBridgeAsync(CliSessionState session, string targetPath, int componentIndex)
     {
-        var payload = new InspectorBridgeRequest("list-fields", targetPath, componentIndex, null, null, null);
+        var payload = new InspectorBridgeRequest("list-fields", targetPath, componentIndex, null, null, null, null);
         var responseJson = await SendBridgeRequestAsync(payload, session);
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -746,16 +824,34 @@ internal sealed class InspectorModeService
         }
     }
 
+    private static void AppendInspectorFuzzyResults(InspectorContext context, string query, IEnumerable<string> paths)
+    {
+        var buffered = paths.ToList();
+        if (buffered.Count == 0)
+        {
+            AddStream(context, $"[x] no fuzzy results for: {query}");
+            return;
+        }
+
+        AddStream(context, $"[*] fuzzy results for: {query}");
+        for (var i = 0; i < buffered.Count; i++)
+        {
+            AddStream(context, $"[{i}] {buffered[i]}");
+        }
+    }
+
     private sealed record InspectorBridgeRequest(
         string Action,
         string TargetPath,
         int? ComponentIndex,
         string? ComponentName,
         string? FieldName,
-        string? Value);
+        string? Value,
+        string? Query);
 
     private sealed record InspectorBridgeComponentsResponse(bool Ok, List<InspectorBridgeComponent>? Components);
     private sealed record InspectorBridgeFieldsResponse(bool Ok, List<InspectorBridgeField>? Fields);
+    private sealed record InspectorBridgeSearchResponse(bool Ok, List<InspectorSearchResultDto>? Results);
     private sealed record InspectorBridgeMutationResponse(bool Ok);
     private sealed record InspectorBridgeComponent(int Index, string Name, bool Enabled);
     private sealed record InspectorBridgeField(string Name, string Value, string Type, bool IsBoolean);

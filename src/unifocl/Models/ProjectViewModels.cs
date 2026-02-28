@@ -12,6 +12,9 @@ internal sealed class ProjectViewState
     public HashSet<string> ExpandedDirectories { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> CommandTranscript { get; } = [];
     public ProjectDbState DbState { get; set; } = ProjectDbState.IdleSafe;
+    public int AssetIndexRevision { get; set; }
+    public Dictionary<int, string> AssetPathByInstanceId { get; } = [];
+    public List<ProjectFuzzyMatch> LastFuzzyMatches { get; } = [];
 }
 
 internal sealed record ProjectTreeEntry(

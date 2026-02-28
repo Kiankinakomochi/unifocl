@@ -140,6 +140,7 @@ internal sealed class ProjectCommandRouterService
             "rn" => "rename",
             "s" => "set",
             "t" => "toggle",
+            "find" => "f",
             "move" => "mv",
             _ => tokens[0]
         };

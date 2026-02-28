@@ -6,6 +6,7 @@ internal sealed class ProjectViewService
 {
     private const int MaxTranscriptEntries = 80;
     private readonly ProjectViewRenderer _renderer = new();
+    private readonly HierarchyDaemonClient _daemonClient = new();
 
     public void OpenInitialView(CliSessionState session)
     {
@@ -33,6 +34,7 @@ internal sealed class ProjectViewService
         var tokens = Tokenize(input);
         if (tokens.Count == 0)
         {
+            await SyncAssetIndexAsync(session);
             RenderFrame(session.ProjectView);
             return true;
         }
@@ -84,8 +86,14 @@ internal sealed class ProjectViewService
                  || tokens[0].Equals("ref", StringComparison.OrdinalIgnoreCase))
         {
             RefreshTree(session.CurrentProjectPath, session.ProjectView);
+            await SyncAssetIndexAsync(session);
             outputs.Add("[i] refreshed project tree");
             handled = true;
+        }
+        else if (tokens[0].Equals("f", StringComparison.OrdinalIgnoreCase)
+                 || tokens[0].Equals("ff", StringComparison.OrdinalIgnoreCase))
+        {
+            handled = await HandleFuzzyFindAsync(session, tokens, outputs);
         }
 
         if (!handled)
@@ -125,6 +133,9 @@ internal sealed class ProjectViewService
         state.CommandTranscript.Add("[i] project view ready");
         state.DbState = ProjectDbState.IdleSafe;
         state.Initialized = true;
+        state.AssetIndexRevision = 0;
+        state.AssetPathByInstanceId.Clear();
+        state.LastFuzzyMatches.Clear();
         RefreshTree(projectPath, state);
     }
 
@@ -345,7 +356,20 @@ internal sealed class ProjectViewService
     {
         if (int.TryParse(selector, out var index))
         {
-            return state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
+            var visible = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
+            if (visible is not null)
+            {
+                return visible;
+            }
+
+            var fuzzy = state.LastFuzzyMatches.FirstOrDefault(entry => entry.Index == index);
+            if (fuzzy is not null)
+            {
+                var name = Path.GetFileName(fuzzy.Path);
+                return new ProjectTreeEntry(fuzzy.Index, 0, name, fuzzy.Path, false);
+            }
+
+            return null;
         }
 
         var normalized = selector.Trim().Replace('\\', '/');
@@ -353,6 +377,68 @@ internal sealed class ProjectViewService
             entry.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase)
             || entry.RelativePath.Equals(normalized, StringComparison.OrdinalIgnoreCase)
             || entry.RelativePath.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<bool> HandleFuzzyFindAsync(CliSessionState session, IReadOnlyList<string> tokens, List<string> outputs)
+    {
+        if (tokens.Count < 2)
+        {
+            outputs.Add("[x] usage: f <query>");
+            return true;
+        }
+
+        await SyncAssetIndexAsync(session);
+        var state = session.ProjectView;
+        if (state.AssetPathByInstanceId.Count == 0)
+        {
+            outputs.Add("[x] asset index is empty; refresh with ls");
+            return true;
+        }
+
+        var query = string.Join(' ', tokens.Skip(1));
+        var (typeFilter, term) = ParseProjectQuery(query);
+        var matches = new List<ProjectFuzzyMatch>();
+
+        foreach (var entry in state.AssetPathByInstanceId)
+        {
+            if (!PassesTypeFilter(entry.Value, typeFilter))
+            {
+                continue;
+            }
+
+            var score = 1d;
+            var matched = string.IsNullOrWhiteSpace(term)
+                || FuzzyMatcher.TryScore(term, entry.Value, out score);
+            if (!matched)
+            {
+                continue;
+            }
+
+            matches.Add(new ProjectFuzzyMatch(0, entry.Key, entry.Value, score));
+        }
+
+        var top = matches
+            .OrderByDescending(m => m.Score)
+            .ThenBy(m => m.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .Select((match, index) => match with { Index = index })
+            .ToList();
+        state.LastFuzzyMatches.Clear();
+        state.LastFuzzyMatches.AddRange(top);
+
+        if (top.Count == 0)
+        {
+            outputs.Add($"[x] no fuzzy results for: {query}");
+            return true;
+        }
+
+        outputs.Add($"[*] fuzzy results for: {query}");
+        foreach (var match in top)
+        {
+            outputs.Add($"[{match.Index}] {match.Path}");
+        }
+
+        return true;
     }
 
     private static bool HandleRename(int index, string newName, string projectPath, ProjectViewState state, List<string> outputs)
@@ -554,6 +640,66 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
         }
 
         return value;
+    }
+
+    private async Task SyncAssetIndexAsync(CliSessionState session)
+    {
+        if (session.AttachedPort is not int port)
+        {
+            return;
+        }
+
+        var state = session.ProjectView;
+        var sync = await _daemonClient.SyncAssetIndexAsync(port, state.AssetIndexRevision);
+        if (sync is null || sync.Unchanged)
+        {
+            return;
+        }
+
+        state.AssetIndexRevision = sync.Revision;
+        state.AssetPathByInstanceId.Clear();
+        foreach (var entry in sync.Entries)
+        {
+            state.AssetPathByInstanceId[entry.InstanceId] = entry.Path;
+        }
+    }
+
+    private static (string? TypeFilter, string Query) ParseProjectQuery(string query)
+    {
+        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string? filter = null;
+        var remaining = new List<string>();
+        foreach (var token in tokens)
+        {
+            if (token.StartsWith("t:", StringComparison.OrdinalIgnoreCase))
+            {
+                filter = token[2..];
+                continue;
+            }
+
+            remaining.Add(token);
+        }
+
+        return (filter, remaining.Count == 0 ? string.Empty : string.Join(' ', remaining));
+    }
+
+    private static bool PassesTypeFilter(string path, string? typeFilter)
+    {
+        if (string.IsNullOrWhiteSpace(typeFilter))
+        {
+            return true;
+        }
+
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return typeFilter.ToLowerInvariant() switch
+        {
+            "script" => ext == ".cs",
+            "scene" => ext == ".unity",
+            "prefab" => ext == ".prefab",
+            "material" => ext == ".mat",
+            "animation" => ext is ".anim" or ".controller",
+            _ => path.Contains(typeFilter, StringComparison.OrdinalIgnoreCase)
+        };
     }
 
     private static List<string> Tokenize(string input)
