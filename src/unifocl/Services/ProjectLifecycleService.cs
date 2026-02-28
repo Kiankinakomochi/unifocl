@@ -21,9 +21,19 @@ internal sealed class ProjectLifecycleService
             "/open" => await HandleOpenAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/new" => await HandleNewAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/clone" => await HandleCloneAsync(input, matched, session, daemonControlService, daemonRuntime, log),
+            "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
             "/init" => await HandleInitAsync(input, matched, session, log),
             _ => false
         };
+    }
+
+    public async Task PerformSafeExitCleanupAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        await HandleCloseAsync(session, daemonControlService, daemonRuntime, log);
     }
 
     private async Task<bool> HandleOpenAsync(
@@ -255,6 +265,50 @@ internal sealed class ProjectLifecycleService
 
         log($"[green]init[/]: ready at [white]{Markup.Escape(targetPath)}[/]");
         return Task.FromResult(true);
+    }
+
+    private async Task<bool> HandleCloseAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        var candidatePorts = new HashSet<int>();
+        if (session.AttachedPort is int attachedPort)
+        {
+            candidatePorts.Add(attachedPort);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            candidatePorts.Add(DaemonControlService.ComputeProjectDaemonPort(session.CurrentProjectPath));
+        }
+
+        var hadDaemonTarget = candidatePorts.Count > 0;
+        var stopFailed = false;
+        foreach (var port in candidatePorts)
+        {
+            if (!await daemonControlService.StopDaemonByPortAsync(port, daemonRuntime, session, log))
+            {
+                stopFailed = true;
+            }
+        }
+
+        session.ResetToBoot();
+        if (stopFailed)
+        {
+            log("[yellow]close[/]: session detached, but one or more daemons could not be stopped");
+        }
+        else if (hadDaemonTarget)
+        {
+            log("[green]close[/]: session detached and daemon stopped");
+        }
+        else
+        {
+            log("[green]close[/]: session detached");
+        }
+
+        return true;
     }
 
     private async Task<bool> TryOpenProjectAsync(

@@ -81,6 +81,11 @@ while (true)
     var rawInput = ReadInput(commands, streamLog, session);
     if (rawInput is null)
     {
+        await projectLifecycleService.PerformSafeExitCleanupAsync(
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
         AnsiConsole.MarkupLine("[grey]Input stream closed. Session ended.[/]");
         return;
     }
@@ -120,6 +125,11 @@ while (true)
 
     if (matched.Trigger == "/exit")
     {
+        await projectLifecycleService.PerformSafeExitCleanupAsync(
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
         AnsiConsole.MarkupLine("[grey]Session closed.[/]");
         return;
     }
