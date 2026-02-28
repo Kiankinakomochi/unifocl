@@ -119,6 +119,135 @@ internal sealed class InspectorModeService
         }
     }
 
+    public async Task RunKeyboardFocusModeAsync(
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[yellow]inspector[/]: focus mode requires inspector context");
+            return;
+        }
+
+        if (context.Depth == InspectorDepth.ComponentList)
+        {
+            await PopulateComponentsAsync(context, session, forceRefresh: context.Components.Count == 0);
+        }
+        else if (context.SelectedComponentIndex is int selectedComponentIndex)
+        {
+            await PopulateFieldsAsync(context, session, selectedComponentIndex, forceRefresh: context.Fields.Count == 0);
+        }
+
+        AddStream(context, "[i] inspector focus mode enabled (up/down select, tab inspect, shift+tab back, esc exit)");
+        var selectedComponentPosition = 0;
+        var selectedFieldPosition = 0;
+
+        while (true)
+        {
+            if (context.Depth == InspectorDepth.ComponentList)
+            {
+                var components = context.Components.OrderBy(component => component.Index).ToList();
+                if (components.Count == 0)
+                {
+                    _renderer.Render(context, null, null, focusModeEnabled: true);
+                }
+                else
+                {
+                    selectedComponentPosition = Math.Clamp(selectedComponentPosition, 0, components.Count - 1);
+                    var selectedComponent = components[selectedComponentPosition];
+                    _renderer.Render(context, selectedComponent.Index, null, focusModeEnabled: true);
+                }
+            }
+            else
+            {
+                var fields = context.Fields;
+                if (fields.Count == 0)
+                {
+                    _renderer.Render(context, null, null, focusModeEnabled: true);
+                }
+                else
+                {
+                    selectedFieldPosition = Math.Clamp(selectedFieldPosition, 0, fields.Count - 1);
+                    _renderer.Render(context, null, fields[selectedFieldPosition].Name, focusModeEnabled: true);
+                }
+            }
+
+            var intent = KeyboardIntentReader.ReadIntent();
+            switch (intent)
+            {
+                case KeyboardIntent.Up:
+                    if (context.Depth == InspectorDepth.ComponentList && context.Components.Count > 0)
+                    {
+                        selectedComponentPosition = selectedComponentPosition <= 0
+                            ? context.Components.Count - 1
+                            : selectedComponentPosition - 1;
+                    }
+                    else if (context.Depth == InspectorDepth.ComponentFields && context.Fields.Count > 0)
+                    {
+                        selectedFieldPosition = selectedFieldPosition <= 0
+                            ? context.Fields.Count - 1
+                            : selectedFieldPosition - 1;
+                    }
+                    break;
+                case KeyboardIntent.Down:
+                    if (context.Depth == InspectorDepth.ComponentList && context.Components.Count > 0)
+                    {
+                        selectedComponentPosition = selectedComponentPosition >= context.Components.Count - 1
+                            ? 0
+                            : selectedComponentPosition + 1;
+                    }
+                    else if (context.Depth == InspectorDepth.ComponentFields && context.Fields.Count > 0)
+                    {
+                        selectedFieldPosition = selectedFieldPosition >= context.Fields.Count - 1
+                            ? 0
+                            : selectedFieldPosition + 1;
+                    }
+                    break;
+                case KeyboardIntent.Tab:
+                    if (context.Depth != InspectorDepth.ComponentList || context.Components.Count == 0)
+                    {
+                        break;
+                    }
+
+                    var orderedComponents = context.Components.OrderBy(component => component.Index).ToList();
+                    selectedComponentPosition = Math.Clamp(selectedComponentPosition, 0, orderedComponents.Count - 1);
+                    await EnterComponentAsync(
+                        context,
+                        session,
+                        orderedComponents[selectedComponentPosition].Index,
+                        $"inspect {orderedComponents[selectedComponentPosition].Index}");
+                    selectedFieldPosition = 0;
+                    break;
+                case KeyboardIntent.ShiftTab:
+                    if (context.Depth == InspectorDepth.ComponentFields)
+                    {
+                        context.Depth = InspectorDepth.ComponentList;
+                        context.Fields.Clear();
+                        context.SelectedComponentIndex = null;
+                        context.SelectedComponentName = null;
+                        context.BodyScrollOffset = 0;
+                        context.FollowStreamScroll = true;
+                        context.StreamScrollOffset = int.MaxValue;
+                        AddStream(context, "[i] stepped up to component list");
+                    }
+                    else
+                    {
+                        AddStream(context, "[i] already at inspector root");
+                    }
+
+                    break;
+                case KeyboardIntent.Escape:
+                case KeyboardIntent.FocusInspector:
+                    AddStream(context, "[i] inspector focus mode disabled");
+                    _renderer.Render(context);
+                    return;
+                default:
+                    break;
+            }
+        }
+    }
+
     private async Task HandleInspectAsync(
         string input,
         IReadOnlyList<string> tokens,

@@ -5,18 +5,21 @@ internal sealed class ProjectViewRenderer
     private const int FrameWidth = 78;
     private const int CommandRows = 8;
 
-    public IReadOnlyList<string> Render(ProjectViewState state)
+    public IReadOnlyList<string> Render(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
     {
         var lines = new List<string>();
         var cwd = string.IsNullOrWhiteSpace(state.RelativeCwd) ? "Assets" : state.RelativeCwd;
         var db = state.DbState == ProjectDbState.LockedImporting ? "LOCKED (Importing)" : "IDLE (Safe)";
-        var header = $" UnityCLI v0.1 | MODE: PROJECT | DB: {db} | CWD: {cwd}";
+        var focusLabel = focusModeEnabled
+            ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
+            : " | Focus Key: F7";
+        var header = $" UnityCLI v0.1 | MODE: PROJECT | DB: {db} | CWD: {cwd}{focusLabel}";
 
         lines.Add(BorderTop());
         lines.Add(BorderBody(header));
         lines.Add(BorderSeparator());
 
-        foreach (var treeLine in BuildTreeLines(state, cwd))
+        foreach (var treeLine in BuildTreeLines(state, cwd, highlightedEntryIndex))
         {
             lines.Add(BorderBody(treeLine));
         }
@@ -37,13 +40,14 @@ internal sealed class ProjectViewRenderer
         return lines.Select(Markup.Escape).ToList();
     }
 
-    private static IEnumerable<string> BuildTreeLines(ProjectViewState state, string cwd)
+    private static IEnumerable<string> BuildTreeLines(ProjectViewState state, string cwd, int? highlightedEntryIndex)
     {
         yield return $" {GetRootLabel(cwd)}";
         foreach (var entry in state.VisibleEntries)
         {
             var prefix = entry.Depth == 0 ? string.Empty : new string(' ', 1) + string.Concat(Enumerable.Repeat("│   ", entry.Depth));
-            var branch = $" {prefix}├── ";
+            var marker = highlightedEntryIndex == entry.Index ? ">" : " ";
+            var branch = $"{marker}{prefix}├── ";
             var label = entry.IsDirectory ? $"{entry.Name}/" : entry.Name;
             yield return $"{branch}[{entry.Index}] {label}";
         }

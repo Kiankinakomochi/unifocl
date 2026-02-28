@@ -8,13 +8,17 @@ internal sealed class InspectorTuiRenderer
     private const int ReservedPromptRows = 4;
     private const int FrameOverheadRows = 5;
 
-    public void Render(InspectorContext context)
+    public void Render(
+        InspectorContext context,
+        int? highlightedComponentIndex = null,
+        string? highlightedFieldName = null,
+        bool focusModeEnabled = false)
     {
         AnsiConsole.Clear();
         var availableRows = Math.Max(MinBodyRows + MinStreamRows, Console.WindowHeight - ReservedPromptRows);
         var dynamicRows = Math.Max(MinBodyRows + MinStreamRows, availableRows - FrameOverheadRows);
 
-        var bodyRows = BuildBodyRows(context).ToList();
+        var bodyRows = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName).ToList();
         var streamRows = BuildStreamRows(context).ToList();
         var hasStreamPane = streamRows.Count > 0;
         var (bodyViewportRows, streamViewportRows) = hasStreamPane
@@ -32,7 +36,7 @@ internal sealed class InspectorTuiRenderer
         var frame = new List<string>(FrameOverheadRows + visibleBody.Count + (hasStreamPane ? visibleStream.Count + 1 : 0))
         {
             Border('┌', '┐'),
-            Line(BuildHeader(context)),
+            Line(BuildHeader(context, focusModeEnabled)),
             Border('├', '┤')
         };
 
@@ -50,19 +54,23 @@ internal sealed class InspectorTuiRenderer
         }
     }
 
-    private static IEnumerable<string> BuildBodyRows(InspectorContext context)
+    private static IEnumerable<string> BuildBodyRows(
+        InspectorContext context,
+        int? highlightedComponentIndex,
+        string? highlightedFieldName)
     {
         return context.Depth == InspectorDepth.ComponentList
-            ? BuildComponentRows(context)
-            : BuildFieldRows(context);
+            ? BuildComponentRows(context, highlightedComponentIndex)
+            : BuildFieldRows(context, highlightedFieldName);
     }
 
-    private static IEnumerable<string> BuildComponentRows(InspectorContext context)
+    private static IEnumerable<string> BuildComponentRows(InspectorContext context, int? highlightedComponentIndex)
     {
         var lines = new List<string> { "COMPONENTS:" };
         foreach (var component in context.Components)
         {
-            lines.Add($" [{component.Index}] {component.Name}");
+            var marker = highlightedComponentIndex == component.Index ? ">" : " ";
+            lines.Add($"{marker}[{component.Index}] {component.Name}");
         }
 
         if (lines.Count == 1)
@@ -73,7 +81,7 @@ internal sealed class InspectorTuiRenderer
         return lines;
     }
 
-    private static IEnumerable<string> BuildFieldRows(InspectorContext context)
+    private static IEnumerable<string> BuildFieldRows(InspectorContext context, string? highlightedFieldName)
     {
         var lines = new List<string>
         {
@@ -83,8 +91,9 @@ internal sealed class InspectorTuiRenderer
 
         foreach (var field in context.Fields)
         {
+            var marker = string.Equals(highlightedFieldName, field.Name, StringComparison.OrdinalIgnoreCase) ? ">" : " ";
             var typeCell = $"[{field.Type}]";
-            lines.Add($"{PadRight(field.Name, 20)}{PadRight(field.Value, 26)}{typeCell}");
+            lines.Add($"{marker}{PadRight(field.Name, 19)}{PadRight(field.Value, 26)}{typeCell}");
         }
 
         if (context.Fields.Count == 0)
@@ -108,12 +117,15 @@ internal sealed class InspectorTuiRenderer
         return rows;
     }
 
-    private static string BuildHeader(InspectorContext context)
+    private static string BuildHeader(InspectorContext context, bool focusModeEnabled)
     {
         var target = context.Depth == InspectorDepth.ComponentFields
             ? context.PromptPath
             : context.TargetPath;
-        return $"UnityCLI v0.1 | MODE: INSPECTOR | Target: {target}";
+        var focusLabel = focusModeEnabled
+            ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
+            : " | Focus Key: F8";
+        return $"UnityCLI v0.1 | MODE: INSPECTOR | Target: {target}{focusLabel}";
     }
 
     private static string Border(char left, char right)
