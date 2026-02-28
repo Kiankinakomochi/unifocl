@@ -6,7 +6,7 @@ if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOp
 {
     if (daemonParseError is not null)
     {
-        AnsiConsole.MarkupLine($"[red]{Markup.Escape(daemonParseError)}[/]");
+        CliTheme.MarkupLine($"[red]{Markup.Escape(daemonParseError)}[/]");
         Environment.ExitCode = 2;
         return;
     }
@@ -26,8 +26,8 @@ var commands = new List<CommandSpec>
     new("/q", "Alias for /quit", "/q"),
     new("/daemon <start|stop|restart|ps|attach|detach>", "Manage daemon lifecycle", "/daemon"),
     new("/d <start|stop|restart|ps|attach|detach>", "Alias for /daemon", "/d"),
-    new("/config <get|set|list|reset>", "Manage CLI/daemon preferences", "/config"),
-    new("/cfg <get|set|list|reset>", "Alias for /config", "/cfg"),
+    new("/config <get|set|list|reset> [theme]", "Manage CLI preferences (theme)", "/config"),
+    new("/cfg <get|set|list|reset> [theme]", "Alias for /config", "/cfg"),
     new("/status", "Show daemon/editor/project/session status", "/status"),
     new("/st", "Alias for /status", "/st"),
     new("/help [topic]", "Show help by topic", "/help"),
@@ -116,7 +116,7 @@ while (true)
             daemonControlService,
             daemonRuntime,
             line => AppendLog(streamLog, line));
-        AnsiConsole.MarkupLine("[grey]Input stream closed. Session ended.[/]");
+        CliTheme.MarkupLine("[grey]Input stream closed. Session ended.[/]");
         return;
     }
 
@@ -171,7 +171,7 @@ while (true)
 
     if (matched.Trigger == "/quit")
     {
-        AnsiConsole.MarkupLine("[grey]Session closed.[/]");
+        CliTheme.MarkupLine("[grey]Session closed.[/]");
         return;
     }
 
@@ -295,7 +295,7 @@ static string? ReadInput(
 {
     if (Console.IsInputRedirected)
     {
-        AnsiConsole.Markup($"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] ");
+        CliTheme.Markup($"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] ");
         return Console.ReadLine();
     }
 
@@ -439,7 +439,7 @@ static int RenderComposerFrame(
 
     foreach (var line in lines)
     {
-        AnsiConsole.MarkupLine(line);
+        CliTheme.MarkupLine(line);
     }
 
     return lines.Count;
@@ -474,7 +474,7 @@ static void RenderInitialLog(List<string> streamLog)
 {
     foreach (var line in streamLog)
     {
-        AnsiConsole.MarkupLine(line);
+        CliTheme.MarkupLine(line);
     }
 }
 
@@ -522,7 +522,7 @@ static void SeedBootLog(List<string> streamLog)
 
     foreach (var line in logo.Split('\n'))
     {
-        streamLog.Add($"[grey]{Markup.Escape(line)}[/]");
+        streamLog.Add($"[{CliTheme.Brand}]{Markup.Escape(line)}[/]");
     }
 
     streamLog.Add(string.Empty);
@@ -635,9 +635,15 @@ static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> co
     for (var i = 0; i < matches.Count; i++)
     {
         var match = matches[i];
-        var prefix = i == selected ? "[green]>[/]" : "[grey] [/]";
-        var signatureColor = i == selected ? "green" : "grey";
-        lines.Add($"{prefix} [{signatureColor}]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
+        var selectedLine = i == selected;
+        var prefix = selectedLine
+            ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]>[/]"
+            : "[grey] [/]";
+        var escapedSignature = Markup.Escape(match.Signature);
+        var escapedDescription = Markup.Escape(match.Description);
+        lines.Add(selectedLine
+            ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escapedSignature}[/] [dim]- {escapedDescription}[/]"
+            : $"{prefix} [grey]{escapedSignature}[/] [dim]- {escapedDescription}[/]");
     }
 
     return lines;
@@ -674,9 +680,14 @@ static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState sess
     for (var i = 0; i < candidates.Count && i < 10; i++)
     {
         var candidate = candidates[i];
-        var prefix = i == selected ? "[green]>[/]" : "[grey] [/]";
-        var indexColor = i == selected ? "green" : "deepskyblue1";
-        lines.Add($"{prefix} [{indexColor}]{i}[/] {Markup.Escape(candidate.Path)}");
+        var selectedLine = i == selected;
+        var prefix = selectedLine
+            ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]>[/]"
+            : "[grey] [/]";
+        var escapedPath = Markup.Escape(candidate.Path);
+        lines.Add(selectedLine
+            ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{i}[/] [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escapedPath}[/]"
+            : $"{prefix} [deepskyblue1]{i}[/] {escapedPath}");
     }
 
     return true;
@@ -917,5 +928,5 @@ static void WriteMockCommandStream(string input, List<string> streamLog)
 static void AppendLog(List<string> streamLog, string line)
 {
     streamLog.Add(line);
-    AnsiConsole.MarkupLine(line);
+    CliTheme.MarkupLine(line);
 }

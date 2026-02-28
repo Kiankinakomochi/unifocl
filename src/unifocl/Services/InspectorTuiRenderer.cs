@@ -7,6 +7,7 @@ internal sealed class InspectorTuiRenderer
     private const int MinStreamRows = 4;
     private const int ReservedPromptRows = 4;
     private const int FrameOverheadRows = 5;
+    private sealed record RenderRow(string Content, bool Highlight);
 
     public void Render(
         InspectorContext context,
@@ -40,21 +41,21 @@ internal sealed class InspectorTuiRenderer
             Border('├', '┤')
         };
 
-        frame.AddRange(visibleBody.Select(Line));
+        frame.AddRange(visibleBody.Select(row => Line(row.Content, row.Highlight)));
         if (hasStreamPane)
         {
             frame.Add(Border('├', '┤'));
-            frame.AddRange(visibleStream.Select(Line));
+            frame.AddRange(visibleStream.Select(streamLine => Line(streamLine)));
         }
         frame.Add(Border('└', '┘'));
 
         foreach (var line in frame)
         {
-            AnsiConsole.MarkupLine(Markup.Escape(line));
+            CliTheme.MarkupLine(line);
         }
     }
 
-    private static IEnumerable<string> BuildBodyRows(
+    private static IEnumerable<RenderRow> BuildBodyRows(
         InspectorContext context,
         int? highlightedComponentIndex,
         string? highlightedFieldName)
@@ -64,41 +65,43 @@ internal sealed class InspectorTuiRenderer
             : BuildFieldRows(context, highlightedFieldName);
     }
 
-    private static IEnumerable<string> BuildComponentRows(InspectorContext context, int? highlightedComponentIndex)
+    private static IEnumerable<RenderRow> BuildComponentRows(InspectorContext context, int? highlightedComponentIndex)
     {
-        var lines = new List<string> { "COMPONENTS:" };
+        var lines = new List<RenderRow> { new("COMPONENTS:", false) };
         foreach (var component in context.Components)
         {
-            var marker = highlightedComponentIndex == component.Index ? ">" : " ";
-            lines.Add($"{marker}[{component.Index}] {component.Name}");
+            var selected = highlightedComponentIndex == component.Index;
+            var marker = selected ? ">" : " ";
+            lines.Add(new RenderRow($"{marker}[{component.Index}] {component.Name}", selected));
         }
 
         if (lines.Count == 1)
         {
-            lines.Add(" [empty]");
+            lines.Add(new RenderRow(" [empty]", false));
         }
 
         return lines;
     }
 
-    private static IEnumerable<string> BuildFieldRows(InspectorContext context, string? highlightedFieldName)
+    private static IEnumerable<RenderRow> BuildFieldRows(InspectorContext context, string? highlightedFieldName)
     {
-        var lines = new List<string>
+        var lines = new List<RenderRow>
         {
-            $"{PadRight("FIELD", 20)}{PadRight("VALUE", 26)}TYPE",
-            new string('─', InnerWidth - 1)
+            new($"{PadRight("FIELD", 20)}{PadRight("VALUE", 26)}TYPE", false),
+            new(new string('─', InnerWidth - 1), false)
         };
 
         foreach (var field in context.Fields)
         {
-            var marker = string.Equals(highlightedFieldName, field.Name, StringComparison.OrdinalIgnoreCase) ? ">" : " ";
+            var selected = string.Equals(highlightedFieldName, field.Name, StringComparison.OrdinalIgnoreCase);
+            var marker = selected ? ">" : " ";
             var typeCell = $"[{field.Type}]";
-            lines.Add($"{marker}{PadRight(field.Name, 19)}{PadRight(field.Value, 26)}{typeCell}");
+            lines.Add(new RenderRow($"{marker}{PadRight(field.Name, 19)}{PadRight(field.Value, 26)}{typeCell}", selected));
         }
 
         if (context.Fields.Count == 0)
         {
-            lines.Add(" [empty]");
+            lines.Add(new RenderRow(" [empty]", false));
         }
 
         return lines;
@@ -133,10 +136,12 @@ internal sealed class InspectorTuiRenderer
         return $"{left}{new string('─', InnerWidth)}{right}";
     }
 
-    private static string Line(string content)
+    private static string Line(string content, bool highlight = false)
     {
         var trimmed = content.Length > InnerWidth ? content[..InnerWidth] : content;
-        return $"│{trimmed.PadRight(InnerWidth)}│";
+        var escaped = Markup.Escape(trimmed.PadRight(InnerWidth));
+        var line = $"│{escaped}│";
+        return highlight ? CliTheme.CursorWrapEscaped(line) : line;
     }
 
     private static (int BodyRows, int StreamRows) AllocateViewportRows(int dynamicRows, int bodyCount, int streamCount)
@@ -158,6 +163,42 @@ internal sealed class InspectorTuiRenderer
         }
 
         return (Math.Max(1, bodyRows), Math.Max(1, streamRows));
+    }
+
+    private static IReadOnlyList<RenderRow> SliceRows(
+        IReadOnlyList<RenderRow> source,
+        int viewportRows,
+        ref int offset,
+        bool followTail)
+    {
+        viewportRows = Math.Max(1, viewportRows);
+        var rows = source.Count == 0 ? new List<RenderRow> { new(string.Empty, false) } : source.ToList();
+        var maxOffset = Math.Max(0, rows.Count - viewportRows);
+        if (followTail)
+        {
+            offset = maxOffset;
+        }
+
+        offset = Math.Clamp(offset, 0, maxOffset);
+        var visible = rows.Skip(offset).Take(viewportRows).ToList();
+        while (visible.Count < viewportRows)
+        {
+            visible.Add(new RenderRow(string.Empty, false));
+        }
+
+        var hiddenAbove = offset;
+        var hiddenBelow = Math.Max(0, rows.Count - (offset + visible.Count));
+        if (hiddenAbove > 0 && visible.Count > 0)
+        {
+            visible[0] = new RenderRow($"... {hiddenAbove} line(s) above ...", false);
+        }
+
+        if (hiddenBelow > 0 && visible.Count > 1)
+        {
+            visible[^1] = new RenderRow($"... {hiddenBelow} line(s) below ...", false);
+        }
+
+        return visible;
     }
 
     private static IReadOnlyList<string> SliceRows(

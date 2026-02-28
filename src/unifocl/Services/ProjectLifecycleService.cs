@@ -25,6 +25,7 @@ internal sealed class ProjectLifecycleService
             "/recent" => await HandleRecentAsync(input, matched, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
             "/init" => await HandleInitAsync(input, matched, session, log),
+            "/config" => await HandleConfigAsync(input, matched, log),
             _ => false
         };
     }
@@ -340,6 +341,151 @@ internal sealed class ProjectLifecycleService
         }
 
         return Task.FromResult(true);
+    }
+
+    private Task<bool> HandleConfigAsync(
+        string input,
+        CommandSpec matched,
+        Action<string> log)
+    {
+        var args = ParseCommandArgs(input, matched.Trigger);
+        if (args.Count == 0)
+        {
+            log("[red]error[/]: usage /config <get|set|list|reset> [theme] [value]");
+            return Task.FromResult(true);
+        }
+
+        var action = args[0].Trim().ToLowerInvariant();
+        return action switch
+        {
+            "list" => HandleConfigList(log),
+            "get" => HandleConfigGet(args.Skip(1).ToList(), log),
+            "set" => HandleConfigSet(args.Skip(1).ToList(), log),
+            "reset" => HandleConfigReset(args.Skip(1).ToList(), log),
+            _ => Task.FromResult(LogConfigUsage(log))
+        };
+    }
+
+    private static Task<bool> HandleConfigList(Action<string> log)
+    {
+        var loadResult = TryLoadCliConfig(out var config, out var error);
+        if (!loadResult)
+        {
+            log($"[red]error[/]: {Markup.Escape(error ?? "failed to read config")}");
+            return Task.FromResult(true);
+        }
+
+        var source = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNIFOCL_THEME"))
+            ? "file/default"
+            : "env (UNIFOCL_THEME)";
+        var theme = ResolveEffectiveTheme(config);
+        log("[grey]config[/]: available settings");
+        log($"[grey]config[/]: [white]theme[/] = [white]{theme}[/] [dim](dark|light, source: {source})[/]");
+        return Task.FromResult(true);
+    }
+
+    private static Task<bool> HandleConfigGet(IReadOnlyList<string> args, Action<string> log)
+    {
+        if (args.Count != 1)
+        {
+            log("[red]error[/]: usage /config get <theme>");
+            return Task.FromResult(true);
+        }
+
+        if (!IsThemeKey(args[0]))
+        {
+            log("[red]error[/]: only 'theme' is supported");
+            return Task.FromResult(true);
+        }
+
+        var loadResult = TryLoadCliConfig(out var config, out var error);
+        if (!loadResult)
+        {
+            log($"[red]error[/]: {Markup.Escape(error ?? "failed to read config")}");
+            return Task.FromResult(true);
+        }
+
+        var theme = ResolveEffectiveTheme(config);
+        log($"[grey]config[/]: [white]theme[/] = [white]{theme}[/]");
+        return Task.FromResult(true);
+    }
+
+    private static Task<bool> HandleConfigSet(IReadOnlyList<string> args, Action<string> log)
+    {
+        if (args.Count != 2)
+        {
+            log("[red]error[/]: usage /config set <theme> <dark|light>");
+            return Task.FromResult(true);
+        }
+
+        if (!IsThemeKey(args[0]))
+        {
+            log("[red]error[/]: only 'theme' is supported");
+            return Task.FromResult(true);
+        }
+
+        var requestedTheme = args[1].Trim().ToLowerInvariant();
+        if (requestedTheme is not ("dark" or "light"))
+        {
+            log("[red]error[/]: theme must be 'dark' or 'light'");
+            return Task.FromResult(true);
+        }
+
+        if (!TryLoadCliConfig(out var config, out var loadError))
+        {
+            log($"[red]error[/]: {Markup.Escape(loadError ?? "failed to read config")}");
+            return Task.FromResult(true);
+        }
+
+        config.Theme = requestedTheme;
+        if (!TrySaveCliConfig(config, out var saveError))
+        {
+            log($"[red]error[/]: {Markup.Escape(saveError ?? "failed to write config")}");
+            return Task.FromResult(true);
+        }
+
+        CliTheme.TrySetTheme(requestedTheme);
+        log($"[green]config[/]: theme set to [white]{requestedTheme}[/]");
+        return Task.FromResult(true);
+    }
+
+    private static Task<bool> HandleConfigReset(IReadOnlyList<string> args, Action<string> log)
+    {
+        if (args.Count > 1)
+        {
+            log("[red]error[/]: usage /config reset [theme]");
+            return Task.FromResult(true);
+        }
+
+        if (args.Count == 1 && !IsThemeKey(args[0]))
+        {
+            log("[red]error[/]: only 'theme' is supported");
+            return Task.FromResult(true);
+        }
+
+        if (!TryLoadCliConfig(out var config, out var loadError))
+        {
+            log($"[red]error[/]: {Markup.Escape(loadError ?? "failed to read config")}");
+            return Task.FromResult(true);
+        }
+
+        config.Theme = null;
+        if (!TrySaveCliConfig(config, out var saveError))
+        {
+            log($"[red]error[/]: {Markup.Escape(saveError ?? "failed to write config")}");
+            return Task.FromResult(true);
+        }
+
+        var effective = ResolveEffectiveTheme(config);
+        CliTheme.TrySetTheme(effective);
+        log($"[green]config[/]: theme reset to default [white]{effective}[/]");
+        return Task.FromResult(true);
+    }
+
+    private static bool LogConfigUsage(Action<string> log)
+    {
+        log("[red]error[/]: usage /config <get|set|list|reset> [theme] [value]");
+        return true;
     }
 
     private async Task<bool> HandleCloseAsync(
@@ -705,5 +851,122 @@ internal sealed class ProjectLifecycleService
 
         var firstLine = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
         return firstLine is null ? $"exit code {result.ExitCode}" : firstLine;
+    }
+
+    private static bool TryLoadCliConfig(out CliConfig config, out string? error)
+    {
+        config = new CliConfig();
+        error = null;
+
+        try
+        {
+            var path = GetCliConfigPath();
+            if (!File.Exists(path))
+            {
+                return true;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                error = "invalid config format";
+                return false;
+            }
+
+            if (document.RootElement.TryGetProperty("theme", out var themeProperty)
+                && themeProperty.ValueKind == JsonValueKind.String)
+            {
+                config.Theme = themeProperty.GetString();
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"failed to read config ({ex.Message})";
+            return false;
+        }
+    }
+
+    private static bool TrySaveCliConfig(CliConfig config, out string? error)
+    {
+        error = null;
+        try
+        {
+            var path = GetCliConfigPath();
+            var directory = Path.GetDirectoryName(path);
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                error = "failed to resolve config directory";
+                return false;
+            }
+
+            Directory.CreateDirectory(directory);
+            var payload = JsonSerializer.Serialize(
+                new Dictionary<string, string?> { ["theme"] = NormalizeTheme(config.Theme) },
+                new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, payload + Environment.NewLine);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"failed to write config ({ex.Message})";
+            return false;
+        }
+    }
+
+    private static string ResolveEffectiveTheme(CliConfig config)
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("UNIFOCL_THEME");
+        if (NormalizeTheme(fromEnv) is string envTheme)
+        {
+            return envTheme;
+        }
+
+        return NormalizeTheme(config.Theme) ?? "dark";
+    }
+
+    private static bool IsThemeKey(string key)
+    {
+        return key.Equals("theme", StringComparison.OrdinalIgnoreCase)
+               || key.Equals("ui.theme", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeTheme(string? theme)
+    {
+        if (string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase))
+        {
+            return "dark";
+        }
+
+        if (string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
+        {
+            return "light";
+        }
+
+        return null;
+    }
+
+    private static string GetCliConfigPath()
+    {
+        var explicitPath = Environment.GetEnvironmentVariable("UNIFOCL_CONFIG_PATH");
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            return Path.GetFullPath(explicitPath);
+        }
+
+        var configRoot = Environment.GetEnvironmentVariable("UNIFOCL_CONFIG_ROOT");
+        if (!string.IsNullOrWhiteSpace(configRoot))
+        {
+            return Path.Combine(Path.GetFullPath(configRoot), "config.json");
+        }
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Path.Combine(home, ".unifocl", "config.json");
+    }
+
+    private sealed class CliConfig
+    {
+        public string? Theme { get; set; }
     }
 }

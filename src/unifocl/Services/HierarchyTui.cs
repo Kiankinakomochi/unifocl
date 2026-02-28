@@ -1,4 +1,5 @@
 using System.Text;
+using Spectre.Console;
 
 internal sealed class HierarchyTui
 {
@@ -497,26 +498,27 @@ internal sealed class HierarchyTui
             ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
             : $" | Focus Key: {FocusModeKey}";
 
-        Console.WriteLine(borderTop);
-        Console.WriteLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}"));
-        Console.WriteLine(borderMid);
+        WriteFrameLine(borderTop);
+        WriteFrameLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}"));
+        WriteFrameLine(borderMid);
 
         foreach (var line in visibleTree)
         {
-            Console.WriteLine(ToFrameLine($" {line}"));
+            var selected = focusModeEnabled && line.StartsWith("> ", StringComparison.Ordinal);
+            WriteFrameLine(ToFrameLine($" {line}"), selected);
         }
 
         if (hasStreamPane)
         {
-            Console.WriteLine(borderMid);
+            WriteFrameLine(borderMid);
             for (var i = 0; i < visibleCommandLog.Count; i++)
             {
                 var line = visibleCommandLog[i];
-                Console.WriteLine(ToFrameLine($" {line}"));
+                WriteFrameLine(ToFrameLine($" {line}"));
             }
         }
 
-        Console.WriteLine(borderBottom);
+        WriteFrameLine(borderBottom);
     }
 
     private static List<HierarchyTreeLine> BuildTreeLines(
@@ -765,6 +767,12 @@ internal sealed class HierarchyTui
         var sanitized = raw.Replace('\t', ' ');
         var content = sanitized.Length > FrameWidth ? sanitized[..FrameWidth] : sanitized.PadRight(FrameWidth, ' ');
         return $"│{content}│";
+    }
+
+    private static void WriteFrameLine(string line, bool highlight = false)
+    {
+        var escaped = Markup.Escape(line);
+        CliTheme.MarkupLine(highlight ? CliTheme.CursorWrapEscaped(escaped) : escaped);
     }
 
     private static (int TreeRows, int CommandRows) AllocateViewportRows(int dynamicRows, int treeCount, int commandCount)
