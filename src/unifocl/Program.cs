@@ -242,6 +242,12 @@ while (true)
         continue;
     }
 
+    if (matched.Trigger is "/keybinds" or "/shortcuts")
+    {
+        WriteKeybindsHelp(streamLog, session);
+        continue;
+    }
+
     AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
     if (matched.Trigger.StartsWith("/daemon", StringComparison.Ordinal))
     {
@@ -359,6 +365,24 @@ static string? ReadInteractiveInput(
                         : selectedIntellisenseCandidateIndex + 1;
                 }
                 break;
+            case ConsoleKey.F7:
+                if (input.Length == 0
+                    && session.ContextMode == CliContextMode.Project
+                    && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+                {
+                    Console.WriteLine();
+                    return ":focus-project";
+                }
+                break;
+            case ConsoleKey.F8:
+                if (input.Length == 0
+                    && session.ContextMode == CliContextMode.Inspector
+                    && session.Inspector is not null)
+                {
+                    Console.WriteLine();
+                    return ":focus-inspector";
+                }
+                break;
             default:
                 if (!char.IsControl(key.KeyChar))
                 {
@@ -402,11 +426,11 @@ static int RenderComposerFrame(
     }
     else if (session.Inspector is not null)
     {
-        lines.Add("[dim]Inspector mode: list, enter <idx>, up, set <field> <value>, toggle <field|idx>, scroll [body|stream] <up|down> [n][/]");
+        lines.Add("[dim]Inspector mode: list, enter <idx>, up, set <field> <value>, toggle <field|idx>, scroll [body|stream] <up|down> [n], F8 focus nav[/]");
     }
     else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        lines.Add("[dim]Project mode: list, enter <idx>, up, f <query>, make script <name>, load <idx|name>, rename <idx> <new>, remove <idx>, move <...>[/]");
+        lines.Add("[dim]Project mode: list, enter <idx>, up, f <query>, make script <name>, load <idx|name>, rename <idx> <new>, remove <idx>, move <...>, F7 focus nav[/]");
     }
     else
     {
@@ -504,6 +528,55 @@ static void SeedBootLog(List<string> streamLog)
     streamLog.Add(string.Empty);
     streamLog.Add("[grey]No project attached.[/]");
     streamLog.Add(string.Empty);
+}
+
+static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
+{
+    AppendLog(streamLog, "[bold deepskyblue1]unifocl[/] [grey]>[/] [white]/keybinds[/]");
+    AppendLog(streamLog, "[grey]keybinds[/]: global");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F6[/] enter/exit hierarchy focus mode (inside /hierarchy)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] enter/exit inspector focus mode (inspector context)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] clear composer input");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] fuzzy candidate selection in composer");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] commit command/input");
+
+    AppendLog(streamLog, "[grey]keybinds[/]: hierarchy focus");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted GameObject");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] expand selected node");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] collapse selected node");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F6[/] exit focus mode");
+
+    AppendLog(streamLog, "[grey]keybinds[/]: project focus");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted file/folder");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] reveal/open selected entry");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] move to parent folder");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F7[/] exit focus mode");
+
+    AppendLog(streamLog, "[grey]keybinds[/]: inspector focus");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted component/field");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] inspect selected component");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] back to component list");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F8[/] exit focus mode");
+
+    if (session.ContextMode == CliContextMode.Project && session.Inspector is null)
+    {
+        AppendLog(streamLog, "[grey]keybinds[/]: current context -> project (F7 available now)");
+    }
+    else if (session.ContextMode == CliContextMode.Inspector && session.Inspector is not null)
+    {
+        AppendLog(streamLog, "[grey]keybinds[/]: current context -> inspector (F8 available now)");
+    }
+    else if (session.ContextMode == CliContextMode.Hierarchy)
+    {
+        AppendLog(streamLog, "[grey]keybinds[/]: current context -> hierarchy (F6 available now)");
+    }
+    else
+    {
+        AppendLog(streamLog, "[grey]keybinds[/]: current context -> boot/general");
+    }
+
+    AppendLog(streamLog, "[yellow]note[/]: if your terminal does not emit [white]Shift+Tab[/] distinctly, use typed command [white]up[/] as fallback.");
 }
 
 static bool TryGetComposerIntellisenseCandidates(

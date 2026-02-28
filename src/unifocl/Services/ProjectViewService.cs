@@ -106,6 +106,96 @@ internal sealed class ProjectViewService
         return true;
     }
 
+    public async Task RunKeyboardFocusModeAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return;
+        }
+
+        InitializeIfNeeded(session.ProjectView, session.CurrentProjectPath);
+        var outputs = new List<string>
+        {
+            "[i] project focus mode enabled (up/down select, tab open/reveal, shift+tab back, esc exit)"
+        };
+        AppendTranscript(session.ProjectView, outputs);
+        outputs.Clear();
+
+        var selectedEntryPosition = 0;
+        while (true)
+        {
+            RefreshTree(session.CurrentProjectPath, session.ProjectView);
+            var entries = session.ProjectView.VisibleEntries;
+            if (entries.Count == 0)
+            {
+                RenderFrame(session.ProjectView, null, focusModeEnabled: true);
+            }
+            else
+            {
+                selectedEntryPosition = Math.Clamp(selectedEntryPosition, 0, entries.Count - 1);
+                RenderFrame(session.ProjectView, entries[selectedEntryPosition].Index, focusModeEnabled: true);
+            }
+
+            var intent = KeyboardIntentReader.ReadIntent();
+            switch (intent)
+            {
+                case KeyboardIntent.Up:
+                    if (entries.Count > 0)
+                    {
+                        selectedEntryPosition = selectedEntryPosition <= 0
+                            ? entries.Count - 1
+                            : selectedEntryPosition - 1;
+                    }
+                    break;
+                case KeyboardIntent.Down:
+                    if (entries.Count > 0)
+                    {
+                        selectedEntryPosition = selectedEntryPosition >= entries.Count - 1
+                            ? 0
+                            : selectedEntryPosition + 1;
+                    }
+                    break;
+                case KeyboardIntent.Tab:
+                    if (entries.Count == 0)
+                    {
+                        break;
+                    }
+
+                    await HandleProjectFocusTabAsync(entries[selectedEntryPosition], session, daemonControlService, daemonRuntime, outputs);
+                    if (session.ContextMode != CliContextMode.Project)
+                    {
+                        AppendTranscript(session.ProjectView, outputs);
+                        RenderFrame(session.ProjectView);
+                        return;
+                    }
+
+                    selectedEntryPosition = 0;
+                    break;
+                case KeyboardIntent.ShiftTab:
+                    HandleUp(session.ProjectView, outputs);
+                    selectedEntryPosition = 0;
+                    break;
+                case KeyboardIntent.Escape:
+                case KeyboardIntent.FocusProject:
+                    outputs.Add("[i] project focus mode disabled");
+                    AppendTranscript(session.ProjectView, outputs);
+                    RenderFrame(session.ProjectView);
+                    return;
+                default:
+                    break;
+            }
+
+            if (outputs.Count > 0)
+            {
+                AppendTranscript(session.ProjectView, outputs);
+                outputs.Clear();
+            }
+        }
+    }
+
     private static void InitializeIfNeeded(ProjectViewState state, string projectPath)
     {
         if (state.Initialized)
@@ -239,6 +329,34 @@ internal sealed class ProjectViewService
         state.ExpandedDirectories.Clear();
         outputs.Add($"[i] moved up to: {state.RelativeCwd}/");
         return true;
+    }
+
+    private static bool IsExpandedDirectory(ProjectViewState state, ProjectTreeEntry entry)
+    {
+        return state.ExpandedDirectories.Contains(entry.RelativePath);
+    }
+
+    private static async Task HandleProjectFocusTabAsync(
+        ProjectTreeEntry entry,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        List<string> outputs)
+    {
+        if (entry.IsDirectory)
+        {
+            if (!IsExpandedDirectory(session.ProjectView, entry))
+            {
+                HandleExpand(entry.Index, session.ProjectView, outputs);
+                return;
+            }
+
+            HandleNest(entry.Index, session.ProjectView, outputs);
+            return;
+        }
+
+        await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
+        HandleLoad(entry.Index.ToString(), session, outputs);
     }
 
     private static bool HandleMakeScript(string rawName, string projectPath, ProjectViewState state, List<string> outputs)
@@ -509,10 +627,10 @@ internal sealed class ProjectViewService
         return true;
     }
 
-    private void RenderFrame(ProjectViewState state)
+    private void RenderFrame(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
     {
         AnsiConsole.Clear();
-        var lines = _renderer.Render(state);
+        var lines = _renderer.Render(state, highlightedEntryIndex, focusModeEnabled);
         foreach (var line in lines)
         {
             AnsiConsole.MarkupLine(line);

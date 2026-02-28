@@ -24,6 +24,30 @@ internal sealed class ProjectCommandRouterService
             session.ContextMode = CliContextMode.Project;
         }
 
+        if (input.Equals(":focus-project", StringComparison.OrdinalIgnoreCase))
+        {
+            if (session.ContextMode != CliContextMode.Project)
+            {
+                log("[yellow]project[/]: focus navigation is available in project context only");
+                return true;
+            }
+
+            await _projectViewService.RunKeyboardFocusModeAsync(session, daemonControlService, daemonRuntime);
+            return true;
+        }
+
+        if (input.Equals(":focus-inspector", StringComparison.OrdinalIgnoreCase))
+        {
+            if (session.ContextMode != CliContextMode.Inspector || session.Inspector is null)
+            {
+                log("[yellow]inspector[/]: focus navigation is available in inspector context only");
+                return true;
+            }
+
+            await _inspectorModeService.RunKeyboardFocusModeAsync(session, log);
+            return true;
+        }
+
         var projectPath = session.CurrentProjectPath;
         var normalizedInput = NormalizeContextualInput(input, session.ContextMode, log);
         if (normalizedInput is null)
