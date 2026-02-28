@@ -480,6 +480,11 @@ static void RenderInitialLog(List<string> streamLog)
 
 static void SeedBootLog(List<string> streamLog)
 {
+    const int logoWidth = 201;
+    const int logoHeight = 40;
+
+    EnsureLogoViewport(streamLog, logoWidth, logoHeight);
+
     streamLog.Add("[bold deepskyblue1]unifocl[/]");
     streamLog.Add("[bold green]Welcome to unifocl[/]");
     streamLog.Add(string.Empty);
@@ -529,7 +534,7 @@ t**j+./t***************f_~t*'                 <ftt!?j**************f[ {f*f{     
 
     foreach (var line in logo.Split('\n'))
     {
-        streamLog.Add($"[{CliTheme.Brand}]{Markup.Escape(FitLogoLineToTerminal(line))}[/]");
+        streamLog.Add($"[{CliTheme.Brand}]{Markup.Escape(line)}[/]");
     }
 
     streamLog.Add(string.Empty);
@@ -537,33 +542,60 @@ t**j+./t***************f_~t*'                 <ftt!?j**************f[ {f*f{     
     streamLog.Add(string.Empty);
 }
 
-static string FitLogoLineToTerminal(string line)
+static void EnsureLogoViewport(List<string> streamLog, int minimumWidth, int minimumHeight)
 {
-    var width = TryGetTerminalWidth();
-    if (width <= 0 || line.Length <= width)
+    if (Console.IsOutputRedirected)
     {
-        return line;
+        return;
     }
 
-    // Prefer preserving logo content over leading indentation when width is limited.
-    var trimmed = line.TrimStart();
-    if (trimmed.Length <= width)
-    {
-        return trimmed;
-    }
-
-    return trimmed[..width];
-}
-
-static int TryGetTerminalWidth()
-{
     try
     {
-        return Console.WindowWidth;
+        var currentWindowWidth = Console.WindowWidth;
+        var currentWindowHeight = Console.WindowHeight;
+        var maxWindowWidth = Console.LargestWindowWidth;
+        var maxWindowHeight = Console.LargestWindowHeight;
+
+        var targetWindowWidth = Math.Min(Math.Max(currentWindowWidth, minimumWidth), maxWindowWidth);
+        var targetWindowHeight = Math.Min(Math.Max(currentWindowHeight, minimumHeight), maxWindowHeight);
+
+        if (targetWindowWidth > 0 && targetWindowHeight > 0)
+        {
+            try
+            {
+                var targetBufferWidth = Math.Max(Console.BufferWidth, targetWindowWidth);
+                var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
+                if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
+                {
+                    Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
+                }
+            }
+            catch
+            {
+                // Some terminals do not support buffer resizing.
+            }
+
+            if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
+            {
+                Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
+            }
+        }
     }
     catch
     {
-        return 0;
+        // Non-fatal: keep startup resilient on terminals that disallow resize APIs.
+    }
+
+    try
+    {
+        if (Console.WindowWidth < minimumWidth || Console.WindowHeight < minimumHeight)
+        {
+            streamLog.Add($"[yellow]note[/]: logo expects terminal >= {minimumWidth}x{minimumHeight}; current is {Console.WindowWidth}x{Console.WindowHeight}.");
+        }
+    }
+    catch
+    {
+        // Ignore size probe failures.
     }
 }
 
