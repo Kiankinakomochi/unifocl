@@ -310,11 +310,19 @@ static string? ReadInteractiveInput(
 {
     var input = new StringBuilder();
     var selectedIntellisenseCandidateIndex = 0;
-    var renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedIntellisenseCandidateIndex);
+    var intellisenseDismissed = false;
+    var renderedLines = RenderComposerFrame(
+        input.ToString(),
+        commands,
+        projectCommands,
+        session,
+        selectedIntellisenseCandidateIndex,
+        intellisenseDismissed);
 
     while (true)
     {
-        _ = TryGetComposerIntellisenseCandidates(input.ToString(), commands, projectCommands, session, out var candidates);
+        _ = TryGetComposerIntellisenseCandidates(input.ToString(), commands, projectCommands, session, out var allCandidates);
+        var candidates = intellisenseDismissed ? [] : allCandidates;
         if (candidates.Count == 0)
         {
             selectedIntellisenseCandidateIndex = 0;
@@ -344,12 +352,29 @@ static string? ReadInteractiveInput(
                 {
                     input.Remove(input.Length - 1, 1);
                 }
+
+                intellisenseDismissed = false;
                 break;
             case ConsoleKey.Escape:
-                input.Clear();
+                if (!intellisenseDismissed && allCandidates.Count > 0)
+                {
+                    intellisenseDismissed = true;
+                }
+                else
+                {
+                    input.Clear();
+                    intellisenseDismissed = false;
+                }
+
                 selectedIntellisenseCandidateIndex = 0;
                 break;
             case ConsoleKey.UpArrow:
+                if (intellisenseDismissed && allCandidates.Count > 0)
+                {
+                    intellisenseDismissed = false;
+                    candidates = allCandidates;
+                }
+
                 if (candidates.Count > 0)
                 {
                     selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex <= 0
@@ -358,6 +383,12 @@ static string? ReadInteractiveInput(
                 }
                 break;
             case ConsoleKey.DownArrow:
+                if (intellisenseDismissed && allCandidates.Count > 0)
+                {
+                    intellisenseDismissed = false;
+                    candidates = allCandidates;
+                }
+
                 if (candidates.Count > 0)
                 {
                     selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex >= candidates.Count - 1
@@ -387,12 +418,19 @@ static string? ReadInteractiveInput(
                 if (!char.IsControl(key.KeyChar))
                 {
                     input.Append(key.KeyChar);
+                    intellisenseDismissed = false;
                 }
                 break;
         }
 
         ClearComposerFrame(renderedLines);
-        renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedIntellisenseCandidateIndex);
+        renderedLines = RenderComposerFrame(
+            input.ToString(),
+            commands,
+            projectCommands,
+            session,
+            selectedIntellisenseCandidateIndex,
+            intellisenseDismissed);
     }
 }
 
@@ -401,7 +439,8 @@ static int RenderComposerFrame(
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
     CliSessionState session,
-    int selectedFuzzyCandidateIndex)
+    int selectedFuzzyCandidateIndex,
+    bool suppressIntellisense)
 {
     var lines = new List<string>
     {
@@ -409,7 +448,11 @@ static int RenderComposerFrame(
         $"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
     };
 
-    if (input.StartsWith('/'))
+    if (suppressIntellisense)
+    {
+        lines.Add("[dim]intellisense dismissed (Esc). Type or use ↑/↓ to reopen suggestions.[/]");
+    }
+    else if (input.StartsWith('/'))
     {
         lines.Add(string.Empty);
         lines.AddRange(GetSuggestionLines(input, commands, selectedFuzzyCandidateIndex));
@@ -537,7 +580,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F6[/] enter/exit hierarchy focus mode (inside /hierarchy)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] enter/exit inspector focus mode (inspector context)");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] clear composer input");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] dismiss intellisense (or clear input if already dismissed)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] fuzzy candidate selection in composer");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] commit command/input");
 
