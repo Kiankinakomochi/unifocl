@@ -47,10 +47,9 @@ internal sealed class ProjectViewService
         {
             handled = HandleExpand(index, session.ProjectView, outputs);
         }
-        else if (tokens.Count >= 3
+        else if (tokens.Count >= 2
                  && tokens[0].Equals("cd", StringComparison.OrdinalIgnoreCase)
-                 && int.TryParse(tokens[1], out index)
-                 && tokens[2].Equals("-nest", StringComparison.OrdinalIgnoreCase))
+                 && int.TryParse(tokens[1], out index))
         {
             handled = HandleNest(index, session.ProjectView, outputs);
         }
@@ -61,10 +60,25 @@ internal sealed class ProjectViewService
             await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
             handled = HandleMakeScript(tokens[2], session.CurrentProjectPath, session.ProjectView, outputs);
         }
+        else if (tokens.Count >= 2 && tokens[0].Equals("load", StringComparison.OrdinalIgnoreCase))
+        {
+            await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
+            var selector = string.Join(' ', tokens.Skip(1));
+            handled = HandleLoad(selector, session, outputs);
+        }
         else if (tokens.Count >= 3 && tokens[0].Equals("rename", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
             await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
             handled = HandleRename(index, tokens[2], session.CurrentProjectPath, session.ProjectView, outputs);
+        }
+        else if (tokens.Count >= 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
+        {
+            await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
+            handled = HandleRemove(index, session.CurrentProjectPath, session.ProjectView, outputs);
+        }
+        else if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
+        {
+            handled = HandleUp(session.ProjectView, outputs);
         }
         else if (tokens[0].Equals("ls", StringComparison.OrdinalIgnoreCase)
                  || tokens[0].Equals("ref", StringComparison.OrdinalIgnoreCase))
@@ -200,6 +214,22 @@ internal sealed class ProjectViewService
         return true;
     }
 
+    private static bool HandleUp(ProjectViewState state, List<string> outputs)
+    {
+        var cwd = state.RelativeCwd.Replace('\\', '/').Trim('/');
+        if (cwd.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+        {
+            outputs.Add("[i] already at Assets root");
+            return true;
+        }
+
+        var parent = Path.GetDirectoryName(cwd)?.Replace('\\', '/');
+        state.RelativeCwd = string.IsNullOrWhiteSpace(parent) ? "Assets" : parent;
+        state.ExpandedDirectories.Clear();
+        outputs.Add($"[i] moved up to: {state.RelativeCwd}/");
+        return true;
+    }
+
     private static bool HandleMakeScript(string rawName, string projectPath, ProjectViewState state, List<string> outputs)
     {
         var typeName = SanitizeTypeName(rawName);
@@ -228,6 +258,101 @@ internal sealed class ProjectViewService
         outputs.Add("[=] import complete. metadata synced.");
         state.DbState = ProjectDbState.IdleSafe;
         return true;
+    }
+
+    private static bool HandleRemove(int index, string projectPath, ProjectViewState state, List<string> outputs)
+    {
+        var target = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
+        if (target is null)
+        {
+            outputs.Add($"[x] invalid index: {index}");
+            return true;
+        }
+
+        var targetAbsolute = ResolveAbsolutePath(projectPath, target.RelativePath);
+        state.DbState = ProjectDbState.LockedImporting;
+        outputs.Add($"[!] AssetDatabase.MoveAssetToTrash({target.RelativePath})");
+        try
+        {
+            if (target.IsDirectory)
+            {
+                Directory.Delete(targetAbsolute, recursive: true);
+            }
+            else
+            {
+                File.Delete(targetAbsolute);
+            }
+
+            outputs.Add($"[=] removed: {target.RelativePath}");
+        }
+        catch (Exception ex)
+        {
+            outputs.Add($"[x] remove failed: {ex.Message}");
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
+
+        return true;
+    }
+
+    private static bool HandleLoad(string selector, CliSessionState session, List<string> outputs)
+    {
+        var state = session.ProjectView;
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            outputs.Add("[x] usage: load <idx|name>");
+            return true;
+        }
+
+        var target = FindEntryBySelector(state, selector);
+        if (target is null)
+        {
+            outputs.Add($"[x] no entry matches: {selector}");
+            return true;
+        }
+
+        if (target.IsDirectory)
+        {
+            outputs.Add("[x] load expects a scene (.unity) or script (.cs), not a directory");
+            return true;
+        }
+
+        var extension = Path.GetExtension(target.Name);
+        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
+        {
+            outputs.Add($"[*] EditorSceneManager.OpenScene({target.RelativePath})");
+            outputs.Add($"[=] loaded scene: {target.Name}");
+            outputs.Add("[i] switched to hierarchy mode");
+            session.ContextMode = CliContextMode.Hierarchy;
+            session.AutoEnterHierarchyRequested = true;
+            return true;
+        }
+
+        if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
+        {
+            outputs.Add($"[*] AssetDatabase.OpenAsset({target.RelativePath})");
+            outputs.Add($"[=] opened script: {target.Name}");
+            return true;
+        }
+
+        outputs.Add($"[x] unsupported asset type: {extension} (supported: .unity, .cs)");
+        return true;
+    }
+
+    private static ProjectTreeEntry? FindEntryBySelector(ProjectViewState state, string selector)
+    {
+        if (int.TryParse(selector, out var index))
+        {
+            return state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
+        }
+
+        var normalized = selector.Trim().Replace('\\', '/');
+        return state.VisibleEntries.FirstOrDefault(entry =>
+            entry.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase)
+            || entry.RelativePath.Equals(normalized, StringComparison.OrdinalIgnoreCase)
+            || entry.RelativePath.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool HandleRename(int index, string newName, string projectPath, ProjectViewState state, List<string> outputs)

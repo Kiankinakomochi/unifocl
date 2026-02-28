@@ -71,7 +71,9 @@ internal sealed class HierarchyTui
                 break;
             }
 
-            if (input.Equals("ref", StringComparison.OrdinalIgnoreCase))
+            if (input.Equals("ref", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("list", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("ls", StringComparison.OrdinalIgnoreCase))
             {
                 var refreshed = await _daemonClient.GetSnapshotAsync(port);
                 if (refreshed is null)
@@ -103,7 +105,7 @@ internal sealed class HierarchyTui
 
             if (!handled)
             {
-                commandLog.Add("[!] unknown command (supported: cd, up, mk, toggle, ref, scroll, quit)");
+                commandLog.Add("[!] unknown command (supported: list, enter, up, make, toggle, scroll, quit)");
             }
 
             var nextSnapshot = await _daemonClient.GetSnapshotAsync(port);
@@ -138,6 +140,15 @@ internal sealed class HierarchyTui
             return true;
         }
 
+        tokens[0] = tokens[0].ToLowerInvariant() switch
+        {
+            "enter" => "cd",
+            ".." => "up",
+            "make" => "mk",
+            "t" => "toggle",
+            _ => tokens[0]
+        };
+
         if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals(":i", StringComparison.OrdinalIgnoreCase))
         {
             var parentId = FindParentId(snapshot.Root, cwdId);
@@ -168,8 +179,9 @@ internal sealed class HierarchyTui
 
         if (tokens.Count >= 2 && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
         {
-            var name = tokens[1];
-            var primitive = tokens.Skip(2).Any(t => t.Equals("-p", StringComparison.OrdinalIgnoreCase));
+            var primitiveKeyword = tokens[1].Equals("cube", StringComparison.OrdinalIgnoreCase);
+            var name = primitiveKeyword && tokens.Count >= 3 ? tokens[2] : tokens[1];
+            var primitive = primitiveKeyword || tokens.Skip(2).Any(t => t.Equals("-p", StringComparison.OrdinalIgnoreCase));
             var response = await _daemonClient.ExecuteAsync(
                 port,
                 new HierarchyCommandRequestDto("mk", cwdId, null, name, primitive));
