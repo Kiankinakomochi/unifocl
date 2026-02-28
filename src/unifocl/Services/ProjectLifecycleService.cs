@@ -34,6 +34,37 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         await HandleCloseAsync(session, daemonControlService, daemonRuntime, log);
+
+        daemonRuntime.CleanStaleEntries();
+        var remainingPorts = daemonRuntime.GetAll()
+            .Select(instance => instance.Port)
+            .Distinct()
+            .OrderBy(port => port)
+            .ToList();
+
+        if (remainingPorts.Count == 0)
+        {
+            log("[grey]exit[/]: teardown complete");
+            return;
+        }
+
+        var stoppedCount = 0;
+        foreach (var port in remainingPorts)
+        {
+            if (await daemonControlService.StopDaemonByPortAsync(port, daemonRuntime, session, log))
+            {
+                stoppedCount++;
+            }
+        }
+
+        if (stoppedCount == remainingPorts.Count)
+        {
+            log($"[green]exit[/]: teardown complete; stopped {stoppedCount} daemon(s)");
+        }
+        else
+        {
+            log($"[yellow]exit[/]: teardown partial; stopped {stoppedCount}/{remainingPorts.Count} daemon(s)");
+        }
     }
 
     private async Task<bool> HandleOpenAsync(

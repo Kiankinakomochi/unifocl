@@ -4,6 +4,7 @@ using Spectre.Console;
 
 internal sealed class ProjectViewService
 {
+    private const int MaxTranscriptEntries = 80;
     private readonly ProjectViewRenderer _renderer = new();
 
     public void OpenInitialView(CliSessionState session)
@@ -78,6 +79,7 @@ internal sealed class ProjectViewService
             return false;
         }
 
+        AppendTranscript(session.ProjectView, outputs);
         RenderFrame(session.ProjectView);
         return true;
     }
@@ -105,6 +107,8 @@ internal sealed class ProjectViewService
         state.RelativeCwd = defaultCwd;
         state.ExpandedDirectories.Clear();
         state.VisibleEntries.Clear();
+        state.CommandTranscript.Clear();
+        state.CommandTranscript.Add("[i] project view ready");
         state.DbState = ProjectDbState.IdleSafe;
         state.Initialized = true;
         RefreshTree(projectPath, state);
@@ -302,6 +306,23 @@ internal sealed class ProjectViewService
         {
             AnsiConsole.MarkupLine(line);
         }
+    }
+
+    private static void AppendTranscript(ProjectViewState state, IReadOnlyList<string> outputs)
+    {
+        if (outputs.Count == 0)
+        {
+            return;
+        }
+
+        state.CommandTranscript.AddRange(outputs);
+        if (state.CommandTranscript.Count <= MaxTranscriptEntries)
+        {
+            return;
+        }
+
+        var overflow = state.CommandTranscript.Count - MaxTranscriptEntries;
+        state.CommandTranscript.RemoveRange(0, overflow);
     }
 
     private static async Task EnsureUnityContextAsync(
