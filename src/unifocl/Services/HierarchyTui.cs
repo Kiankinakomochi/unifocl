@@ -3,10 +3,15 @@ using System.Text;
 internal sealed class HierarchyTui
 {
     private const int FrameWidth = 78;
-    private const int TreeRows = 12;
-    private const int CommandRows = 10;
+    private const int MinTreeRows = 6;
+    private const int MinCommandRows = 4;
+    private const int ReservedPromptRows = 4;
+    private const int FrameOverheadRows = 5;
 
     private readonly HierarchyDaemonClient _daemonClient = new();
+    private int _treeScrollOffset;
+    private int _commandScrollOffset = int.MaxValue;
+    private bool _followCommandScroll = true;
 
     public async Task RunAsync(
         CliSessionState session,
@@ -42,6 +47,9 @@ internal sealed class HierarchyTui
 
         var cwdId = snapshot.Root.Id;
         var commandLog = new List<string>();
+        _treeScrollOffset = 0;
+        _commandScrollOffset = int.MaxValue;
+        _followCommandScroll = true;
 
         while (true)
         {
@@ -54,8 +62,6 @@ internal sealed class HierarchyTui
             {
                 continue;
             }
-
-            commandLog.Add($"UnityCLI:{cwdPath} > {input}");
 
             if (input.Equals("q", StringComparison.OrdinalIgnoreCase)
                 || input.Equals("quit", StringComparison.OrdinalIgnoreCase)
@@ -97,7 +103,7 @@ internal sealed class HierarchyTui
 
             if (!handled)
             {
-                commandLog.Add("[!] unknown command (supported: cd, up, mk, toggle, ref, quit)");
+                commandLog.Add("[!] unknown command (supported: cd, up, mk, toggle, ref, scroll, quit)");
             }
 
             var nextSnapshot = await _daemonClient.GetSnapshotAsync(port);
@@ -136,7 +142,13 @@ internal sealed class HierarchyTui
         {
             var parentId = FindParentId(snapshot.Root, cwdId);
             setCwd(parentId ?? snapshot.Root.Id);
+            _treeScrollOffset = 0;
             commandLog.Add("[*] ok: moved to parent");
+            return true;
+        }
+
+        if (TryHandleScrollCommand(tokens, commandLog))
+        {
             return true;
         }
 
@@ -149,6 +161,7 @@ internal sealed class HierarchyTui
             }
 
             setCwd(targetId);
+            _treeScrollOffset = 0;
             commandLog.Add("[*] ok: changed current object");
             return true;
         }
@@ -198,30 +211,105 @@ internal sealed class HierarchyTui
         return false;
     }
 
-    private static void RenderFrame(int daemonPort, string scene, List<string> treeLines, List<string> commandLog, string cwdPath)
+    private bool TryHandleScrollCommand(IReadOnlyList<string> tokens, List<string> commandLog)
+    {
+        if (tokens.Count < 2 || !tokens[0].Equals("scroll", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var section = "tree";
+        var directionIndex = 1;
+        if (tokens[1].Equals("tree", StringComparison.OrdinalIgnoreCase)
+            || tokens[1].Equals("log", StringComparison.OrdinalIgnoreCase))
+        {
+            section = tokens[1].ToLowerInvariant();
+            directionIndex = 2;
+        }
+
+        if (tokens.Count <= directionIndex)
+        {
+            commandLog.Add("[!] usage: scroll [tree|log] <up|down> [count]");
+            return true;
+        }
+
+        var direction = tokens[directionIndex].ToLowerInvariant();
+        if (direction is not ("up" or "down"))
+        {
+            commandLog.Add("[!] direction must be up or down");
+            return true;
+        }
+
+        var amount = 1;
+        if (tokens.Count > directionIndex + 1 && (!int.TryParse(tokens[directionIndex + 1], out amount) || amount <= 0))
+        {
+            commandLog.Add("[!] count must be a positive integer");
+            return true;
+        }
+
+        var delta = direction == "up" ? -amount : amount;
+        if (section == "log")
+        {
+            if (_followCommandScroll)
+            {
+                _commandScrollOffset = Math.Max(0, commandLog.Count - 1);
+            }
+
+            _followCommandScroll = false;
+            _commandScrollOffset += delta;
+            if (_commandScrollOffset >= commandLog.Count)
+            {
+                _followCommandScroll = true;
+                _commandScrollOffset = int.MaxValue;
+            }
+
+            commandLog.Add($"[*] log scrolled {direction} by {amount}");
+            return true;
+        }
+
+        _treeScrollOffset += delta;
+        commandLog.Add($"[*] tree scrolled {direction} by {amount}");
+        return true;
+    }
+
+    private void RenderFrame(int daemonPort, string scene, List<string> treeLines, List<string> commandLog, string cwdPath)
     {
         Console.Clear();
 
         var borderTop = $"┌{new string('─', FrameWidth)}┐";
         var borderMid = $"├{new string('─', FrameWidth)}┤";
         var borderBottom = $"└{new string('─', FrameWidth)}┘";
+        var availableRows = Math.Max(MinTreeRows + MinCommandRows, Console.WindowHeight - ReservedPromptRows);
+        var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
+        var streamRows = commandLog
+            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var hasStreamPane = streamRows.Count > 0;
+        var (treeRows, commandRows) = hasStreamPane
+            ? AllocateViewportRows(dynamicRows, treeLines.Count, streamRows.Count)
+            : (Math.Max(1, dynamicRows), 0);
+        var visibleTree = SliceRows(treeLines, treeRows, ref _treeScrollOffset, followTail: false);
+        var visibleCommandLog = hasStreamPane
+            ? SliceRows(streamRows, commandRows, ref _commandScrollOffset, _followCommandScroll)
+            : [];
 
         Console.WriteLine(borderTop);
         Console.WriteLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}"));
         Console.WriteLine(borderMid);
 
-        for (var i = 0; i < TreeRows; i++)
+        foreach (var line in visibleTree)
         {
-            var line = i < treeLines.Count ? treeLines[i] : string.Empty;
             Console.WriteLine(ToFrameLine($" {line}"));
         }
 
-        Console.WriteLine(borderMid);
-        var recent = commandLog.Skip(Math.Max(0, commandLog.Count - CommandRows)).ToList();
-        for (var i = 0; i < CommandRows; i++)
+        if (hasStreamPane)
         {
-            var line = i < recent.Count ? recent[i] : (i == recent.Count ? $"UnityCLI:{cwdPath} > _" : string.Empty);
-            Console.WriteLine(ToFrameLine($" {line}"));
+            Console.WriteLine(borderMid);
+            for (var i = 0; i < visibleCommandLog.Count; i++)
+            {
+                var line = visibleCommandLog[i];
+                Console.WriteLine(ToFrameLine($" {line}"));
+            }
         }
 
         Console.WriteLine(borderBottom);
@@ -393,5 +481,58 @@ internal sealed class HierarchyTui
         var sanitized = raw.Replace('\t', ' ');
         var content = sanitized.Length > FrameWidth ? sanitized[..FrameWidth] : sanitized.PadRight(FrameWidth, ' ');
         return $"│{content}│";
+    }
+
+    private static (int TreeRows, int CommandRows) AllocateViewportRows(int dynamicRows, int treeCount, int commandCount)
+    {
+        var preferredTree = Math.Max(MinTreeRows, treeCount);
+        var preferredCommand = Math.Max(MinCommandRows, commandCount);
+        var preferredTotal = preferredTree + preferredCommand;
+        if (preferredTotal <= dynamicRows)
+        {
+            return (preferredTree, preferredCommand);
+        }
+
+        var commandRows = Math.Min(preferredCommand, Math.Max(MinCommandRows, dynamicRows / 3));
+        var treeRows = dynamicRows - commandRows;
+        if (treeRows < MinTreeRows)
+        {
+            treeRows = MinTreeRows;
+            commandRows = Math.Max(MinCommandRows, dynamicRows - treeRows);
+        }
+
+        return (Math.Max(1, treeRows), Math.Max(1, commandRows));
+    }
+
+    private static List<string> SliceRows(IReadOnlyList<string> source, int viewportRows, ref int offset, bool followTail)
+    {
+        viewportRows = Math.Max(1, viewportRows);
+        var rows = source.Count == 0 ? new List<string> { string.Empty } : source.ToList();
+        var maxOffset = Math.Max(0, rows.Count - viewportRows);
+        if (followTail)
+        {
+            offset = maxOffset;
+        }
+
+        offset = Math.Clamp(offset, 0, maxOffset);
+        var visible = rows.Skip(offset).Take(viewportRows).ToList();
+        while (visible.Count < viewportRows)
+        {
+            visible.Add(string.Empty);
+        }
+
+        var hiddenAbove = offset;
+        var hiddenBelow = Math.Max(0, rows.Count - (offset + visible.Count));
+        if (hiddenAbove > 0 && visible.Count > 0)
+        {
+            visible[0] = $"... {hiddenAbove} line(s) above ...";
+        }
+
+        if (hiddenBelow > 0 && visible.Count > 1)
+        {
+            visible[^1] = $"... {hiddenBelow} line(s) below ...";
+        }
+
+        return visible;
     }
 }
