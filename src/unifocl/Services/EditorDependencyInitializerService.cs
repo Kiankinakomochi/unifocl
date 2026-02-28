@@ -1,6 +1,7 @@
 using Spectre.Console;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 
 internal sealed class EditorDependencyInitializerService
 {
@@ -57,6 +58,63 @@ internal sealed class EditorDependencyInitializerService
         }
 
         return AnsiConsole.Confirm("Initialize editor dependencies now?", defaultValue: true);
+    }
+
+    public bool NeedsInitialization(string projectPath, out string reason)
+    {
+        var packagePath = Path.Combine(projectPath, "Packages", EmbeddedPackageName);
+        if (!Directory.Exists(packagePath))
+        {
+            reason = "embedded package folder is missing";
+            return true;
+        }
+
+        var packageJsonPath = Path.Combine(packagePath, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            reason = "package.json is missing";
+            return true;
+        }
+
+        try
+        {
+            using var packageJson = JsonDocument.Parse(File.ReadAllText(packageJsonPath));
+            if (!packageJson.RootElement.TryGetProperty("name", out var packageNameElement))
+            {
+                reason = "package.json is missing required field 'name'";
+                return true;
+            }
+
+            var packageName = packageNameElement.GetString();
+            if (!string.Equals(packageName, EmbeddedPackageName, StringComparison.Ordinal))
+            {
+                reason = "package.json has an unexpected package name";
+                return true;
+            }
+        }
+        catch (Exception)
+        {
+            reason = "package.json is invalid";
+            return true;
+        }
+
+        var requiredFiles = new[]
+        {
+            Path.Combine(packagePath, "Editor", "UniFocl.EditorBridge.asmdef"),
+            Path.Combine(packagePath, "Editor", "CLIDaemon.cs"),
+            Path.Combine(packagePath, "Editor", "BridgeModels.cs")
+        };
+        foreach (var requiredFile in requiredFiles)
+        {
+            if (!File.Exists(requiredFile))
+            {
+                reason = $"required file missing: {Path.GetRelativePath(packagePath, requiredFile)}";
+                return true;
+            }
+        }
+
+        reason = string.Empty;
+        return false;
     }
 
     private static OperationResult EnsureEmbeddedPackage(string projectPath)
