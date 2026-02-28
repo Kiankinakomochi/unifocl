@@ -485,49 +485,86 @@ static void SeedBootLog(List<string> streamLog)
     streamLog.Add(string.Empty);
 
     var logo = """
-                       .;?tXOb*&%@$$$$@%&*bOXt];.                       
-                   .!/LaB$$$$%#hpm0QQ0Zph#B$$$$BaL/i.                   
-                 +vk@$$@oQu\)1(/jnvccvnrf)I]\n0o@$$@kv+.                 
-              "td@$$W0t})nLkWB$$$$$$$$$@Q\vhkQx)}tQW$$@dt,              
-            ,u#$$BZ\]fZM$$$$$$$$$$$$$@L)XW$$$$$$WZf]|ZB$$#u,            
-          't#$$8U?108$$$$$$$$$$$$$$$d(uW$$$$$$$$$$$801-Y8$$Mf.          
-         iq$$$C++-$$$$$$$$$$$$$$$$8n|k$$$$$$$$$$$$$$$$b(~C$$$q~         
-        (&$$*[+q%ib$$$$$$$$$$$$$$k{U@$$$$$$$$$$$$$$$$$$$q_[*$$&(        
-       j@$$m:j%$$X{$$$$$$$$@@$$$C{k$$$$$$$$$$$@@$$$$$$$$$%j:Z$$@j       
-      t$$$L`J$$$$B?Q$$$$$$$$$$$u(&$$$$$$$$$$$$$$$$$$$$$$$$$J^L$$$t      
-     -%$$w'C$$$$$$h~*$$$$$$$$@ff@$$$BhqZ0QLCCCCCCL0Zwdh*&B$$Q`m$$B-     
-    'k$$M,j$$$$$$$$Q?8$$$$$$$fr$$&Zt-/LpkkkhhhhhkdpwZ0CXvuucL-,M$$k'    
-    )$$$f:8$$$$$$$$$z)%$$$$@vt*L):   .I(L#$$$$$$$$$$$$$$$@8#b0,f$$$(    
-    m$$W`v$$$$$$$$$$$v(%$$$#:-^          `-vpB$$$$$$$$$$$$$$$$v`W$$w    
-   ^M$$m k$$$$$$$$$$$$X)&$$#`              .n|*$$$$$$$$$$$$$$$k m$$M^   
-   I%$$X`W$$$$$$$$$$$$$L{o$#`              `Wq[p$$$$$$$$$$$$$$&`Y$$%I   
-   I%$$X`W$$$$$$$$$$$$$$p}wW`              `*$o}Q$$$$$$$$$$$$$&`X$$%l   
-   ^M$$m k$$$$$$$$$$$$$$$#/n'              '*$$&1Y$$$$$$$$$$$$k m$$M^   
-    m$$W`c$$$$$$$$$$$$$$$$@bc?^          ^-:#$$$8)X$$$$$$$$$$$c`W$$m    
-    )$$$f"zLpoW%@$$$$$$$$$$$$$W0\l.   ;)L*/c@$$$$%{Y$$$$$$$$$%;t$$$)    
-    'k$$M,1pQYvuvvzYJLQ0OZZZOOOZ0X)_jw&$$fr$$$$$$$&?0$$$$$$$$x"#$$k'    
-     -%$$m`0$$$$B8M*ohkbddppdbbha*M@$$$@tj@$$$$$$$$o~h$$$$$$0'Z$$%-     
-      /$$$L^L$$$$$$$$$$$$$$$$$$$$$$$$$%\n$$$$$$$$$$$O-%$$$$Q^U$$$t      
-       j@$$O:xB$$$$$$$$$$$$$$$$$$$$$$#1Y$$$$$$$$$$$$$(v$$Bn:0$$@r       
-        (&$$o]-p$$$$$$$$$$$$$$$$$$$$w[m$$$$$$$$$$$$$$oi&b??a$$&|        
-         ~q$$@J~|k$$$$$$$$$$$$$$$$Bv(*$$$$$$$$$$$$$$$$}~+U@$$pi         
-          .f#$$8X?)Z8$$$$$$$$$$$$d)zB$$$$$$$$$$$$$$%m(?z&$$#f'          
-            ,n#$$BZ|]jZW$$$$$$$*r\h$$$$$$$$$$$$$Wmj](0%$$#u,            
-              ,/d@$$MQt{(nQkW*c/q$$$$$$$$$BWh0n({tQM$$$dt,              
-                 +vk@$$@o0u\)+I/nuzXXzvxt|))\nQa@$$@kv+.                 
-                   .!/LhB$$$$BMhqZQLLQZqk*8$$$$BaL/!.                   
-                       .;]fXOk#&B$$$$$$B&#kZYf]I.                       
-                              '^:I!ii!l;"'                  
+                         `,!~?}1|\******/|(1[-~l"'                                                                                                                                                      
+                     "i-1*ffjrrjjfffffffjjrjjft/|{_l`                                                                                                                                                  
+                 'l-(tfjrjf*|1[-+~>>>>>>>~+?{(\tjjrjf/1_;                                                                                                                                               
+               I]\fffjt|[+illi<_?[{{{{{{}]]-,'Ili_{/fjfft(_,                                                                                                                                            
+            '>(tftft)+!li-{|tfjjffffffftjr(~-|*|}_iIi-(fffft{l                                                                                                                                          
+           <\fttf|_II+1*fjft***********j)>+(ft*tfjf/{~Il?/fttf(!                                                                                                                                        
+         i|f*tj(i:<)fjf**************f*_i1jt*******tfjt{i:~|j*tf1;                                                                                                                                      
+       ^{ft*j|! ~*jf****************j{l?ff*************fj|>^</f/ft-.                                                                                                                                    
+      l/f/tt>^-,(f/***************tt+i\j*****************tj|!^?j**f(,                                                                                                                                   
+     ~ft/j(";|x_!j***************f\l-ft********************tj1^I*f/f*l                                                                                                                                  
+    _j*/j].+jt**,|t*************f);{j************************ftl'(f/tf!                                                                                                                                 
+   ~j**j- [j***j?!j************j{I\f***************************j< 1f/ttI                                                             
+  lf**f? {j/****fI}f**********j[;*t/**tffffttttttttttfffffffftt*j> (f/t*^                                                          fo8%#n.      <fJmpZ`                                          ,qppppp
+ '/t*f) -j/*****t(,/t********j}I*t*fft|}]?_-_________+-_?][{1|\*tx!`*t/f{                                                         l$$@@$$}    ^Q$$$$$%^                                          I$$$$$$
+ -j/tt^Ij********j]If*******f1;*fft1~:![(/\|\\///////||(){}]?-++_][ if**f!                                                        "p$$$$hI    L$@BBB$@^                                          ;B@B@@@
+^/t*f- |t*********j~>j*****t|Itt{<"    ';_(fjft*ttttttttfffffft*\1{> )f*t)                                                          >11>      B@@$@@z~.                                          ;B$@$$$
+~f**t`If***********f!~j****tI_~^           ,~1/ft**************ttfff'!j**t:             ^jrrrrt'   :rrrrr\   :rrrrr|Ixwbbbwu-      /*//*j, 'tuB$@$$Br|'     <fJwkbbbwY/>          :)vObbbbqJ/i   ;B$@$$$
+1t*f) [f************f!_j**t/'                 l-/f****************/fi.*t*f~             I$$$$$$^   _$$$$$M   _$$$$$$8$$$$$$$$m"    &$$$$$< "$$@$$$$$$$^   fh$$$$$$$$$$$$p}      !C&$$$$$$$$$$$a( IB$@$$$
+/t*f- |t************tfi-j*t/'                 ~(!)f****************f] )f*f[             ;%BBBBW^   ~BBBBBk   ~BBBBB$$*b8$@@BB$z    oBBBBB> "&$@$$$$@$&" :d$$@B$$$%%$$$B$$$L.   )8$$@B$$B%B$$$&X< IB$@$$$
+t**j+./t**************f<+ft/'                 <r\!}j***************f[ {f*f{             ;B$@@$&^   ~$@$@$a   ~$@$@@8}` :L@@$@@w    *$@$@$>  >?%$@@$%?>.'d$B@@$#t~;;>jW$@@B$J  _$$B@@$w1l;I[Jn:   ;B$@$$$
+t**j+./t***************f_~t*'                 <ftt!?j**************f[ {f*f{             ;B$@@$&^   +$@$@$a   ~$@$@$h    [$B$@$m    *$@$@$>   `%$@@$%`  _$B$@@Wl      ~B@$$@$! C$B$@@O            ;B$@$$$
+/t*f- |t****************j}>( '                <f/tf!-j*************f] )f*f[             ;B$@@$&^   ~$@$@$h   ~$@$@$a    1$B$@$m    *$@$@$>   :%$@@$%:  ]@@$@$b        *$@$@@~ Q@B$B$t            ;B$@$$$
+1t*f) [f/****************f(_"                 <f**tfi-j************fi.*t*f~             IB$@@@&`   ]$@$@@a   ~$@$@$a    1$B$@$m    *$@$@$>   ,%$@@$%,  i$B@$@B(      t@@$@@BI c$B$@@#~           ;B$@$$$
++f**t`Ijffftt*************tf/{>"           ,-l~j****fl]j***********t'!j**t:             :@@B@@@0]<1k$@@B$O   ~$@$@$a    1$B$@$m    *$@$@$>   ,%$@@$%,   c$@B@$$mj||rp$@@B$$r  :M$B@@$@Of(|voLi   ;B$@$$$
+^/t*f- >-]{(\*tfffffffffffttfjrf|?l`    ;-)r{lt*****tt:{f*********f] )f*t)               n$$$@B$$$$$B@$$%_   ~$@$@$a    1$B$@$m    *$@$@$>   ,%$@@$%,    xB$$$B$$$$$$B$$$#\    lq$$$@@$$$$$$$$C, IB$@$$$
+ -j/*t^I\[?_++__-?[[{{{}{)))1)1}1)}?:l]|ffr{,/t******t\,|t********t`lf**fi                {p%$$$$$$$$$MUi    +$$$$$a    1$@$$$w    #$$$$$>   ,B$$$$B,     ivh@$$$$$$$$%df"       [QM$$$$$$$$@aYI I@$$$$$
+ '/t*f) [xfft*/|(){{[[[--????[}[[{{)/fft/f1,\t********f{:t*******ri'*t/f{                   ;]/xxxxx(~^      `iiiiil    ^iiiiiI    !iiiii'    iiiiii.        !{txxxx*];            ^<)rxxxj1i.    iiiiii
+  lf**f? {f/**tttfffffffffffffffffftt**/f(:|f**********j<>j*****r_ )f/t*^                
+   ~f**j_ {j***************************j1;|f************t,1f***r- {f/ttI                 
+    _j*/j]._jt************************j};\f*************f[If/ff>')f/tf!                                                                                                                                 
+     ~ft/j)^l\j**********************j-!*t***************f:1x(:;/f/t*l                                                                                                                                  
+      l/f/tt>^-tjt*****************ft>~ft***************/r?I_^-ft/f(,                                                                                                                                   
+       ^{jt*j|!:-/jt**************j)!]j****************fj\i'</f/ff-.                                                                                                                                    
+         i|f*tj1!:~(fjf*********ft_i|j*************tfjt{>:<\j*tf1;                                                                                                                                      
+           <\fttf|+;l_)*ffft**tf}l?tt**********tfjf/{~Il?/fttf(!                                                                                                                                        
+            '<(tffft1+ll>?1\tf|+-*rfttfffffjff*|{-ili-(fftft{l                                                                                                                                          
+               I]\fffjt|[+illI`!}}{{)(1{{[?_<i!!>_{/fjfft|-,                                                                                                                                           
+                 'l?|tfjrjf*|1}?~~>>i!>>>~+-[)\tfjrjf*(_;.                                                                                                                                              
+                     ,i?1\*ffjjjjjfffffffjjrjjft*|{-l^                                                                                                                                                  
+                         `:!~]{)|\*******|(1}?~l,'                                                                                                                                                      
 """;
 
     foreach (var line in logo.Split('\n'))
     {
-        streamLog.Add($"[{CliTheme.Brand}]{Markup.Escape(line)}[/]");
+        streamLog.Add($"[{CliTheme.Brand}]{Markup.Escape(FitLogoLineToTerminal(line))}[/]");
     }
 
     streamLog.Add(string.Empty);
     streamLog.Add("[grey]No project attached.[/]");
     streamLog.Add(string.Empty);
+}
+
+static string FitLogoLineToTerminal(string line)
+{
+    var width = TryGetTerminalWidth();
+    if (width <= 0 || line.Length <= width)
+    {
+        return line;
+    }
+
+    // Prefer preserving logo content over leading indentation when width is limited.
+    var trimmed = line.TrimStart();
+    if (trimmed.Length <= width)
+    {
+        return trimmed;
+    }
+
+    return trimmed[..width];
+}
+
+static int TryGetTerminalWidth()
+{
+    try
+    {
+        return Console.WindowWidth;
+    }
+    catch
+    {
+        return 0;
+    }
 }
 
 static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
@@ -653,6 +690,7 @@ static List<CommandSpec> GetSuggestionMatches(string query, List<CommandSpec> co
 {
     var normalized = query.Trim().ToLowerInvariant();
     return commands
+        .Where(c => !c.Description.StartsWith("Alias for", StringComparison.OrdinalIgnoreCase))
         .Where(c => c.Signature.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Trigger.StartsWith(normalized, StringComparison.OrdinalIgnoreCase)
