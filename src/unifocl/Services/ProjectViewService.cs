@@ -255,6 +255,7 @@ internal sealed class ProjectViewService
             .OrderBy(dir => dir.Name, StringComparer.OrdinalIgnoreCase);
         var files = Directory.EnumerateFiles(absolutePath)
             .Select(path => new FileInfo(path))
+            .Where(file => !file.Extension.Equals(".meta", StringComparison.OrdinalIgnoreCase))
             .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase);
 
         foreach (var file in files)
