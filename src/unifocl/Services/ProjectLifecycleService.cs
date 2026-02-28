@@ -7,6 +7,7 @@ internal sealed class ProjectLifecycleService
 {
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
+    private readonly RecentProjectHistoryService _recentProjectHistoryService = new();
 
     public async Task<bool> TryHandleLifecycleCommandAsync(
         string input,
@@ -21,6 +22,7 @@ internal sealed class ProjectLifecycleService
             "/open" => await HandleOpenAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/new" => await HandleNewAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/clone" => await HandleCloneAsync(input, matched, session, daemonControlService, daemonRuntime, log),
+            "/recent" => await HandleRecentAsync(input, matched, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
             "/init" => await HandleInitAsync(input, matched, session, log),
             _ => false
@@ -298,6 +300,48 @@ internal sealed class ProjectLifecycleService
         return Task.FromResult(true);
     }
 
+    private Task<bool> HandleRecentAsync(
+        string input,
+        CommandSpec matched,
+        Action<string> log)
+    {
+        var args = ParseCommandArgs(input, matched.Trigger);
+        if (args.Count > 1)
+        {
+            log("[red]error[/]: usage /recent [n]");
+            return Task.FromResult(true);
+        }
+
+        var count = 10;
+        if (args.Count == 1 && (!int.TryParse(args[0], out count) || count <= 0))
+        {
+            log("[red]error[/]: n must be a positive integer");
+            return Task.FromResult(true);
+        }
+
+        if (!_recentProjectHistoryService.TryGetRecentProjects(count, out var entries, out var historyError))
+        {
+            log($"[red]error[/]: {Markup.Escape(historyError ?? "failed to load recent projects")}");
+            return Task.FromResult(true);
+        }
+
+        if (entries.Count == 0)
+        {
+            log("[grey]recent[/]: no recent projects found");
+            return Task.FromResult(true);
+        }
+
+        log("[grey]recent[/]: most recently opened projects");
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
+            log($"[grey]recent[/]: [white]{i + 1}[/]. [white]{Markup.Escape(entry.ProjectPath)}[/] [dim]({opened})[/]");
+        }
+
+        return Task.FromResult(true);
+    }
+
     private async Task<bool> HandleCloseAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -422,6 +466,11 @@ internal sealed class ProjectLifecycleService
         session.CurrentProjectPath = projectPath;
         session.Mode = CliMode.Project;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
+        if (!_recentProjectHistoryService.TryRecordProjectOpen(projectPath, session.LastOpenedUtc.Value, out var historyError))
+        {
+            log($"[yellow]recent[/]: unable to update history ({Markup.Escape(historyError ?? "unknown error")})");
+        }
+
         log("[grey]open[/]: step 4/4 load project context");
         _projectViewService.OpenInitialView(session);
         return true;
