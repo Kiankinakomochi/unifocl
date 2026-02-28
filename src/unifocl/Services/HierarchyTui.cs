@@ -7,11 +7,15 @@ internal sealed class HierarchyTui
     private const int MinCommandRows = 4;
     private const int ReservedPromptRows = 4;
     private const int FrameOverheadRows = 5;
+    private const ConsoleKey FocusModeKey = ConsoleKey.F6;
 
     private readonly HierarchyDaemonClient _daemonClient = new();
     private int _treeScrollOffset;
     private int _commandScrollOffset = int.MaxValue;
     private bool _followCommandScroll = true;
+
+    private sealed record HierarchyTreeLine(int? EntryIndex, int? NodeId, bool HasChildren, string Text);
+    private sealed record FocusTreeEntry(int EntryIndex, int NodeId, bool HasChildren);
 
     public async Task RunAsync(
         CliSessionState session,
@@ -53,11 +57,49 @@ internal sealed class HierarchyTui
 
         while (true)
         {
-            var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath);
-            RenderFrame(port, snapshot.Scene, treeLines, commandLog, cwdPath);
+            var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath, out _, null);
+            RenderFrame(port, snapshot.Scene, treeLines.Select(line => line.Text).ToList(), commandLog, cwdPath);
 
             Console.Write($"UnityCLI:{cwdPath} > ");
-            var input = Console.ReadLine()?.Trim() ?? string.Empty;
+            var firstKey = Console.ReadKey(intercept: true);
+            var firstIntent = KeyboardIntentReader.FromConsoleKey(firstKey);
+            if (firstIntent == KeyboardIntent.FocusHierarchy || firstKey.Key == FocusModeKey)
+            {
+                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, tab expand, shift+tab collapse, esc exit)");
+                await RunKeyboardFocusModeAsync(port, snapshot, cwdId, commandLog, updatedSnapshot =>
+                {
+                    snapshot = updatedSnapshot;
+                    if (!ContainsNode(snapshot.Root, cwdId))
+                    {
+                        cwdId = snapshot.Root.Id;
+                    }
+                });
+                TrimCommandLog(commandLog);
+                continue;
+            }
+
+            string input;
+            if (firstKey.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                input = string.Empty;
+            }
+            else
+            {
+                var firstChar = firstKey.KeyChar;
+                if (!char.IsControl(firstChar))
+                {
+                    Console.Write(firstChar);
+                    var tail = Console.ReadLine() ?? string.Empty;
+                    input = (firstChar + tail).Trim();
+                }
+                else
+                {
+                    Console.WriteLine();
+                    input = string.Empty;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(input))
             {
                 continue;
@@ -312,7 +354,125 @@ internal sealed class HierarchyTui
         return true;
     }
 
-    private void RenderFrame(int daemonPort, string scene, List<string> treeLines, List<string> commandLog, string cwdPath)
+    private async Task RunKeyboardFocusModeAsync(
+        int port,
+        HierarchySnapshotDto snapshot,
+        int cwdId,
+        List<string> commandLog,
+        Action<HierarchySnapshotDto> setSnapshot)
+    {
+        var collapsedNodeIds = BuildDefaultCollapsedNodeSet(snapshot.Root, cwdId);
+        var selectedEntryPosition = 0;
+
+        while (true)
+        {
+            var treeLines = BuildTreeLines(
+                snapshot,
+                cwdId,
+                out _,
+                out var cwdPath,
+                out var visibleEntries,
+                collapsedNodeIds);
+
+            if (visibleEntries.Count == 0)
+            {
+                commandLog.Add("[i] hierarchy has no children to focus");
+                return;
+            }
+
+            selectedEntryPosition = Math.Clamp(selectedEntryPosition, 0, visibleEntries.Count - 1);
+            var selectedEntry = visibleEntries[selectedEntryPosition];
+            var highlightedTree = treeLines
+                .Select(line =>
+                {
+                    if (line.EntryIndex == selectedEntry.EntryIndex)
+                    {
+                        return $"> {line.Text}";
+                    }
+
+                    return $"  {line.Text}";
+                })
+                .ToList();
+
+            EnsureSelectedTreeVisibility(highlightedTree.Count, commandLog.Count, selectedEntryPosition + 1);
+            RenderFrame(port, snapshot.Scene, highlightedTree, commandLog, cwdPath, focusModeEnabled: true);
+
+            var intent = KeyboardIntentReader.ReadIntent();
+            switch (intent)
+            {
+                case KeyboardIntent.Up:
+                    selectedEntryPosition = selectedEntryPosition <= 0
+                        ? visibleEntries.Count - 1
+                        : selectedEntryPosition - 1;
+                    break;
+                case KeyboardIntent.Down:
+                    selectedEntryPosition = selectedEntryPosition >= visibleEntries.Count - 1
+                        ? 0
+                        : selectedEntryPosition + 1;
+                    break;
+                case KeyboardIntent.Tab:
+                    selectedEntry = visibleEntries[selectedEntryPosition];
+                    if (!selectedEntry.HasChildren)
+                    {
+                        commandLog.Add($"[i] {selectedEntry.EntryIndex} has no children");
+                        break;
+                    }
+
+                    if (collapsedNodeIds.Remove(selectedEntry.NodeId))
+                    {
+                        commandLog.Add($"[*] expanded [{selectedEntry.EntryIndex}]");
+                        break;
+                    }
+
+                    commandLog.Add($"[i] already expanded [{selectedEntry.EntryIndex}]");
+                    break;
+                case KeyboardIntent.ShiftTab:
+                    selectedEntry = visibleEntries[selectedEntryPosition];
+                    if (!selectedEntry.HasChildren)
+                    {
+                        commandLog.Add($"[i] {selectedEntry.EntryIndex} has no children");
+                        break;
+                    }
+
+                    if (collapsedNodeIds.Add(selectedEntry.NodeId))
+                    {
+                        commandLog.Add($"[*] collapsed [{selectedEntry.EntryIndex}]");
+                        break;
+                    }
+
+                    commandLog.Add($"[i] already collapsed [{selectedEntry.EntryIndex}]");
+                    break;
+                case KeyboardIntent.Escape:
+                case KeyboardIntent.FocusHierarchy:
+                    commandLog.Add("[i] hierarchy focus mode disabled");
+                    return;
+                default:
+                    break;
+            }
+
+            TrimCommandLog(commandLog);
+            var refreshed = await _daemonClient.GetSnapshotAsync(port);
+            if (refreshed is not null)
+            {
+                snapshot = refreshed;
+                if (!ContainsNode(snapshot.Root, cwdId))
+                {
+                    cwdId = snapshot.Root.Id;
+                }
+
+                setSnapshot(snapshot);
+                PruneCollapsedNodeSet(snapshot.Root, collapsedNodeIds);
+            }
+        }
+    }
+
+    private void RenderFrame(
+        int daemonPort,
+        string scene,
+        List<string> treeLines,
+        List<string> commandLog,
+        string cwdPath,
+        bool focusModeEnabled = false)
     {
         Console.Clear();
 
@@ -333,8 +493,12 @@ internal sealed class HierarchyTui
             ? SliceRows(streamRows, commandRows, ref _commandScrollOffset, _followCommandScroll)
             : [];
 
+        var focusLabel = focusModeEnabled
+            ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
+            : $" | Focus Key: {FocusModeKey}";
+
         Console.WriteLine(borderTop);
-        Console.WriteLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}"));
+        Console.WriteLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}"));
         Console.WriteLine(borderMid);
 
         foreach (var line in visibleTree)
@@ -355,20 +519,27 @@ internal sealed class HierarchyTui
         Console.WriteLine(borderBottom);
     }
 
-    private static List<string> BuildTreeLines(HierarchySnapshotDto snapshot, int cwdId, out Dictionary<int, int> indexMap, out string cwdPath)
+    private static List<HierarchyTreeLine> BuildTreeLines(
+        HierarchySnapshotDto snapshot,
+        int cwdId,
+        out Dictionary<int, int> indexMap,
+        out string cwdPath,
+        out List<FocusTreeEntry> visibleEntries,
+        HashSet<int>? collapsedNodeIds = null)
     {
         indexMap = new Dictionary<int, int>();
+        visibleEntries = new List<FocusTreeEntry>();
         var cwdNode = FindNode(snapshot.Root, cwdId) ?? snapshot.Root;
         cwdPath = BuildPath(snapshot.Root, cwdNode.Id);
 
-        var lines = new List<string> { cwdPath };
+        var lines = new List<HierarchyTreeLine> { new HierarchyTreeLine(null, null, false, cwdPath) };
         var index = 0;
 
         for (var i = 0; i < cwdNode.Children.Count; i++)
         {
             var child = cwdNode.Children[i];
             var isLast = i == cwdNode.Children.Count - 1;
-            Traverse(child, string.Empty, isLast, lines, indexMap, ref index);
+            Traverse(child, string.Empty, isLast, lines, indexMap, visibleEntries, ref index, collapsedNodeIds);
         }
 
         return lines;
@@ -378,22 +549,95 @@ internal sealed class HierarchyTui
         HierarchyNodeDto node,
         string prefix,
         bool isLast,
-        List<string> lines,
+        List<HierarchyTreeLine> lines,
         Dictionary<int, int> indexMap,
-        ref int index)
+        List<FocusTreeEntry> visibleEntries,
+        ref int index,
+        HashSet<int>? collapsedNodeIds)
     {
         var branch = isLast ? "└──" : "├──";
         var label = node.Active ? node.Name : $"({node.Name})";
-        lines.Add($"{prefix}{branch} [{index}] {label}");
+        var hasChildren = node.Children.Count > 0;
+        var collapsedMarker = hasChildren && collapsedNodeIds?.Contains(node.Id) == true ? " [+]" : string.Empty;
+        lines.Add(new HierarchyTreeLine(index, node.Id, hasChildren, $"{prefix}{branch} [{index}] {label}{collapsedMarker}"));
         indexMap[index] = node.Id;
+        visibleEntries.Add(new FocusTreeEntry(index, node.Id, hasChildren));
         index++;
+
+        if (hasChildren && collapsedNodeIds?.Contains(node.Id) == true)
+        {
+            return;
+        }
 
         var nextPrefix = prefix + (isLast ? "    " : "│   ");
         for (var i = 0; i < node.Children.Count; i++)
         {
             var child = node.Children[i];
             var childLast = i == node.Children.Count - 1;
-            Traverse(child, nextPrefix, childLast, lines, indexMap, ref index);
+            Traverse(child, nextPrefix, childLast, lines, indexMap, visibleEntries, ref index, collapsedNodeIds);
+        }
+    }
+
+    private static HashSet<int> BuildDefaultCollapsedNodeSet(HierarchyNodeDto root, int cwdId)
+    {
+        var collapsed = new HashSet<int>();
+        var cwdNode = FindNode(root, cwdId);
+        if (cwdNode is null)
+        {
+            return collapsed;
+        }
+
+        AddCollapsedDescendantNodes(cwdNode, collapsed);
+        return collapsed;
+    }
+
+    private static void AddCollapsedDescendantNodes(HierarchyNodeDto node, HashSet<int> collapsed)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.Children.Count > 0)
+            {
+                collapsed.Add(child.Id);
+            }
+
+            AddCollapsedDescendantNodes(child, collapsed);
+        }
+    }
+
+    private static void PruneCollapsedNodeSet(HierarchyNodeDto root, HashSet<int> collapsedNodeIds)
+    {
+        if (collapsedNodeIds.Count == 0)
+        {
+            return;
+        }
+
+        var toRemove = collapsedNodeIds.Where(id => !ContainsNode(root, id)).ToList();
+        foreach (var id in toRemove)
+        {
+            collapsedNodeIds.Remove(id);
+        }
+    }
+
+    private void EnsureSelectedTreeVisibility(int treeLineCount, int commandLogCount, int selectedTreeRow)
+    {
+        var streamRows = commandLogCount;
+        var hasStreamPane = streamRows > 0;
+        var availableRows = Math.Max(MinTreeRows + MinCommandRows, Console.WindowHeight - ReservedPromptRows);
+        var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
+        var treeRows = hasStreamPane
+            ? AllocateViewportRows(dynamicRows, treeLineCount, streamRows).TreeRows
+            : Math.Max(1, dynamicRows);
+
+        if (selectedTreeRow < _treeScrollOffset)
+        {
+            _treeScrollOffset = selectedTreeRow;
+            return;
+        }
+
+        var viewportBottom = _treeScrollOffset + treeRows - 1;
+        if (selectedTreeRow > viewportBottom)
+        {
+            _treeScrollOffset = selectedTreeRow - treeRows + 1;
         }
     }
 
