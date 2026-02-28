@@ -49,7 +49,7 @@ var commands = new List<CommandSpec>
     new("/config reset", "Reset configuration to defaults", "/config reset"),
 
     // Onboarding
-    new("/init", "Run first-run setup wizard", "/init"),
+    new("/init [path-to-project]", "Install editor-side CLI bridge dependencies", "/init"),
     new("/install-hook", "Install/validate Unity editor bridge", "/install-hook"),
     new("/help [topic]", "Show help by topic", "/help"),
     new("/examples", "Show common next-step flows", "/examples"),
