@@ -4,6 +4,7 @@ internal sealed class ProjectViewRenderer
 {
     private const int FrameWidth = 78;
     private const int CommandRows = 8;
+    private sealed record RenderLine(string Content, bool Highlight);
 
     public IReadOnlyList<string> Render(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
     {
@@ -21,7 +22,7 @@ internal sealed class ProjectViewRenderer
 
         foreach (var treeLine in BuildTreeLines(state, cwd, highlightedEntryIndex))
         {
-            lines.Add(BorderBody(treeLine));
+            lines.Add(BorderBody(treeLine.Content, treeLine.Highlight));
         }
 
         lines.Add(BorderSeparator());
@@ -37,19 +38,20 @@ internal sealed class ProjectViewRenderer
         }
 
         lines.Add(BorderBottom());
-        return lines.Select(Markup.Escape).ToList();
+        return lines;
     }
 
-    private static IEnumerable<string> BuildTreeLines(ProjectViewState state, string cwd, int? highlightedEntryIndex)
+    private static IEnumerable<RenderLine> BuildTreeLines(ProjectViewState state, string cwd, int? highlightedEntryIndex)
     {
-        yield return $" {GetRootLabel(cwd)}";
+        yield return new RenderLine($" {GetRootLabel(cwd)}", false);
         foreach (var entry in state.VisibleEntries)
         {
             var prefix = entry.Depth == 0 ? string.Empty : new string(' ', 1) + string.Concat(Enumerable.Repeat("│   ", entry.Depth));
-            var marker = highlightedEntryIndex == entry.Index ? ">" : " ";
+            var selected = highlightedEntryIndex == entry.Index;
+            var marker = selected ? ">" : " ";
             var branch = $"{marker}{prefix}├── ";
             var label = entry.IsDirectory ? $"{entry.Name}/" : entry.Name;
-            yield return $"{branch}[{entry.Index}] {label}";
+            yield return new RenderLine($"{branch}[{entry.Index}] {label}", selected);
         }
     }
 
@@ -64,11 +66,12 @@ internal sealed class ProjectViewRenderer
     private static string BorderSeparator() => "├" + new string('─', FrameWidth) + "┤";
     private static string BorderBottom() => "└" + new string('─', FrameWidth) + "┘";
 
-    private static string BorderBody(string content)
+    private static string BorderBody(string content, bool highlight = false)
     {
         var normalized = content.Replace(Environment.NewLine, " ").Replace("\n", " ");
-        var adjusted = Fit(normalized, FrameWidth);
-        return $"│{adjusted}│";
+        var adjusted = Markup.Escape(Fit(normalized, FrameWidth));
+        var line = $"│{adjusted}│";
+        return highlight ? CliTheme.CursorWrapEscaped(line) : line;
     }
 
     private static string Fit(string text, int width)

@@ -633,7 +633,7 @@ internal sealed class ProjectViewService
         var lines = _renderer.Render(state, highlightedEntryIndex, focusModeEnabled);
         foreach (var line in lines)
         {
-            AnsiConsole.MarkupLine(line);
+            CliTheme.MarkupLine(line);
         }
     }
 
