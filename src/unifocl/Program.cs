@@ -163,6 +163,18 @@ while (true)
             daemonRuntime,
             line => AppendLog(streamLog, line)))
     {
+        if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone")
+            && session.Mode == CliMode.Project
+            && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            await projectCommandRouterService.TryHandleProjectCommandAsync(
+                string.Empty,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+        }
+
         continue;
     }
 
