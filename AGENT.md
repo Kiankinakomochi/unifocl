@@ -14,7 +14,7 @@ The agent must treat the following as **non-negotiable principles**:
 - **Architecture:** CLI + daemon control + Unity editor bridge payload
 - **Security:** Never commit secrets or machine-local credentials/tokens
 - **Build Command:** Run builds or tests on `src/unifocl/unifocl.csproj` with `--disable-build-servers -v minimal`
-- **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in Japanese
+- **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in English
 - **Deployment:** NEVER deploy or publish artifacts without permission
 
 ---

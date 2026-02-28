@@ -6,6 +6,7 @@ using System.Text.Json;
 internal sealed class ProjectLifecycleService
 {
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
+    private readonly ProjectViewService _projectViewService = new();
 
     public async Task<bool> TryHandleLifecycleCommandAsync(
         string input,
@@ -256,7 +257,7 @@ internal sealed class ProjectLifecycleService
         return Task.FromResult(true);
     }
 
-    private static async Task<bool> TryOpenProjectAsync(
+    private async Task<bool> TryOpenProjectAsync(
         string projectPath,
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -329,8 +330,7 @@ internal sealed class ProjectLifecycleService
         session.Mode = CliMode.Project;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
         log("[grey]open[/]: step 4/4 load project context");
-        log($"[green]open[/]: attached [white]{Markup.Escape(Path.GetFileName(projectPath))}[/]");
-        log("[grey]mode[/]: switched to project mode");
+        _projectViewService.OpenInitialView(session, log);
         return true;
     }
 
