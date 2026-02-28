@@ -1,13 +1,14 @@
 using Spectre.Console;
 using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
+using System.Net.Http;
 using System.Reflection;
 using System.Text;
 
 internal sealed class DaemonControlService
 {
     private const int DefaultInactivityTimeoutSeconds = 600;
+    private static readonly HttpClient Http = new();
 
     public async Task HandleDaemonCommandAsync(
         string input,
@@ -141,68 +142,140 @@ internal sealed class DaemonControlService
             }
         }, cts.Token);
 
-        TcpListener? listener = null;
+        HttpListener? listener = null;
         try
         {
-            listener = new TcpListener(IPAddress.Loopback, options.Port);
+            listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{options.Port}/");
             listener.Start();
 
             while (!cts.Token.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(cts.Token);
+                HttpListenerContext context;
+                try
+                {
+                    context = await listener.GetContextAsync().WaitAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (HttpListenerException)
+                {
+                    break;
+                }
+
                 _ = Task.Run(async () =>
                 {
-                    await using var stream = client.GetStream();
-                    using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
-                    using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-                    var line = await reader.ReadLineAsync();
-                    var command = line?.Trim().ToUpperInvariant();
-
-                    switch (command)
+                    var request = context.Request;
+                    var path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
+                    if (path.Length == 0)
                     {
-                        case "PING":
-                            await writer.WriteLineAsync("PONG");
-                            break;
-                        case "TOUCH":
-                            lastActivityUtc = DateTime.UtcNow;
-                            await writer.WriteLineAsync("OK");
-                            break;
-                        case "STOP":
-                            await writer.WriteLineAsync("STOPPING");
-                            cts.Cancel();
-                            break;
-                        default:
-                            if (assetIndexBridge.TryHandle(line, out var assetResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await writer.WriteLineAsync(assetResponse);
-                            }
-                            else if (hierarchyBridge.TryHandle(line, out var hierarchyResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await writer.WriteLineAsync(hierarchyResponse);
-                            }
-                            else if (inspectorBridge.TryHandle(line, out var inspectorResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await writer.WriteLineAsync(inspectorResponse);
-                            }
-                            else
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await writer.WriteLineAsync("ERR");
-                            }
-                            break;
+                        path = "/";
                     }
 
-                    client.Dispose();
+                    try
+                    {
+                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
+                        {
+                            await WriteTextResponseAsync(context.Response, "PONG");
+                            return;
+                        }
+
+                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
+                        {
+                            lastActivityUtc = DateTime.UtcNow;
+                            await WriteTextResponseAsync(context.Response, "OK");
+                            return;
+                        }
+
+                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
+                        {
+                            await WriteTextResponseAsync(context.Response, "STOPPING");
+                            cts.Cancel();
+                            return;
+                        }
+
+                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/asset-index", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var revisionRaw = request.QueryString["revision"];
+                            var command = int.TryParse(revisionRaw, out var revision) && revision > 0
+                                ? $"ASSET_INDEX_SYNC {revision}"
+                                : "ASSET_INDEX_GET";
+                            if (assetIndexBridge.TryHandle(command, out var assetResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await WriteJsonResponseAsync(context.Response, assetResponse);
+                                return;
+                            }
+                        }
+
+                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (hierarchyBridge.TryHandle("HIERARCHY_GET", out var hierarchySnapshot))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await WriteJsonResponseAsync(context.Response, hierarchySnapshot);
+                                return;
+                            }
+                        }
+
+                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var payload = await ReadRequestBodyAsync(request);
+                            if (hierarchyBridge.TryHandle($"HIERARCHY_CMD {payload}", out var hierarchyResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await WriteJsonResponseAsync(context.Response, hierarchyResponse);
+                                return;
+                            }
+                        }
+
+                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var payload = await ReadRequestBodyAsync(request);
+                            if (hierarchyBridge.TryHandle($"HIERARCHY_FIND {payload}", out var hierarchySearch))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await WriteJsonResponseAsync(context.Response, hierarchySearch);
+                                return;
+                            }
+                        }
+
+                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var payload = await ReadRequestBodyAsync(request);
+                            if (inspectorBridge.TryHandle($"INSPECT {payload}", out var inspectorResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await WriteJsonResponseAsync(context.Response, inspectorResponse);
+                                return;
+                            }
+                        }
+
+                        lastActivityUtc = DateTime.UtcNow;
+                        await WriteTextResponseAsync(context.Response, "ERR", statusCode: 404);
+                    }
+                    catch
+                    {
+                        if (context.Response.OutputStream.CanWrite)
+                        {
+                            try
+                            {
+                                await WriteTextResponseAsync(context.Response, "ERR", statusCode: 500);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
                 }, cts.Token);
             }
         }
         catch (OperationCanceledException)
         {
         }
-        catch (SocketException)
+        catch (HttpListenerException)
         {
         }
         finally
@@ -219,6 +292,32 @@ internal sealed class DaemonControlService
             listener?.Stop();
             runtime.Remove(options.Port);
         }
+    }
+
+    private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
+    {
+        using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
+        return await reader.ReadToEndAsync();
+    }
+
+    private static async Task WriteTextResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
+    {
+        var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
+        response.StatusCode = statusCode;
+        response.ContentType = "text/plain; charset=utf-8";
+        response.ContentLength64 = bytes.Length;
+        await response.OutputStream.WriteAsync(bytes);
+        response.Close();
+    }
+
+    private static async Task WriteJsonResponseAsync(HttpListenerResponse response, string jsonPayload, int statusCode = 200)
+    {
+        var bytes = Encoding.UTF8.GetBytes(jsonPayload + Environment.NewLine);
+        response.StatusCode = statusCode;
+        response.ContentType = "application/json; charset=utf-8";
+        response.ContentLength64 = bytes.Length;
+        await response.OutputStream.WriteAsync(bytes);
+        response.Close();
     }
 
     public async Task<bool> EnsureProjectDaemonAsync(
@@ -680,17 +779,38 @@ internal sealed class DaemonControlService
 
     private static async Task<bool> TrySendControlAsync(int port, string request, string expectedResponse)
     {
+        var endpoint = request switch
+        {
+            "PING" => ("GET", $"http://127.0.0.1:{port}/ping"),
+            "TOUCH" => ("POST", $"http://127.0.0.1:{port}/touch"),
+            "STOP" => ("POST", $"http://127.0.0.1:{port}/stop"),
+            _ => default
+        };
+        if (string.IsNullOrWhiteSpace(endpoint.Item2))
+        {
+            return false;
+        }
+
         try
         {
-            using var client = new TcpClient();
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            await client.ConnectAsync(IPAddress.Loopback, port, cts.Token);
-            await using var stream = client.GetStream();
-            using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
-            await writer.WriteLineAsync(request);
-            var response = await reader.ReadLineAsync();
-            return string.Equals(response, expectedResponse, StringComparison.Ordinal);
+            HttpResponseMessage response;
+            if (endpoint.Item1 == "GET")
+            {
+                response = await Http.GetAsync(endpoint.Item2, cts.Token);
+            }
+            else
+            {
+                response = await Http.PostAsync(endpoint.Item2, new StringContent(string.Empty, Encoding.UTF8, "text/plain"), cts.Token);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            var payload = (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
+            return string.Equals(payload, expectedResponse, StringComparison.Ordinal);
         }
         catch
         {

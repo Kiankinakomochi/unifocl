@@ -9,6 +9,10 @@ internal sealed class EditorDependencyInitializerService
     private const string EmbeddedPackageFolder = "daemon-package";
     private const string ExcludeEntry = "Packages/com.unifocl.cli/";
     private const string DaemonSourceResource = "Payload/EditorScripts/CLIDaemon.cs";
+    private const string DaemonRuntimeModelsResource = "Payload/EditorScripts/Models/DaemonBridgeModels.cs";
+    private const string DaemonAssetIndexServiceResource = "Payload/EditorScripts/Services/DaemonAssetIndexService.cs";
+    private const string DaemonHierarchyServiceResource = "Payload/EditorScripts/Services/DaemonHierarchyService.cs";
+    private const string DaemonInspectorServiceResource = "Payload/EditorScripts/Services/DaemonInspectorService.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
 
     public OperationResult InitializeProject(string projectPath, Action<string> log)
@@ -102,7 +106,11 @@ internal sealed class EditorDependencyInitializerService
         {
             Path.Combine(packagePath, "Editor", "UniFocl.EditorBridge.asmdef"),
             Path.Combine(packagePath, "Editor", "CLIDaemon.cs"),
-            Path.Combine(packagePath, "Editor", "BridgeModels.cs")
+            Path.Combine(packagePath, "Editor", "BridgeModels.cs"),
+            Path.Combine(packagePath, "Editor", "Models", "DaemonBridgeModels.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonAssetIndexService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonHierarchyService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs")
         };
         foreach (var requiredFile in requiredFiles)
         {
@@ -144,6 +152,8 @@ internal sealed class EditorDependencyInitializerService
             var payloadPath = GetGlobalPayloadPath();
             Directory.CreateDirectory(payloadPath);
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Models"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services"));
 
             var packageJson =
                 """
@@ -181,20 +191,29 @@ internal sealed class EditorDependencyInitializerService
             File.WriteAllText(Path.Combine(payloadPath, "package.json"), packageJson + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "UniFocl.EditorBridge.asmdef"), asmdef + Environment.NewLine, Encoding.UTF8);
 
-            var daemonSource = ReadEmbeddedResource(DaemonSourceResource);
-            if (daemonSource is null)
+            var resourceToTarget = new (string Resource, string RelativePath)[]
             {
-                return OperationResult.Fail($"missing embedded resource {DaemonSourceResource}");
+                (DaemonSourceResource, Path.Combine("Editor", "CLIDaemon.cs")),
+                (SharedModelsSourceResource, Path.Combine("Editor", "BridgeModels.cs")),
+                (DaemonRuntimeModelsResource, Path.Combine("Editor", "Models", "DaemonBridgeModels.cs")),
+                (DaemonAssetIndexServiceResource, Path.Combine("Editor", "Services", "DaemonAssetIndexService.cs")),
+                (DaemonHierarchyServiceResource, Path.Combine("Editor", "Services", "DaemonHierarchyService.cs")),
+                (DaemonInspectorServiceResource, Path.Combine("Editor", "Services", "DaemonInspectorService.cs"))
+            };
+
+            foreach (var item in resourceToTarget)
+            {
+                var source = ReadEmbeddedResource(item.Resource);
+                if (source is null)
+                {
+                    return OperationResult.Fail($"missing embedded resource {item.Resource}");
+                }
+
+                var targetPath = Path.Combine(payloadPath, item.RelativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                File.WriteAllText(targetPath, source, Encoding.UTF8);
             }
 
-            var modelsSource = ReadEmbeddedResource(SharedModelsSourceResource);
-            if (modelsSource is null)
-            {
-                return OperationResult.Fail($"missing embedded resource {SharedModelsSourceResource}");
-            }
-
-            File.WriteAllText(Path.Combine(payloadPath, "Editor", "CLIDaemon.cs"), daemonSource, Encoding.UTF8);
-            File.WriteAllText(Path.Combine(payloadPath, "Editor", "BridgeModels.cs"), modelsSource, Encoding.UTF8);
             return OperationResult.Success();
         }
         catch (Exception ex)

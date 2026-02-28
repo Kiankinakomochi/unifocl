@@ -1,11 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.IO;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,15 +32,12 @@ namespace UniFocl.EditorBridge
 
     public static class CLIDaemon
     {
-        private static TcpListener? _listener;
+        private static HttpListener? _listener;
         private static CancellationTokenSource? _cts;
         private static DateTime _lastActivityUtc;
         private static bool _running;
         private static bool _autoExitEditor;
         private static int _inactivityTtlSeconds;
-        private static bool _assetIndexDirty = true;
-        private static int _assetIndexRevision = 1;
-        private static readonly object AssetIndexSync = new();
 
         public static bool HasDaemonServiceArg()
         {
@@ -52,7 +45,6 @@ namespace UniFocl.EditorBridge
             return Array.IndexOf(args, "--daemon-service") >= 0;
         }
 
-        // Entry point for -executeMethod CLIDaemon.StartServer
         public static void StartServer()
         {
             var options = ParseServiceArgs(Environment.GetCommandLineArgs());
@@ -87,7 +79,8 @@ namespace UniFocl.EditorBridge
             _lastActivityUtc = DateTime.UtcNow;
 
             _cts = new CancellationTokenSource();
-            _listener = new TcpListener(IPAddress.Loopback, options.port);
+            _listener = new HttpListener();
+            _listener.Prefixes.Add($"http://127.0.0.1:{options.port}/");
             _listener.Start();
             _running = true;
 
@@ -96,7 +89,7 @@ namespace UniFocl.EditorBridge
 
             _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
 
-            Debug.Log($"[unifocl] CLIDaemon started on 127.0.0.1:{options.port} (batch={Application.isBatchMode}, autoExit={_autoExitEditor})");
+            Debug.Log($"[unifocl] CLIDaemon started on http://127.0.0.1:{options.port}/ (batch={Application.isBatchMode}, autoExit={_autoExitEditor})");
         }
 
         private static async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -110,54 +103,148 @@ namespace UniFocl.EditorBridge
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    var client = await _listener.AcceptTcpClientAsync();
-                    _ = Task.Run(() => HandleClientAsync(client, cancellationToken), cancellationToken);
+                    HttpListenerContext context;
+                    try
+                    {
+                        context = await _listener.GetContextAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        break;
+                    }
+                    catch (HttpListenerException)
+                    {
+                        break;
+                    }
+
+                    _ = Task.Run(() => HandleRequestAsync(context, cancellationToken), cancellationToken);
                 }
             }
             catch (ObjectDisposedException)
             {
             }
-            catch (SocketException)
+            catch (HttpListenerException)
             {
             }
         }
 
-        private static async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
+        private static async Task HandleRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
         {
-            using (client)
-            await using (var stream = client.GetStream())
-            using (var reader = new StreamReader(stream, Encoding.UTF8, false, 1024, true))
-            using (var writer = new StreamWriter(stream, Encoding.UTF8, 1024, true) { AutoFlush = true })
+            _ = cancellationToken;
+
+            var request = context.Request;
+            var path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
+            if (path.Length == 0)
             {
-                var line = await reader.ReadLineAsync();
-                var command = line?.Trim().ToUpperInvariant();
+                path = "/";
+            }
 
-                switch (command)
+            try
+            {
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
-                    case "PING":
-                        await writer.WriteLineAsync("PONG");
-                        break;
-                    case "TOUCH":
-                        MarkActivity();
-                        await writer.WriteLineAsync("OK");
-                        break;
-                    case "STOP":
-                        await writer.WriteLineAsync("STOPPING");
-                        StopInternal(quitEditor: Application.isBatchMode);
-                        break;
-                    default:
-                        if (line is not null && TryHandleAssetIndexCommand(line, out var assetPayload))
-                        {
-                            MarkActivity();
-                            await writer.WriteLineAsync(assetPayload);
-                            break;
-                        }
+                    await WriteTextResponseAsync(context.Response, "PONG");
+                    return;
+                }
 
-                        MarkActivity();
-                        await writer.WriteLineAsync("ERR");
-                        break;
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    await WriteTextResponseAsync(context.Response, "OK");
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteTextResponseAsync(context.Response, "STOPPING");
+                    StopInternal(quitEditor: Application.isBatchMode);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/asset-index", StringComparison.OrdinalIgnoreCase))
+                {
+                    var revisionRaw = request.QueryString["revision"];
+                    int? knownRevision = null;
+                    if (int.TryParse(revisionRaw, out var revision) && revision > 0)
+                    {
+                        knownRevision = revision;
+                    }
+
+                    MarkActivity();
+                    await WriteJsonResponseAsync(context.Response, DaemonAssetIndexService.BuildPayload(knownRevision));
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    await WriteJsonResponseAsync(context.Response, DaemonHierarchyService.BuildSnapshotPayload());
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request);
+                    MarkActivity();
+                    await WriteJsonResponseAsync(context.Response, DaemonHierarchyService.ExecuteCommand(payload));
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request);
+                    MarkActivity();
+                    await WriteJsonResponseAsync(context.Response, DaemonHierarchyService.ExecuteSearch(payload));
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request);
+                    MarkActivity();
+                    await WriteJsonResponseAsync(context.Response, DaemonInspectorService.Execute(payload));
+                    return;
+                }
+
+                MarkActivity();
+                await WriteTextResponseAsync(context.Response, "ERR", 404);
+            }
+            catch
+            {
+                try
+                {
+                    await WriteTextResponseAsync(context.Response, "ERR", 500);
+                }
+                catch
+                {
                 }
             }
+        }
+
+        private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
+        {
+            using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
+            return await reader.ReadToEndAsync();
+        }
+
+        private static async Task WriteTextResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
+        {
+            var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
+            response.StatusCode = statusCode;
+            response.ContentType = "text/plain; charset=utf-8";
+            response.ContentLength64 = bytes.Length;
+            await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+            response.Close();
+        }
+
+        private static async Task WriteJsonResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
+        {
+            var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
+            response.StatusCode = statusCode;
+            response.ContentType = "application/json; charset=utf-8";
+            response.ContentLength64 = bytes.Length;
+            await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+            response.Close();
         }
 
         private static void MarkActivity()
@@ -217,190 +304,7 @@ namespace UniFocl.EditorBridge
             }
         }
 
-        private static bool TryHandleAssetIndexCommand(string line, out string response)
-        {
-            response = string.Empty;
-            if (line.Equals("ASSET_INDEX_GET", StringComparison.Ordinal))
-            {
-                response = BuildAssetIndexPayload(knownRevision: null);
-                return true;
-            }
-
-            if (!line.StartsWith("ASSET_INDEX_SYNC ", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            var knownRevisionRaw = line.Substring("ASSET_INDEX_SYNC ".Length);
-            int? knownRevision = null;
-            if (int.TryParse(knownRevisionRaw, out var parsed))
-            {
-                knownRevision = parsed;
-            }
-
-            response = BuildAssetIndexPayload(knownRevision);
-            return true;
-        }
-
-        private static string BuildAssetIndexPayload(int? knownRevision)
-        {
-            lock (AssetIndexSync)
-            {
-                if (_assetIndexDirty)
-                {
-                    _assetIndexRevision++;
-                }
-
-                if (knownRevision.HasValue && knownRevision.Value == _assetIndexRevision && !_assetIndexDirty)
-                {
-                    return JsonUtility.ToJson(new AssetIndexSyncResponse
-                    {
-                        revision = _assetIndexRevision,
-                        unchanged = true,
-                        entries = Array.Empty<AssetIndexEntry>()
-                    });
-                }
-
-                var paths = CollectPathsFromSearchService();
-                if (paths.Count == 0)
-                {
-                    paths = FallbackEnumerateAssetPaths();
-                }
-
-                var entries = new AssetIndexEntry[paths.Count];
-                for (var i = 0; i < paths.Count; i++)
-                {
-                    var path = paths[i];
-                    entries[i] = new AssetIndexEntry
-                    {
-                        instanceId = StablePathId(path),
-                        path = path
-                    };
-                }
-
-                _assetIndexDirty = false;
-                return JsonUtility.ToJson(new AssetIndexSyncResponse
-                {
-                    revision = _assetIndexRevision,
-                    unchanged = false,
-                    entries = entries
-                });
-            }
-        }
-
-        private static List<string> CollectPathsFromSearchService()
-        {
-            // Reflection keeps this package resilient across Unity versions where SearchService signatures differ.
-            var paths = new List<string>();
-            try
-            {
-                var editorAssembly = typeof(EditorApplication).Assembly;
-                var searchServiceType = editorAssembly.GetType("UnityEditor.Search.SearchService");
-                if (searchServiceType is null)
-                {
-                    return paths;
-                }
-
-                var requestMethod = searchServiceType
-                    .GetMethods()
-                    .FirstOrDefault(m => m.Name == "Request" && m.GetParameters().Length >= 1 && m.GetParameters()[0].ParameterType == typeof(string));
-                if (requestMethod is null)
-                {
-                    return paths;
-                }
-
-                var requestResult = requestMethod.Invoke(null, new object[] { "p:" });
-                if (requestResult is not IEnumerable enumerable)
-                {
-                    return paths;
-                }
-
-                foreach (var item in enumerable)
-                {
-                    if (item is null)
-                    {
-                        continue;
-                    }
-
-                    var itemType = item.GetType();
-                    var idProp = itemType.GetProperty("id");
-                    var value = idProp?.GetValue(item) as string;
-                    if (string.IsNullOrWhiteSpace(value))
-                    {
-                        continue;
-                    }
-
-                    if (!value.StartsWith("Assets/", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    if (value.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    paths.Add(value);
-                }
-            }
-            catch
-            {
-            }
-
-            return paths
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private static List<string> FallbackEnumerateAssetPaths()
-        {
-            var list = new List<string>();
-            var root = Application.dataPath;
-            if (!Directory.Exists(root))
-            {
-                return list;
-            }
-
-            foreach (var absolutePath in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                if (absolutePath.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var relative = "Assets/" + Path.GetRelativePath(root, absolutePath).Replace('\\', '/');
-                list.Add(relative);
-            }
-
-            return list
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private static int StablePathId(string path)
-        {
-            unchecked
-            {
-                uint hash = 2166136261;
-                foreach (var ch in path)
-                {
-                    hash ^= char.ToLowerInvariant(ch);
-                    hash *= 16777619;
-                }
-
-                return (int)(hash & 0x7FFFFFFF);
-            }
-        }
-
-        internal static void MarkAssetIndexDirty()
-        {
-            lock (AssetIndexSync)
-            {
-                _assetIndexDirty = true;
-            }
-        }
+        internal static void MarkAssetIndexDirty() => DaemonAssetIndexService.MarkDirty();
 
         private static DaemonServiceArgs ParseServiceArgs(string[] args)
         {
@@ -491,21 +395,6 @@ namespace UniFocl.EditorBridge
             _ = movedFromAssetPaths;
             CLIDaemon.MarkAssetIndexDirty();
         }
-    }
-
-    [Serializable]
-    internal sealed class AssetIndexEntry
-    {
-        public int instanceId;
-        public string path = string.Empty;
-    }
-
-    [Serializable]
-    internal sealed class AssetIndexSyncResponse
-    {
-        public int revision;
-        public bool unchanged;
-        public AssetIndexEntry[] entries = Array.Empty<AssetIndexEntry>();
     }
 }
 #endif
