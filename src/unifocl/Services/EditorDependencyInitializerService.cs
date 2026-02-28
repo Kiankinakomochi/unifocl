@@ -64,11 +64,6 @@ internal sealed class EditorDependencyInitializerService
         try
         {
             var targetPath = Path.Combine(projectPath, "Packages", EmbeddedPackageName);
-            if (Directory.Exists(targetPath))
-            {
-                return OperationResult.Success();
-            }
-
             var sourcePath = GetGlobalPayloadPath();
             if (!Directory.Exists(sourcePath))
             {
@@ -182,10 +177,10 @@ internal sealed class EditorDependencyInitializerService
             }
 
             var existingEntries = File.ReadAllLines(excludePath)
-                .Select(line => line.Trim())
+                .Select(line => NormalizeExcludePattern(line.Trim()))
                 .Where(line => !string.IsNullOrWhiteSpace(line))
                 .ToHashSet(StringComparer.Ordinal);
-            if (!existingEntries.Contains(ExcludeEntry))
+            if (!existingEntries.Contains(NormalizeExcludePattern(ExcludeEntry)))
             {
                 File.AppendAllText(excludePath, ExcludeEntry + Environment.NewLine, Encoding.UTF8);
             }
@@ -235,6 +230,12 @@ internal sealed class EditorDependencyInitializerService
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         return Path.Combine(home, ".unifocl", EmbeddedPackageFolder);
+    }
+
+    private static string NormalizeExcludePattern(string value)
+    {
+        var normalized = value.Replace('\\', '/').Trim();
+        return normalized.EndsWith('/') ? normalized : normalized + "/";
     }
 
     private static void CopyDirectory(string sourcePath, string targetPath)
