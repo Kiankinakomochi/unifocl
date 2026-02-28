@@ -303,19 +303,19 @@ static string? ReadInteractiveInput(
     CliSessionState session)
 {
     var input = new StringBuilder();
-    var selectedFuzzyCandidateIndex = 0;
-    var renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedFuzzyCandidateIndex);
+    var selectedIntellisenseCandidateIndex = 0;
+    var renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedIntellisenseCandidateIndex);
 
     while (true)
     {
-        _ = TryGetFuzzyComposerCandidates(input.ToString(), session, out var fuzzyCandidates, out _, out _);
-        if (fuzzyCandidates.Count == 0)
+        _ = TryGetComposerIntellisenseCandidates(input.ToString(), commands, projectCommands, session, out var candidates);
+        if (candidates.Count == 0)
         {
-            selectedFuzzyCandidateIndex = 0;
+            selectedIntellisenseCandidateIndex = 0;
         }
         else
         {
-            selectedFuzzyCandidateIndex = Math.Clamp(selectedFuzzyCandidateIndex, 0, fuzzyCandidates.Count - 1);
+            selectedIntellisenseCandidateIndex = Math.Clamp(selectedIntellisenseCandidateIndex, 0, candidates.Count - 1);
         }
 
         var key = Console.ReadKey(intercept: true);
@@ -324,12 +324,12 @@ static string? ReadInteractiveInput(
         {
             case ConsoleKey.Enter:
                 Console.WriteLine();
-                if (fuzzyCandidates.Count > 0
-                    && selectedFuzzyCandidateIndex >= 0
-                    && selectedFuzzyCandidateIndex < fuzzyCandidates.Count
-                    && !string.IsNullOrWhiteSpace(fuzzyCandidates[selectedFuzzyCandidateIndex].CommitCommand))
+                if (candidates.Count > 0
+                    && selectedIntellisenseCandidateIndex >= 0
+                    && selectedIntellisenseCandidateIndex < candidates.Count
+                    && !string.IsNullOrWhiteSpace(candidates[selectedIntellisenseCandidateIndex].CommitCommand))
                 {
-                    return fuzzyCandidates[selectedFuzzyCandidateIndex].CommitCommand!;
+                    return candidates[selectedIntellisenseCandidateIndex].CommitCommand!;
                 }
 
                 return input.ToString();
@@ -341,22 +341,22 @@ static string? ReadInteractiveInput(
                 break;
             case ConsoleKey.Escape:
                 input.Clear();
-                selectedFuzzyCandidateIndex = 0;
+                selectedIntellisenseCandidateIndex = 0;
                 break;
             case ConsoleKey.UpArrow:
-                if (fuzzyCandidates.Count > 0)
+                if (candidates.Count > 0)
                 {
-                    selectedFuzzyCandidateIndex = selectedFuzzyCandidateIndex <= 0
-                        ? fuzzyCandidates.Count - 1
-                        : selectedFuzzyCandidateIndex - 1;
+                    selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex <= 0
+                        ? candidates.Count - 1
+                        : selectedIntellisenseCandidateIndex - 1;
                 }
                 break;
             case ConsoleKey.DownArrow:
-                if (fuzzyCandidates.Count > 0)
+                if (candidates.Count > 0)
                 {
-                    selectedFuzzyCandidateIndex = selectedFuzzyCandidateIndex >= fuzzyCandidates.Count - 1
+                    selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex >= candidates.Count - 1
                         ? 0
-                        : selectedFuzzyCandidateIndex + 1;
+                        : selectedIntellisenseCandidateIndex + 1;
                 }
                 break;
             default:
@@ -368,7 +368,7 @@ static string? ReadInteractiveInput(
         }
 
         ClearComposerFrame(renderedLines);
-        renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedFuzzyCandidateIndex);
+        renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedIntellisenseCandidateIndex);
     }
 }
 
@@ -388,7 +388,7 @@ static int RenderComposerFrame(
     if (input.StartsWith('/'))
     {
         lines.Add(string.Empty);
-        lines.AddRange(GetSuggestionLines(input, commands));
+        lines.AddRange(GetSuggestionLines(input, commands, selectedFuzzyCandidateIndex));
     }
     else if (TryGetFuzzyQueryIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var fuzzyLines))
     {
@@ -398,7 +398,7 @@ static int RenderComposerFrame(
     else if (!string.IsNullOrWhiteSpace(input))
     {
         lines.Add(string.Empty);
-        lines.AddRange(GetSuggestionLines(input, projectCommands));
+        lines.AddRange(GetSuggestionLines(input, projectCommands, selectedFuzzyCandidateIndex));
     }
     else if (session.Inspector is not null)
     {
@@ -506,24 +506,80 @@ static void SeedBootLog(List<string> streamLog)
     streamLog.Add(string.Empty);
 }
 
-static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> commands)
+static bool TryGetComposerIntellisenseCandidates(
+    string input,
+    List<CommandSpec> commands,
+    List<CommandSpec> projectCommands,
+    CliSessionState session,
+    out List<(string Label, string? CommitCommand)> candidates)
+{
+    candidates = [];
+
+    if (TryGetFuzzyComposerCandidates(input, session, out var fuzzyCandidates, out _, out _))
+    {
+        candidates = fuzzyCandidates
+            .Select(candidate => (candidate.Path, candidate.CommitCommand))
+            .ToList();
+        return true;
+    }
+
+    if (input.StartsWith('/'))
+    {
+        candidates = GetSuggestionMatches(input, commands)
+            .Select(match => (match.Signature, (string?)match.Trigger))
+            .ToList();
+        return true;
+    }
+
+    if (!string.IsNullOrWhiteSpace(input))
+    {
+        candidates = GetSuggestionMatches(input, projectCommands)
+            .Select(match => (match.Signature, (string?)match.Trigger))
+            .ToList();
+        return true;
+    }
+
+    return false;
+}
+
+static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> commands, int selectedSuggestionIndex)
+{
+    var matches = GetSuggestionMatches(query, commands);
+    if (matches.Count == 0)
+    {
+        return new[]
+        {
+            "[grey]intellisense[/]: command suggestions [dim](up/down + enter)[/]",
+            $"[dim]no matches for {Markup.Escape(query)}[/]"
+        };
+    }
+
+    var selected = Math.Clamp(selectedSuggestionIndex, 0, matches.Count - 1);
+    var lines = new List<string>
+    {
+        "[grey]intellisense[/]: command suggestions [dim](up/down + enter)[/]"
+    };
+    for (var i = 0; i < matches.Count; i++)
+    {
+        var match = matches[i];
+        var prefix = i == selected ? "[green]>[/]" : "[grey] [/]";
+        var signatureColor = i == selected ? "green" : "grey";
+        lines.Add($"{prefix} [{signatureColor}]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
+    }
+
+    return lines;
+}
+
+static List<CommandSpec> GetSuggestionMatches(string query, List<CommandSpec> commands)
 {
     var normalized = query.Trim().ToLowerInvariant();
-    var matches = commands
+    return commands
         .Where(c => c.Signature.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Trigger.StartsWith(normalized, StringComparison.OrdinalIgnoreCase)
                     || normalized.StartsWith(c.Trigger, StringComparison.OrdinalIgnoreCase))
         .Take(14)
         .ToList();
-
-    if (matches.Count == 0)
-    {
-        return new[] { $"[dim]no matches for {Markup.Escape(query)}[/]" };
-    }
-
-    return matches.Select(match =>
-        $"[grey]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
 }
 
 static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState session, int selectedFuzzyCandidateIndex, out List<string> lines)
