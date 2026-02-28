@@ -3,8 +3,7 @@ using Spectre.Console;
 internal sealed class ProjectViewRenderer
 {
     private const int FrameWidth = 78;
-    private const int TreeRows = 10;
-    private const int CommandRows = 11;
+    private const int BottomPaddingRows = 2;
 
     public IReadOnlyList<string> Render(ProjectViewState state)
     {
@@ -17,28 +16,14 @@ internal sealed class ProjectViewRenderer
         lines.Add(BorderBody(header));
         lines.Add(BorderSeparator());
 
-        var treeLines = BuildTreeLines(state, cwd).Take(TreeRows).ToList();
-        while (treeLines.Count < TreeRows)
-        {
-            treeLines.Add(string.Empty);
-        }
-
-        foreach (var treeLine in treeLines)
+        foreach (var treeLine in BuildTreeLines(state, cwd))
         {
             lines.Add(BorderBody(treeLine));
         }
 
-        lines.Add(BorderSeparator());
-
-        var commandLines = BuildCommandLines(state, cwd).Take(CommandRows).ToList();
-        while (commandLines.Count < CommandRows)
+        for (var i = 0; i < BottomPaddingRows; i++)
         {
-            commandLines.Add(string.Empty);
-        }
-
-        foreach (var commandLine in commandLines)
-        {
-            lines.Add(BorderBody(commandLine));
+            lines.Add(BorderBody(string.Empty));
         }
 
         lines.Add(BorderBottom());
@@ -55,18 +40,6 @@ internal sealed class ProjectViewRenderer
             var label = entry.IsDirectory ? $"{entry.Name}/" : entry.Name;
             yield return $"{branch}[{entry.Index}] {label}";
         }
-    }
-
-    private static IEnumerable<string> BuildCommandLines(ProjectViewState state, string cwd)
-    {
-        var maxHistoryLines = Math.Max(CommandRows - 1, 1);
-        var history = state.CommandTranscript.TakeLast(maxHistoryLines);
-        foreach (var line in history)
-        {
-            yield return $" {line}";
-        }
-
-        yield return $" UnityCLI:{cwd} > _";
     }
 
     private static string GetRootLabel(string cwd)

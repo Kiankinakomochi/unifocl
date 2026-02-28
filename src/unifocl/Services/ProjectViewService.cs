@@ -6,7 +6,7 @@ internal sealed class ProjectViewService
 {
     private readonly ProjectViewRenderer _renderer = new();
 
-    public void OpenInitialView(CliSessionState session, Action<string> log)
+    public void OpenInitialView(CliSessionState session)
     {
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
@@ -14,15 +14,14 @@ internal sealed class ProjectViewService
         }
 
         ResetToAssetsRoot(session.ProjectView, session.CurrentProjectPath);
-        RenderFrame(session.ProjectView, log);
+        RenderFrame(session.ProjectView);
     }
 
     public async Task<bool> TryHandleProjectViewCommandAsync(
         string input,
         CliSessionState session,
         DaemonControlService daemonControlService,
-        DaemonRuntime daemonRuntime,
-        Action<string> log)
+        DaemonRuntime daemonRuntime)
     {
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
@@ -33,11 +32,10 @@ internal sealed class ProjectViewService
         var tokens = Tokenize(input);
         if (tokens.Count == 0)
         {
-            RenderFrame(session.ProjectView, log);
+            RenderFrame(session.ProjectView);
             return true;
         }
 
-        var workingCwd = session.ProjectView.RelativeCwd;
         var outputs = new List<string>();
         var handled = false;
 
@@ -80,8 +78,7 @@ internal sealed class ProjectViewService
             return false;
         }
 
-        PushTranscript(session.ProjectView, $"UnityCLI:{workingCwd} > {input}", outputs);
-        RenderFrame(session.ProjectView, log);
+        RenderFrame(session.ProjectView);
         return true;
     }
 
@@ -108,7 +105,6 @@ internal sealed class ProjectViewService
         state.RelativeCwd = defaultCwd;
         state.ExpandedDirectories.Clear();
         state.VisibleEntries.Clear();
-        state.CommandTranscript.Clear();
         state.DbState = ProjectDbState.IdleSafe;
         state.Initialized = true;
         RefreshTree(projectPath, state);
@@ -298,28 +294,13 @@ internal sealed class ProjectViewService
         return true;
     }
 
-    private static void PushTranscript(ProjectViewState state, string commandLine, IEnumerable<string> outputs)
-    {
-        state.CommandTranscript.Add(commandLine);
-        foreach (var output in outputs)
-        {
-            state.CommandTranscript.Add(output);
-        }
-
-        state.CommandTranscript.Add(string.Empty);
-        while (state.CommandTranscript.Count > 24)
-        {
-            state.CommandTranscript.RemoveAt(0);
-        }
-    }
-
-    private void RenderFrame(ProjectViewState state, Action<string> log)
+    private void RenderFrame(ProjectViewState state)
     {
         AnsiConsole.Clear();
         var lines = _renderer.Render(state);
         foreach (var line in lines)
         {
-            log(line);
+            AnsiConsole.MarkupLine(line);
         }
     }
 
