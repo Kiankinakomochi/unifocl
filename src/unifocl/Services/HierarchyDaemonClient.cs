@@ -45,6 +45,44 @@ internal sealed class HierarchyDaemonClient
         }
     }
 
+    public async Task<HierarchySearchResponseDto?> SearchAsync(int port, HierarchySearchRequestDto request)
+    {
+        var json = JsonSerializer.Serialize(request, JsonOptions);
+        var payload = await SendRequestAsync(port, $"HIERARCHY_FIND {json}");
+        if (payload is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<HierarchySearchResponseDto>(payload, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<AssetIndexSyncResponseDto?> SyncAssetIndexAsync(int port, int knownRevision)
+    {
+        var command = knownRevision <= 0 ? "ASSET_INDEX_GET" : $"ASSET_INDEX_SYNC {knownRevision}";
+        var payload = await SendRequestAsync(port, command);
+        if (payload is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<AssetIndexSyncResponseDto>(payload, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static async Task<string?> SendRequestAsync(int port, string request)
     {
         try

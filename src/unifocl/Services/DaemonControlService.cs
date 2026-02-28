@@ -119,6 +119,8 @@ internal sealed class DaemonControlService
         var startedAtUtc = DateTime.UtcNow;
         var state = new DaemonInstance(options.Port, pid, startedAtUtc, options.UnityPath, options.Headless, options.ProjectPath, DateTime.UtcNow);
         var hierarchyBridge = new HierarchyDaemonBridge(options.ProjectPath);
+        using var assetIndexBridge = new AssetIndexDaemonBridge(options.ProjectPath);
+        var inspectorBridge = new InspectorDaemonBridge();
 
         runtime.Upsert(state);
         using var cts = new CancellationTokenSource();
@@ -170,10 +172,20 @@ internal sealed class DaemonControlService
                             cts.Cancel();
                             break;
                         default:
-                            if (hierarchyBridge.TryHandle(line, out var hierarchyResponse))
+                            if (assetIndexBridge.TryHandle(line, out var assetResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await writer.WriteLineAsync(assetResponse);
+                            }
+                            else if (hierarchyBridge.TryHandle(line, out var hierarchyResponse))
                             {
                                 lastActivityUtc = DateTime.UtcNow;
                                 await writer.WriteLineAsync(hierarchyResponse);
+                            }
+                            else if (inspectorBridge.TryHandle(line, out var inspectorResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await writer.WriteLineAsync(inspectorResponse);
                             }
                             else
                             {

@@ -41,5 +41,8 @@ internal sealed class CliSessionState
         ProjectView.ExpandedDirectories.Clear();
         ProjectView.CommandTranscript.Clear();
         ProjectView.DbState = ProjectDbState.IdleSafe;
+        ProjectView.AssetIndexRevision = 0;
+        ProjectView.AssetPathByInstanceId.Clear();
+        ProjectView.LastFuzzyMatches.Clear();
     }
 }

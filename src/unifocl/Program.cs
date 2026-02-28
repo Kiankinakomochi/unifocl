@@ -89,6 +89,8 @@ var projectCommands = new List<CommandSpec>
     new("s <field> <value...>", "Alias for set", "s"),
     new("toggle <target>", "Toggle bool/active/enabled in active mode", "toggle"),
     new("t <target>", "Alias for toggle", "t"),
+    new("f <query>", "Fuzzy find in active mode", "f"),
+    new("ff <query>", "Alias for fuzzy find", "ff"),
     new("move <...>", "Move/reorder item in active mode", "move"),
     new("mv <...>", "Alias for move", "mv")
 };
@@ -301,16 +303,35 @@ static string? ReadInteractiveInput(
     CliSessionState session)
 {
     var input = new StringBuilder();
-    var renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session);
+    var selectedFuzzyCandidateIndex = 0;
+    var renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedFuzzyCandidateIndex);
 
     while (true)
     {
+        _ = TryGetFuzzyComposerCandidates(input.ToString(), session, out var fuzzyCandidates, out _, out _);
+        if (fuzzyCandidates.Count == 0)
+        {
+            selectedFuzzyCandidateIndex = 0;
+        }
+        else
+        {
+            selectedFuzzyCandidateIndex = Math.Clamp(selectedFuzzyCandidateIndex, 0, fuzzyCandidates.Count - 1);
+        }
+
         var key = Console.ReadKey(intercept: true);
 
         switch (key.Key)
         {
             case ConsoleKey.Enter:
                 Console.WriteLine();
+                if (fuzzyCandidates.Count > 0
+                    && selectedFuzzyCandidateIndex >= 0
+                    && selectedFuzzyCandidateIndex < fuzzyCandidates.Count
+                    && !string.IsNullOrWhiteSpace(fuzzyCandidates[selectedFuzzyCandidateIndex].CommitCommand))
+                {
+                    return fuzzyCandidates[selectedFuzzyCandidateIndex].CommitCommand!;
+                }
+
                 return input.ToString();
             case ConsoleKey.Backspace:
                 if (input.Length > 0)
@@ -320,6 +341,23 @@ static string? ReadInteractiveInput(
                 break;
             case ConsoleKey.Escape:
                 input.Clear();
+                selectedFuzzyCandidateIndex = 0;
+                break;
+            case ConsoleKey.UpArrow:
+                if (fuzzyCandidates.Count > 0)
+                {
+                    selectedFuzzyCandidateIndex = selectedFuzzyCandidateIndex <= 0
+                        ? fuzzyCandidates.Count - 1
+                        : selectedFuzzyCandidateIndex - 1;
+                }
+                break;
+            case ConsoleKey.DownArrow:
+                if (fuzzyCandidates.Count > 0)
+                {
+                    selectedFuzzyCandidateIndex = selectedFuzzyCandidateIndex >= fuzzyCandidates.Count - 1
+                        ? 0
+                        : selectedFuzzyCandidateIndex + 1;
+                }
                 break;
             default:
                 if (!char.IsControl(key.KeyChar))
@@ -330,7 +368,7 @@ static string? ReadInteractiveInput(
         }
 
         ClearComposerFrame(renderedLines);
-        renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session);
+        renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session, selectedFuzzyCandidateIndex);
     }
 }
 
@@ -338,7 +376,8 @@ static int RenderComposerFrame(
     string input,
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
-    CliSessionState session)
+    CliSessionState session,
+    int selectedFuzzyCandidateIndex)
 {
     var lines = new List<string>
     {
@@ -351,6 +390,11 @@ static int RenderComposerFrame(
         lines.Add(string.Empty);
         lines.AddRange(GetSuggestionLines(input, commands));
     }
+    else if (TryGetFuzzyQueryIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var fuzzyLines))
+    {
+        lines.Add(string.Empty);
+        lines.AddRange(fuzzyLines);
+    }
     else if (!string.IsNullOrWhiteSpace(input))
     {
         lines.Add(string.Empty);
@@ -362,7 +406,7 @@ static int RenderComposerFrame(
     }
     else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        lines.Add("[dim]Project mode: list, enter <idx>, up, make script <name>, load <idx|name>, rename <idx> <new>, remove <idx>, move <...>[/]");
+        lines.Add("[dim]Project mode: list, enter <idx>, up, f <query>, make script <name>, load <idx|name>, rename <idx> <new>, remove <idx>, move <...>[/]");
     }
     else
     {
@@ -480,6 +524,206 @@ static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> co
 
     return matches.Select(match =>
         $"[grey]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
+}
+
+static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState session, int selectedFuzzyCandidateIndex, out List<string> lines)
+{
+    lines = [];
+    if (!TryGetFuzzyComposerCandidates(input, session, out var candidates, out var modeLabel, out var emptyLabel))
+    {
+        return false;
+    }
+
+    lines.Add($"[grey]fuzzy[/]: {Markup.Escape(modeLabel)} [dim](up/down + enter)[/]");
+    if (candidates.Count == 0)
+    {
+        lines.Add($"[dim]{Markup.Escape(emptyLabel)}[/]");
+        return true;
+    }
+
+    var selected = Math.Clamp(selectedFuzzyCandidateIndex, 0, candidates.Count - 1);
+    for (var i = 0; i < candidates.Count && i < 10; i++)
+    {
+        var candidate = candidates[i];
+        var prefix = i == selected ? "[green]>[/]" : "[grey] [/]";
+        var indexColor = i == selected ? "green" : "deepskyblue1";
+        lines.Add($"{prefix} [{indexColor}]{i}[/] {Markup.Escape(candidate.Path)}");
+    }
+
+    return true;
+}
+
+static bool TryGetFuzzyComposerCandidates(
+    string input,
+    CliSessionState session,
+    out List<(string Path, string? CommitCommand)> candidates,
+    out string modeLabel,
+    out string emptyLabel)
+{
+    candidates = [];
+    modeLabel = string.Empty;
+    emptyLabel = string.Empty;
+    if (!TryParseFuzzyQueryInput(input, out var query))
+    {
+        return false;
+    }
+
+    if (session.Inspector is not null)
+    {
+        modeLabel = "inspector query";
+        candidates = GetInspectorFuzzyCandidates(session.Inspector, query);
+        emptyLabel = "no inspector matches";
+        return true;
+    }
+
+    if (session.ContextMode != CliContextMode.Project)
+    {
+        modeLabel = "available in project/inspector contexts";
+        emptyLabel = "switch context to use fuzzy selection";
+        return true;
+    }
+
+    modeLabel = "project query";
+    candidates = GetProjectFuzzyCandidates(session.ProjectView, query);
+    emptyLabel = session.ProjectView.AssetPathByInstanceId.Count == 0
+        ? "asset index is cold; press Enter once to sync"
+        : "no project matches";
+    return true;
+}
+
+static bool TryParseFuzzyQueryInput(string input, out string query)
+{
+    query = string.Empty;
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return false;
+    }
+
+    var trimmed = input.TrimStart();
+    var firstSpace = trimmed.IndexOf(' ');
+    var command = firstSpace < 0 ? trimmed : trimmed[..firstSpace];
+    if (!command.Equals("f", StringComparison.OrdinalIgnoreCase)
+        && !command.Equals("ff", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    query = firstSpace < 0 ? string.Empty : trimmed[(firstSpace + 1)..].Trim();
+    return true;
+}
+
+static List<(string Path, string? CommitCommand)> GetProjectFuzzyCandidates(ProjectViewState state, string query)
+{
+    var (typeFilter, term) = ParseProjectFuzzyQuery(query);
+    var entries = state.AssetPathByInstanceId.Count > 0
+        ? state.AssetPathByInstanceId.Values
+        : state.VisibleEntries.Select(entry => entry.RelativePath);
+    var matches = new List<ProjectFuzzyMatch>();
+    foreach (var path in entries)
+    {
+        if (!PassesProjectTypeFilter(path, typeFilter))
+        {
+            continue;
+        }
+
+        var score = 1d;
+        var matched = string.IsNullOrWhiteSpace(term) || FuzzyMatcher.TryScore(term, path, out score);
+        if (!matched)
+        {
+            continue;
+        }
+
+        matches.Add(new ProjectFuzzyMatch(0, 0, path, score));
+    }
+
+    return matches
+        .OrderByDescending(match => match.Score)
+        .ThenBy(match => match.Path, StringComparer.OrdinalIgnoreCase)
+        .Take(10)
+        .Select(match => (match.Path, (string?)$"load \"{match.Path}\""))
+        .ToList();
+}
+
+static List<(string Path, string? CommitCommand)> GetInspectorFuzzyCandidates(InspectorContext context, string query)
+{
+    var matches = new List<InspectorSearchResultDto>();
+    if (context.Depth == InspectorDepth.ComponentList)
+    {
+        foreach (var component in context.Components)
+        {
+            if (FuzzyMatcher.TryScore(query, component.Name, out var score))
+            {
+                matches.Add(new InspectorSearchResultDto("component", component.Index, component.Name, component.Name, score));
+            }
+        }
+    }
+    else
+    {
+        foreach (var field in context.Fields)
+        {
+            var path = $"{context.SelectedComponentName}.{field.Name}";
+            if (FuzzyMatcher.TryScore(query, path, out var score) || FuzzyMatcher.TryScore(query, field.Name, out score))
+            {
+                matches.Add(new InspectorSearchResultDto("field", context.SelectedComponentIndex, field.Name, path, score));
+            }
+        }
+    }
+
+    return matches
+        .OrderByDescending(match => match.Score)
+        .ThenBy(match => match.Path, StringComparer.OrdinalIgnoreCase)
+        .Take(10)
+        .Select(match =>
+        {
+            var commit = match.Scope.Equals("component", StringComparison.OrdinalIgnoreCase) && match.ComponentIndex is int componentIndex
+                ? $"inspect {componentIndex}"
+                : null;
+            return (match.Path, commit);
+        })
+        .ToList();
+}
+
+static (string? TypeFilter, string Query) ParseProjectFuzzyQuery(string query)
+{
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return (null, string.Empty);
+    }
+
+    var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    string? typeFilter = null;
+    var remaining = new List<string>();
+    foreach (var token in tokens)
+    {
+        if (token.StartsWith("t:", StringComparison.OrdinalIgnoreCase))
+        {
+            typeFilter = token[2..];
+            continue;
+        }
+
+        remaining.Add(token);
+    }
+
+    return (typeFilter, remaining.Count == 0 ? string.Empty : string.Join(' ', remaining));
+}
+
+static bool PassesProjectTypeFilter(string path, string? typeFilter)
+{
+    if (string.IsNullOrWhiteSpace(typeFilter))
+    {
+        return true;
+    }
+
+    var ext = Path.GetExtension(path).ToLowerInvariant();
+    return typeFilter.ToLowerInvariant() switch
+    {
+        "script" => ext == ".cs",
+        "scene" => ext == ".unity",
+        "prefab" => ext == ".prefab",
+        "material" => ext == ".mat",
+        "animation" => ext is ".anim" or ".controller",
+        _ => path.Contains(typeFilter, StringComparison.OrdinalIgnoreCase)
+    };
 }
 
 static string NormalizeSlashCommand(string input)

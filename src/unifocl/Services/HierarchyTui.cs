@@ -105,7 +105,7 @@ internal sealed class HierarchyTui
 
             if (!handled)
             {
-                commandLog.Add("[!] unknown command (supported: list, enter, up, make, toggle, scroll, quit)");
+                commandLog.Add("[!] unknown command (supported: list, enter, up, make, toggle, f, scroll, quit)");
             }
 
             var nextSnapshot = await _daemonClient.GetSnapshotAsync(port);
@@ -146,6 +146,7 @@ internal sealed class HierarchyTui
             ".." => "up",
             "make" => "mk",
             "t" => "toggle",
+            "ff" => "f",
             _ => tokens[0]
         };
 
@@ -217,6 +218,33 @@ internal sealed class HierarchyTui
             var targetName = FindNode(snapshot.Root, targetId)?.Name ?? "Object";
             var activeState = response.IsActive == true ? "active" : "inactive";
             commandLog.Add($"[*] ok: {targetName} set to {activeState}");
+            return true;
+        }
+
+        if (tokens.Count >= 2 && tokens[0].Equals("f", StringComparison.OrdinalIgnoreCase))
+        {
+            var query = string.Join(' ', tokens.Skip(1));
+            var response = await _daemonClient.SearchAsync(port, new HierarchySearchRequestDto(query, 20, cwdId));
+            if (response?.Ok != true)
+            {
+                commandLog.Add($"[!] {(response?.Message ?? "hierarchy fuzzy search failed")}");
+                return true;
+            }
+
+            if (response.Results.Count == 0)
+            {
+                commandLog.Add($"[x] no fuzzy results for: {query}");
+                return true;
+            }
+
+            commandLog.Add($"[*] fuzzy results for: {query}");
+            for (var i = 0; i < response.Results.Count; i++)
+            {
+                var result = response.Results[i];
+                var activeLabel = result.Active ? string.Empty : " (inactive)";
+                commandLog.Add($"[{i}] {result.Path}{activeLabel}");
+            }
+
             return true;
         }
 

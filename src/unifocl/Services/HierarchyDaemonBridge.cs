@@ -31,6 +31,13 @@ internal sealed class HierarchyDaemonBridge
             return true;
         }
 
+        if (command.StartsWith("HIERARCHY_FIND ", StringComparison.Ordinal))
+        {
+            var searchPayload = command["HIERARCHY_FIND ".Length..];
+            response = ExecuteFindJson(searchPayload);
+            return true;
+        }
+
         if (!command.StartsWith("HIERARCHY_CMD ", StringComparison.Ordinal))
         {
             return false;
@@ -82,6 +89,42 @@ internal sealed class HierarchyDaemonBridge
 
             return JsonSerializer.Serialize(new HierarchyCommandResponseDto(false, $"unsupported action: {action}", null, null), _jsonOptions);
         }
+    }
+
+    private string ExecuteFindJson(string payload)
+    {
+        HierarchySearchRequestDto? request;
+        try
+        {
+            request = JsonSerializer.Deserialize<HierarchySearchRequestDto>(payload, _jsonOptions);
+        }
+        catch
+        {
+            return JsonSerializer.Serialize(new HierarchySearchResponseDto(false, [], "invalid hierarchy search payload"), _jsonOptions);
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Query))
+        {
+            return JsonSerializer.Serialize(new HierarchySearchResponseDto(false, [], "search query is required"), _jsonOptions);
+        }
+
+        var results = new List<HierarchySearchResultDto>();
+        var limit = Math.Clamp(request.Limit, 1, 50);
+        lock (_sync)
+        {
+            var origin = request.ParentId is int parentId
+                ? FindNode(_root, parentId) ?? _root
+                : _root;
+            var originPath = BuildPath(_root, origin.Id);
+            CollectMatches(origin, originPath, request.Query, results);
+        }
+
+        var top = results
+            .OrderByDescending(r => r.Score)
+            .ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToList();
+        return JsonSerializer.Serialize(new HierarchySearchResponseDto(true, top, null), _jsonOptions);
     }
 
     private string ExecuteCreate(HierarchyCommandRequestDto request)
@@ -151,6 +194,24 @@ internal sealed class HierarchyDaemonBridge
         return null;
     }
 
+    private static void CollectMatches(HierarchyNodeState node, string path, string query, List<HierarchySearchResultDto> results)
+    {
+        if (FuzzyMatcher.TryScore(query, path, out var pathScore))
+        {
+            results.Add(new HierarchySearchResultDto(node.Id, path, node.Active, pathScore));
+        }
+        else if (FuzzyMatcher.TryScore(query, node.Name, out var nameScore))
+        {
+            results.Add(new HierarchySearchResultDto(node.Id, path, node.Active, nameScore));
+        }
+
+        foreach (var child in node.Children)
+        {
+            var childPath = path.EndsWith("/", StringComparison.Ordinal) ? path + child.Name : path + "/" + child.Name;
+            CollectMatches(child, childPath, query, results);
+        }
+    }
+
     private static int ComputeMaxId(HierarchyNodeState node)
     {
         var max = node.Id;
@@ -190,6 +251,38 @@ internal sealed class HierarchyDaemonBridge
                 new(107, "CapsuleCollider", true, new List<HierarchyNodeState>()),
                 new(108, "Rigidbody", true, new List<HierarchyNodeState>())
             });
+    }
+
+    private static string BuildPath(HierarchyNodeState root, int targetId)
+    {
+        var segments = new List<string>();
+        if (!TryCollectPath(root, targetId, segments))
+        {
+            return "/" + root.Name;
+        }
+
+        segments.Reverse();
+        return "/" + string.Join('/', segments);
+    }
+
+    private static bool TryCollectPath(HierarchyNodeState node, int targetId, List<string> segments)
+    {
+        if (node.Id == targetId)
+        {
+            segments.Add(node.Name);
+            return true;
+        }
+
+        foreach (var child in node.Children)
+        {
+            if (TryCollectPath(child, targetId, segments))
+            {
+                segments.Add(node.Name);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private sealed class HierarchyNodeState
