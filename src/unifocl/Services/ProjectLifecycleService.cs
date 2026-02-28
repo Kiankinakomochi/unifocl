@@ -5,6 +5,8 @@ using System.Text.Json;
 
 internal sealed class ProjectLifecycleService
 {
+    private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
+
     public async Task<bool> TryHandleLifecycleCommandAsync(
         string input,
         CommandSpec matched,
@@ -18,6 +20,7 @@ internal sealed class ProjectLifecycleService
             "/open" => await HandleOpenAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/new" => await HandleNewAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/clone" => await HandleCloneAsync(input, matched, session, daemonControlService, daemonRuntime, log),
+            "/init" => await HandleInitAsync(input, matched, session, log),
             _ => false
         };
     }
@@ -38,7 +41,14 @@ internal sealed class ProjectLifecycleService
         }
 
         var projectPath = ResolveAbsolutePath(args[0], Directory.GetCurrentDirectory());
-        await TryOpenProjectAsync(projectPath, session, daemonControlService, daemonRuntime, log);
+        await TryOpenProjectAsync(
+            projectPath,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            _editorDependencyInitializerService,
+            promptForInitialization: true,
+            log);
         return true;
     }
 
@@ -112,7 +122,14 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]new[/]: step 5/5 open bootstrapped project");
-        if (await TryOpenProjectAsync(projectPath, session, daemonControlService, daemonRuntime, log))
+        if (await TryOpenProjectAsync(
+                projectPath,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                _editorDependencyInitializerService,
+                promptForInitialization: true,
+                log))
         {
             log("[green]new[/]: Unity project scaffold ready");
         }
@@ -180,7 +197,14 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]clone[/]: step 4/4 open cloned project");
-        if (await TryOpenProjectAsync(targetPath, session, daemonControlService, daemonRuntime, log))
+        if (await TryOpenProjectAsync(
+                targetPath,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                _editorDependencyInitializerService,
+                promptForInitialization: true,
+                log))
         {
             log("[green]clone[/]: repository cloned and prepared");
         }
@@ -192,11 +216,53 @@ internal sealed class ProjectLifecycleService
         return true;
     }
 
+    private Task<bool> HandleInitAsync(
+        string input,
+        CommandSpec matched,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var args = ParseCommandArgs(input, matched.Trigger);
+        if (args.Count > 1)
+        {
+            log("[red]error[/]: usage /init [path-to-project]");
+            return Task.FromResult(true);
+        }
+
+        string? targetPath = null;
+        if (args.Count == 1)
+        {
+            targetPath = ResolveAbsolutePath(args[0], Directory.GetCurrentDirectory());
+        }
+        else if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            targetPath = session.CurrentProjectPath;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            log("[red]error[/]: no attached project; use /init <path-to-project> or /open first");
+            return Task.FromResult(true);
+        }
+
+        var initResult = _editorDependencyInitializerService.InitializeProject(targetPath, log);
+        if (!initResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
+            return Task.FromResult(true);
+        }
+
+        log($"[green]init[/]: ready at [white]{Markup.Escape(targetPath)}[/]");
+        return Task.FromResult(true);
+    }
+
     private static async Task<bool> TryOpenProjectAsync(
         string projectPath,
         CliSessionState session,
         DaemonControlService daemonControlService,
         DaemonRuntime daemonRuntime,
+        EditorDependencyInitializerService editorDependencyInitializerService,
+        bool promptForInitialization,
         Action<string> log)
     {
         log($"[grey]open[/]: step 1/4 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
@@ -221,6 +287,23 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
+        if (promptForInitialization)
+        {
+            if (editorDependencyInitializerService.PromptForInitialization(log))
+            {
+                var initResult = editorDependencyInitializerService.InitializeProject(projectPath, log);
+                if (!initResult.Ok)
+                {
+                    log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
+                    return false;
+                }
+            }
+            else
+            {
+                log("[yellow]init[/]: skipped; run /init to enable editor-side bridge package");
+            }
+        }
+
         log("[grey]open[/]: step 3/4 route runtime by active Unity client lock");
         var daemonPort = DaemonControlService.ComputeProjectDaemonPort(projectPath);
         if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
@@ -243,9 +326,11 @@ internal sealed class ProjectLifecycleService
         }
 
         session.CurrentProjectPath = projectPath;
+        session.Mode = CliMode.Project;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
         log("[grey]open[/]: step 4/4 load project context");
         log($"[green]open[/]: attached [white]{Markup.Escape(Path.GetFileName(projectPath))}[/]");
+        log("[grey]mode[/]: switched to project mode");
         return true;
     }
 

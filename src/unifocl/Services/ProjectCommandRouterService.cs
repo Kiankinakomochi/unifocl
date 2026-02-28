@@ -13,12 +13,13 @@ internal sealed class ProjectCommandRouterService
         DaemonRuntime daemonRuntime,
         Action<string> log)
     {
-        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
             log("[grey]system[/]: boot mode is slash-first; type / to see available commands");
             return true;
         }
 
+        var projectPath = session.CurrentProjectPath;
         if (await _projectViewService.TryHandleProjectViewCommandAsync(input, session, daemonControlService, daemonRuntime, log))
         {
             return true;
@@ -41,7 +42,7 @@ internal sealed class ProjectCommandRouterService
 
         if (IsFileBypassCommand(tokens))
         {
-            return HandleFileBypassCommand(tokens, session.CurrentProjectPath, log);
+            return HandleFileBypassCommand(tokens, projectPath, log);
         }
 
         if (IsDaemonCommand(tokens))
@@ -53,7 +54,7 @@ internal sealed class ProjectCommandRouterService
                     .Spinner(Spinner.Known.Dots)
                     .StartAsync("Headless daemon sleeping. Cold starting...", async _ =>
                     {
-                        await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, log);
+                        await daemonControlService.EnsureProjectDaemonAsync(projectPath, daemonRuntime, session, log);
                     });
             }
 

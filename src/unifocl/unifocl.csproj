@@ -11,4 +11,9 @@
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/CLIDaemon.cs" LogicalName="Payload/EditorScripts/CLIDaemon.cs" />
+    <EmbeddedResource Include="../unifocl.unity/SharedModels/BridgeModels.cs" LogicalName="Payload/SharedModels/BridgeModels.cs" />
+  </ItemGroup>
+
 </Project>
