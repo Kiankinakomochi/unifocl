@@ -65,6 +65,23 @@ var commands = new List<CommandSpec>
     new("/clear", "Clear and redraw boot screen", "/clear")
 };
 
+var projectCommands = new List<CommandSpec>
+{
+    new("ls", "Refresh project/inspector view", "ls"),
+    new("ref", "Alias for ls (refresh project view)", "ref"),
+    new("cd <idx> -long", "Expand a directory entry in project view", "cd"),
+    new("cd <idx> -nest", "Enter a directory as the new working root", "cd"),
+    new("mk script <name>", "Create a C# script in current project folder", "mk script"),
+    new("rename <idx> <new-name>", "Rename file/folder entry by index", "rename"),
+    new("mkdir <path>", "Create directory directly on filesystem (daemon bypass)", "mkdir"),
+    new("inspect [path|idx]", "Enter inspector mode for object path or component index", "inspect"),
+    new("toggle <component-index|field>", "Toggle component enabled state or bool field", "toggle"),
+    new("set <field> <value...>", "Set inspector field value (component field mode)", "set"),
+    new(":i", "Step up one inspector level or exit inspector", ":i"),
+    new("mv <src> <dst>", "Route move command through daemon bridge (stub)", "mv"),
+    new("mk cube <name>", "Create cube through daemon bridge (stub)", "mk cube")
+};
+
 var streamLog = new List<string>();
 var runtimePath = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
 var daemonRuntime = new DaemonRuntime(runtimePath);
@@ -78,7 +95,7 @@ RenderInitialLog(streamLog);
 
 while (true)
 {
-    var rawInput = ReadInput(commands, streamLog, session);
+    var rawInput = ReadInput(commands, projectCommands, streamLog, session);
     if (rawInput is null)
     {
         await projectLifecycleService.PerformSafeExitCleanupAsync(
@@ -192,7 +209,11 @@ while (true)
     WriteMockCommandStream(input, streamLog);
 }
 
-static string? ReadInput(List<CommandSpec> commands, List<string> streamLog, CliSessionState session)
+static string? ReadInput(
+    List<CommandSpec> commands,
+    List<CommandSpec> projectCommands,
+    List<string> streamLog,
+    CliSessionState session)
 {
     if (Console.IsInputRedirected)
     {
@@ -200,13 +221,17 @@ static string? ReadInput(List<CommandSpec> commands, List<string> streamLog, Cli
         return Console.ReadLine();
     }
 
-    return ReadInteractiveInput(commands, streamLog, session);
+    return ReadInteractiveInput(commands, projectCommands, streamLog, session);
 }
 
-static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> streamLog, CliSessionState session)
+static string? ReadInteractiveInput(
+    List<CommandSpec> commands,
+    List<CommandSpec> projectCommands,
+    List<string> streamLog,
+    CliSessionState session)
 {
     var input = new StringBuilder();
-    var renderedLines = RenderComposerFrame(input.ToString(), commands, session);
+    var renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session);
 
     while (true)
     {
@@ -235,11 +260,15 @@ static string? ReadInteractiveInput(List<CommandSpec> commands, List<string> str
         }
 
         ClearComposerFrame(renderedLines);
-        renderedLines = RenderComposerFrame(input.ToString(), commands, session);
+        renderedLines = RenderComposerFrame(input.ToString(), commands, projectCommands, session);
     }
 }
 
-static int RenderComposerFrame(string input, List<CommandSpec> commands, CliSessionState session)
+static int RenderComposerFrame(
+    string input,
+    List<CommandSpec> commands,
+    List<CommandSpec> projectCommands,
+    CliSessionState session)
 {
     var lines = new List<string>
     {
@@ -251,6 +280,11 @@ static int RenderComposerFrame(string input, List<CommandSpec> commands, CliSess
     {
         lines.Add(string.Empty);
         lines.AddRange(GetSuggestionLines(input, commands));
+    }
+    else if (!string.IsNullOrWhiteSpace(input))
+    {
+        lines.Add(string.Empty);
+        lines.AddRange(GetSuggestionLines(input, projectCommands));
     }
     else if (session.Inspector is not null)
     {
