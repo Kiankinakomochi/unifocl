@@ -480,44 +480,34 @@ static void RenderInitialLog(List<string> streamLog)
 
 static void SeedBootLog(List<string> streamLog)
 {
+    const int logoWidth = 72;
+    const int logoHeight = 18;
+
+    EnsureLogoViewport(streamLog, logoWidth, logoHeight);
+
     streamLog.Add("[bold deepskyblue1]unifocl[/]");
     streamLog.Add("[bold green]Welcome to unifocl[/]");
     streamLog.Add(string.Empty);
 
     var logo = """
-                       .;?tXOb*&%@$$$$@%&*bOXt];.                       
-                   .!/LaB$$$$%#hpm0QQ0Zph#B$$$$BaL/i.                   
-                 +vk@$$@oQu\)1(/jnvccvnrf)I]\n0o@$$@kv+.                 
-              "td@$$W0t})nLkWB$$$$$$$$$@Q\vhkQx)}tQW$$@dt,              
-            ,u#$$BZ\]fZM$$$$$$$$$$$$$@L)XW$$$$$$WZf]|ZB$$#u,            
-          't#$$8U?108$$$$$$$$$$$$$$$d(uW$$$$$$$$$$$801-Y8$$Mf.          
-         iq$$$C++-$$$$$$$$$$$$$$$$8n|k$$$$$$$$$$$$$$$$b(~C$$$q~         
-        (&$$*[+q%ib$$$$$$$$$$$$$$k{U@$$$$$$$$$$$$$$$$$$$q_[*$$&(        
-       j@$$m:j%$$X{$$$$$$$$@@$$$C{k$$$$$$$$$$$@@$$$$$$$$$%j:Z$$@j       
-      t$$$L`J$$$$B?Q$$$$$$$$$$$u(&$$$$$$$$$$$$$$$$$$$$$$$$$J^L$$$t      
-     -%$$w'C$$$$$$h~*$$$$$$$$@ff@$$$BhqZ0QLCCCCCCL0Zwdh*&B$$Q`m$$B-     
-    'k$$M,j$$$$$$$$Q?8$$$$$$$fr$$&Zt-/LpkkkhhhhhkdpwZ0CXvuucL-,M$$k'    
-    )$$$f:8$$$$$$$$$z)%$$$$@vt*L):   .I(L#$$$$$$$$$$$$$$$@8#b0,f$$$(    
-    m$$W`v$$$$$$$$$$$v(%$$$#:-^          `-vpB$$$$$$$$$$$$$$$$v`W$$w    
-   ^M$$m k$$$$$$$$$$$$X)&$$#`              .n|*$$$$$$$$$$$$$$$k m$$M^   
-   I%$$X`W$$$$$$$$$$$$$L{o$#`              `Wq[p$$$$$$$$$$$$$$&`Y$$%I   
-   I%$$X`W$$$$$$$$$$$$$$p}wW`              `*$o}Q$$$$$$$$$$$$$&`X$$%l   
-   ^M$$m k$$$$$$$$$$$$$$$#/n'              '*$$&1Y$$$$$$$$$$$$k m$$M^   
-    m$$W`c$$$$$$$$$$$$$$$$@bc?^          ^-:#$$$8)X$$$$$$$$$$$c`W$$m    
-    )$$$f"zLpoW%@$$$$$$$$$$$$$W0\l.   ;)L*/c@$$$$%{Y$$$$$$$$$%;t$$$)    
-    'k$$M,1pQYvuvvzYJLQ0OZZZOOOZ0X)_jw&$$fr$$$$$$$&?0$$$$$$$$x"#$$k'    
-     -%$$m`0$$$$B8M*ohkbddppdbbha*M@$$$@tj@$$$$$$$$o~h$$$$$$0'Z$$%-     
-      /$$$L^L$$$$$$$$$$$$$$$$$$$$$$$$$%\n$$$$$$$$$$$O-%$$$$Q^U$$$t      
-       j@$$O:xB$$$$$$$$$$$$$$$$$$$$$$#1Y$$$$$$$$$$$$$(v$$Bn:0$$@r       
-        (&$$o]-p$$$$$$$$$$$$$$$$$$$$w[m$$$$$$$$$$$$$$oi&b??a$$&|        
-         ~q$$@J~|k$$$$$$$$$$$$$$$$Bv(*$$$$$$$$$$$$$$$$}~+U@$$pi         
-          .f#$$8X?)Z8$$$$$$$$$$$$d)zB$$$$$$$$$$$$$$%m(?z&$$#f'          
-            ,n#$$BZ|]jZW$$$$$$$*r\h$$$$$$$$$$$$$Wmj](0%$$#u,            
-              ,/d@$$MQt{(nQkW*c/q$$$$$$$$$BWh0n({tQM$$$dt,              
-                 +vk@$$@o0u\)+I/nuzXXzvxt|))\nQa@$$@kv+.                 
-                   .!/LhB$$$$BMhqZQLLQZqk*8$$$$BaL/!.                   
-                       .;]fXOk#&B$$$$$$B&#kZYf]I.                       
-                              '^:I!ii!l;"'                  
+                           ███      ███                            ████
+                          █████   █████                            ████
+                          █████   █████                            ████
+                           ███   ██████                            ████
+                                 █████                             ████
+████   ████  ████ ████     ███  ██████     ██████         ██████   ████
+████   ████  ██████████   █████ ███████  █████████       ████████  ████
+████   ████  ███████████  █████ ███████  ██████████     ██████████ ████
+████   ████  ███████████  █████ ███████ ████████████   ██████████  ████
+████   ████  █████  ████  █████  ████   ████   █████   █████  ██   ████
+████   ████  ████   ████  █████  ████  █████    █████ █████        ████
+████   ████  ████   ████  █████  ████  █████    █████ █████        ████
+████   ████  ████   ████  █████  ████  █████    █████ █████        ████
+████   ████  ████   ████  █████  ████  █████    ████   █████       ████
+███████████  ████   ████  █████  ████   ████████████   █████████   ████
+███████████  ████   ████  █████  ████   ███████████     █████████  ████
+ █████████   ████   ████  █████  ████    ██████████     █████████  ████
+  ███████    ████   ████  █████  ████      ██████         ██████   ████                                                                                                                                                    
 """;
 
     foreach (var line in logo.Split('\n'))
@@ -528,6 +518,63 @@ static void SeedBootLog(List<string> streamLog)
     streamLog.Add(string.Empty);
     streamLog.Add("[grey]No project attached.[/]");
     streamLog.Add(string.Empty);
+}
+
+static void EnsureLogoViewport(List<string> streamLog, int minimumWidth, int minimumHeight)
+{
+    if (Console.IsOutputRedirected)
+    {
+        return;
+    }
+
+    try
+    {
+        var currentWindowWidth = Console.WindowWidth;
+        var currentWindowHeight = Console.WindowHeight;
+        var maxWindowWidth = Console.LargestWindowWidth;
+        var maxWindowHeight = Console.LargestWindowHeight;
+
+        var targetWindowWidth = Math.Min(Math.Max(currentWindowWidth, minimumWidth), maxWindowWidth);
+        var targetWindowHeight = Math.Min(Math.Max(currentWindowHeight, minimumHeight), maxWindowHeight);
+
+        if (targetWindowWidth > 0 && targetWindowHeight > 0)
+        {
+            try
+            {
+                var targetBufferWidth = Math.Max(Console.BufferWidth, targetWindowWidth);
+                var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
+                if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
+                {
+                    Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
+                }
+            }
+            catch
+            {
+                // Some terminals do not support buffer resizing.
+            }
+
+            if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
+            {
+                Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
+            }
+        }
+    }
+    catch
+    {
+        // Non-fatal: keep startup resilient on terminals that disallow resize APIs.
+    }
+
+    try
+    {
+        if (Console.WindowWidth < minimumWidth || Console.WindowHeight < minimumHeight)
+        {
+            streamLog.Add($"[yellow]note[/]: logo expects terminal >= {minimumWidth}x{minimumHeight}; current is {Console.WindowWidth}x{Console.WindowHeight}.");
+        }
+    }
+    catch
+    {
+        // Ignore size probe failures.
+    }
 }
 
 static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
@@ -653,6 +700,7 @@ static List<CommandSpec> GetSuggestionMatches(string query, List<CommandSpec> co
 {
     var normalized = query.Trim().ToLowerInvariant();
     return commands
+        .Where(c => !c.Description.StartsWith("Alias for", StringComparison.OrdinalIgnoreCase))
         .Where(c => c.Signature.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Trigger.StartsWith(normalized, StringComparison.OrdinalIgnoreCase)
