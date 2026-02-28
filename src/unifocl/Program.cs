@@ -17,69 +17,80 @@ if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOp
 
 var commands = new List<CommandSpec>
 {
-    // Project/session lifecycle
+    // System & lifecycle
     new("/open <path>", "Open project (starts/attaches daemon, loads project)", "/open"),
+    new("/o <path>", "Alias for /open", "/o"),
+    new("/close", "Detach from current project and stop attached daemon", "/close"),
+    new("/c", "Alias for /close", "/c"),
+    new("/quit", "Exit CLI client only (daemon keeps running)", "/quit"),
+    new("/q", "Alias for /quit", "/q"),
+    new("/daemon <start|stop|restart|ps|attach|detach>", "Manage daemon lifecycle", "/daemon"),
+    new("/d <start|stop|restart|ps|attach|detach>", "Alias for /daemon", "/d"),
+    new("/config <get|set|list|reset>", "Manage CLI/daemon preferences", "/config"),
+    new("/cfg <get|set|list|reset>", "Alias for /config", "/cfg"),
+    new("/status", "Show daemon/editor/project/session status", "/status"),
+    new("/st", "Alias for /status", "/st"),
+    new("/help [topic]", "Show help by topic", "/help"),
+    new("/?", "Alias for /help", "/?"),
+
+    // Mode switching
+    new("/project", "Switch contextual command router to Project mode", "/project"),
+    new("/p", "Alias for /project", "/p"),
+    new("/hierarchy", "Switch to Hierarchy mode (interactive TUI)", "/hierarchy"),
+    new("/h", "Alias for /hierarchy", "/h"),
+    new("/inspect <idx|path>", "Switch to Inspector mode and focus target", "/inspect"),
+    new("/i <idx|path>", "Alias for /inspect", "/i"),
+
+    // Extended lifecycle (kept for compatibility)
     new("/new <project-name> [unity-version]", "Bootstrap a new Unity project", "/new"),
     new("/clone <git-url>", "Clone repo and set local CLI bridge config", "/clone"),
     new("/recent [n]", "List recently opened projects", "/recent"),
-    new("/close", "Detach from current project (return to boot)", "/close"),
-    new("/switch <recent-index|path>", "Convenience wrapper for recent + open", "/switch"),
-    new("/status", "Show daemon/editor/project/session status", "/status"),
-    new("/doctor", "Run diagnostics for environment and tooling", "/doctor"),
-    new("/logs [daemon|unity] [-f]", "Tail or follow daemon/unity logs", "/logs"),
-
-    // Daemon control
     new("/daemon start [--port 8080] [--unity <path>] [--project <path>] [--headless]", "Start always-warm daemon", "/daemon start"),
     new("/daemon stop", "Stop daemon", "/daemon stop"),
     new("/daemon restart", "Restart daemon", "/daemon restart"),
     new("/daemon ps", "Show instances, ports, uptime, project", "/daemon ps"),
     new("/daemon attach <port>", "Attach CLI to existing daemon", "/daemon attach"),
     new("/daemon detach", "Detach CLI and keep daemon alive", "/daemon detach"),
+    new("/init [path-to-project]", "Install editor-side CLI bridge dependencies", "/init"),
+    new("/clear", "Clear and redraw boot screen", "/clear"),
 
-    // Discovery
+    // Legacy stubs (visible but non-authoritative schema)
+    new("/doctor", "Run diagnostics for environment and tooling", "/doctor"),
+    new("/logs [daemon|unity] [-f]", "Tail or follow daemon/unity logs", "/logs"),
     new("/scan [--root <dir>] [--depth n]", "Find Unity projects under a directory", "/scan"),
     new("/info <path>", "Read project metadata (Unity version/name/paths)", "/info"),
     new("/unity detect", "List installed Unity editors", "/unity detect"),
     new("/unity set <path>", "Set default Unity editor path", "/unity set"),
-
-    // Configuration
-    new("/config get <key>", "Read configuration value", "/config get"),
-    new("/config set <key> <value>", "Write configuration value", "/config set"),
-    new("/config list", "List current configuration", "/config list"),
-    new("/config reset", "Reset configuration to defaults", "/config reset"),
-
-    // Onboarding
-    new("/init [path-to-project]", "Install editor-side CLI bridge dependencies", "/init"),
     new("/install-hook", "Install/validate Unity editor bridge", "/install-hook"),
-    new("/help [topic]", "Show help by topic", "/help"),
     new("/examples", "Show common next-step flows", "/examples"),
     new("/keybinds", "Show modal keybinds/shortcuts", "/keybinds"),
     new("/shortcuts", "Alias for keybinds", "/shortcuts"),
-
-    // Utilities
     new("/update", "Check for CLI updates", "/update"),
     new("/version", "Show CLI and protocol version", "/version"),
-    new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
-    new("/hierarchy", "Open hierarchy TUI mode", "/hierarchy"),
-    new("/exit", "Exit unifocl", "/exit"),
-    new("/clear", "Clear and redraw boot screen", "/clear")
+    new("/protocol", "Show supported JSON schema capabilities", "/protocol")
 };
 
 var projectCommands = new List<CommandSpec>
 {
-    new("ls", "Refresh project/inspector view", "ls"),
-    new("ref", "Alias for ls (refresh project view)", "ref"),
-    new("cd <idx> -long", "Expand a directory entry in project view", "cd"),
-    new("cd <idx> -nest", "Enter a directory as the new working root", "cd"),
-    new("mk script <name>", "Create a C# script in current project folder", "mk script"),
-    new("rename <idx> <new-name>", "Rename file/folder entry by index", "rename"),
-    new("mkdir <path>", "Create directory directly on filesystem (daemon bypass)", "mkdir"),
-    new("inspect [path|idx]", "Enter inspector mode for object path or component index", "inspect"),
-    new("toggle <component-index|field>", "Toggle component enabled state or bool field", "toggle"),
-    new("set <field> <value...>", "Set inspector field value (component field mode)", "set"),
-    new(":i", "Step up one inspector level or exit inspector", ":i"),
-    new("mv <src> <dst>", "Route move command through daemon bridge (stub)", "mv"),
-    new("mk cube <name>", "Create cube through daemon bridge (stub)", "mk cube")
+    new("list", "List entries in active mode", "list"),
+    new("ls", "Alias for list", "ls"),
+    new("enter <idx>", "Enter selected node/folder/component", "enter"),
+    new("cd <idx>", "Alias for enter", "cd"),
+    new("up", "Navigate up one level in active mode", "up"),
+    new("..", "Alias for up", ".."),
+    new("make <type> <name>", "Create item in active mode", "make"),
+    new("mk <type> <name>", "Alias for make", "mk"),
+    new("load <idx|name>", "Load/open scene or script in project mode", "load"),
+    new("remove <idx>", "Remove selected item in active mode", "remove"),
+    new("rm <idx>", "Alias for remove", "rm"),
+    new("rename <idx> <new-name>", "Rename selected item (mode dependent)", "rename"),
+    new("rn <idx> <new-name>", "Alias for rename", "rn"),
+    new("set <field> <value...>", "Set field/property in active mode", "set"),
+    new("s <field> <value...>", "Alias for set", "s"),
+    new("toggle <target>", "Toggle bool/active/enabled in active mode", "toggle"),
+    new("t <target>", "Alias for toggle", "t"),
+    new("move <...>", "Move/reorder item in active mode", "move"),
+    new("mv <...>", "Alias for move", "mv")
 };
 
 var streamLog = new List<string>();
@@ -125,6 +136,21 @@ while (true)
         {
             AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
         }
+
+        if (handledProjectCommand && session.AutoEnterHierarchyRequested)
+        {
+            session.AutoEnterHierarchyRequested = false;
+            session.ContextMode = CliContextMode.Hierarchy;
+            await hierarchyTui.RunAsync(
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+            if (session.Mode == CliMode.Project)
+            {
+                session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
+            }
+        }
         continue;
     }
 
@@ -133,6 +159,7 @@ while (true)
         continue;
     }
 
+    input = NormalizeSlashCommand(input);
     var matched = MatchCommand(input, commands);
     if (matched is null)
     {
@@ -140,13 +167,8 @@ while (true)
         continue;
     }
 
-    if (matched.Trigger == "/exit")
+    if (matched.Trigger == "/quit")
     {
-        await projectLifecycleService.PerformSafeExitCleanupAsync(
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line));
         AnsiConsole.MarkupLine("[grey]Session closed.[/]");
         return;
     }
@@ -162,11 +184,59 @@ while (true)
 
     if (matched.Trigger == "/hierarchy")
     {
+        session.ContextMode = CliContextMode.Hierarchy;
         await hierarchyTui.RunAsync(
             session,
             daemonControlService,
             daemonRuntime,
             line => AppendLog(streamLog, line));
+        if (session.Mode == CliMode.Project)
+        {
+            session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
+        }
+        continue;
+    }
+
+    if (matched.Trigger == "/project")
+    {
+        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+            continue;
+        }
+
+        session.ContextMode = CliContextMode.Project;
+        session.Inspector = null;
+        await projectCommandRouterService.TryHandleProjectCommandAsync(
+            string.Empty,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        continue;
+    }
+
+    if (matched.Trigger == "/inspect")
+    {
+        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+            continue;
+        }
+
+        var inspectInput = input.Length > "/inspect".Length
+            ? $"inspect {input["/inspect".Length..].Trim()}"
+            : "inspect";
+        await projectCommandRouterService.TryHandleProjectCommandAsync(
+            inspectInput,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        if (session.Inspector is not null)
+        {
+            session.ContextMode = CliContextMode.Inspector;
+        }
         continue;
     }
 
@@ -288,7 +358,11 @@ static int RenderComposerFrame(
     }
     else if (session.Inspector is not null)
     {
-        lines.Add("[dim]Inspector commands: inspect [idx], ls, set <field> <value>, toggle <field|idx>, scroll [body|stream] <up|down> [n], :i[/]");
+        lines.Add("[dim]Inspector mode: list, enter <idx>, up, set <field> <value>, toggle <field|idx>, scroll [body|stream] <up|down> [n][/]");
+    }
+    else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+    {
+        lines.Add("[dim]Project mode: list, enter <idx>, up, make script <name>, load <idx|name>, rename <idx> <new>, remove <idx>, move <...>[/]");
     }
     else
     {
@@ -306,12 +380,17 @@ static int RenderComposerFrame(
 static string BuildPromptLabel(CliSessionState session)
 {
     var context = session.Inspector;
-    if (context is null)
+    if (context is not null)
     {
-        return "unifocl";
+        return context.PromptLabel;
     }
 
-    return context.PromptLabel;
+    if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+    {
+        return "unifocl:project";
+    }
+
+    return "unifocl";
 }
 
 static void ClearComposerFrame(int renderedLines)
@@ -401,6 +480,37 @@ static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> co
 
     return matches.Select(match =>
         $"[grey]{Markup.Escape(match.Signature)}[/] [dim]- {Markup.Escape(match.Description)}[/]");
+}
+
+static string NormalizeSlashCommand(string input)
+{
+    if (!input.StartsWith('/'))
+    {
+        return input;
+    }
+
+    var trimmed = input.Trim();
+    var commandEnd = trimmed.IndexOf(' ');
+    var commandToken = commandEnd >= 0 ? trimmed[..commandEnd] : trimmed;
+    var rest = commandEnd >= 0 ? trimmed[commandEnd..] : string.Empty;
+
+    var normalized = commandToken.ToLowerInvariant() switch
+    {
+        "/o" => "/open",
+        "/c" => "/close",
+        "/q" => "/quit",
+        "/d" => "/daemon",
+        "/cfg" => "/config",
+        "/st" => "/status",
+        "/?" => "/help",
+        "/p" => "/project",
+        "/h" => "/hierarchy",
+        "/i" => "/inspect",
+        "/exit" => "/quit",
+        _ => commandToken
+    };
+
+    return normalized + rest;
 }
 
 static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)

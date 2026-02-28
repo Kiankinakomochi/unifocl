@@ -21,7 +21,28 @@ internal sealed class InspectorModeService
 
         var command = tokens[0].ToLowerInvariant();
         var inInspector = session.Inspector is not null;
-        var isInspectorCommand = command is "inspect" or "set" or "toggle" or "ls" or "scroll" or ":i";
+        var isInspectorCommand = command is
+            "inspect" or
+            "list" or
+            "ls" or
+            "enter" or
+            "cd" or
+            "up" or
+            ".." or
+            "set" or
+            "s" or
+            "toggle" or
+            "t" or
+            "make" or
+            "mk" or
+            "remove" or
+            "rm" or
+            "rename" or
+            "rn" or
+            "move" or
+            "mv" or
+            "scroll" or
+            ":i";
 
         if (!inInspector && !isInspectorCommand)
         {
@@ -36,22 +57,56 @@ internal sealed class InspectorModeService
         switch (command)
         {
             case "inspect":
-            await HandleInspectAsync(input, tokens, session);
+                await HandleInspectAsync(input, tokens, session);
                 return true;
+            case "list":
             case "ls":
                 await HandleLsAsync(session, log);
+                return true;
+            case "enter":
+            case "cd":
+                await HandleInspectAsync(
+                    $"inspect {string.Join(' ', tokens.Skip(1))}",
+                    tokens.Count > 1 ? ["inspect", .. tokens.Skip(1)] : ["inspect"],
+                    session);
+                return true;
+            case "up":
+            case "..":
+            case ":i":
+                HandleStepUp(session, log);
                 return true;
             case "toggle":
                 await HandleToggleAsync(input, tokens, session, log);
                 return true;
+            case "t":
+                await HandleToggleAsync(
+                    $"toggle {string.Join(' ', tokens.Skip(1))}",
+                    ["toggle", .. tokens.Skip(1)],
+                    session,
+                    log);
+                return true;
             case "set":
                 await HandleSetAsync(input, tokens, session, log);
                 return true;
+            case "s":
+                await HandleSetAsync(
+                    $"set {string.Join(' ', tokens.Skip(1))}",
+                    ["set", .. tokens.Skip(1)],
+                    session,
+                    log);
+                return true;
+            case "make":
+            case "mk":
+            case "remove":
+            case "rm":
+            case "rename":
+            case "rn":
+            case "move":
+            case "mv":
+                HandleUnsupportedInspectorMutation(input, session, log);
+                return true;
             case "scroll":
                 HandleScroll(input, tokens, session, log);
-                return true;
-            case ":i":
-                HandleStepUp(session, log);
                 return true;
             default:
                 return false;
@@ -236,14 +291,6 @@ internal sealed class InspectorModeService
             return;
         }
 
-        if (context.Depth != InspectorDepth.ComponentFields)
-        {
-            AddStream(context, $"{context.PromptLabel} > {input}");
-            AddStream(context, "[!] set requires deep component inspect");
-            _renderer.Render(context);
-            return;
-        }
-
         if (tokens.Count < 3)
         {
             AddStream(context, $"{context.PromptLabel} > {input}");
@@ -254,6 +301,62 @@ internal sealed class InspectorModeService
 
         var fieldName = tokens[1];
         var newValue = string.Join(' ', tokens.Skip(2));
+
+        if (context.Depth != InspectorDepth.ComponentFields)
+        {
+            var separatorIndex = fieldName.IndexOf('.');
+            if (separatorIndex <= 0 || separatorIndex >= fieldName.Length - 1)
+            {
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, "[!] usage at inspector root: set <Component>.<field> <value...>");
+                _renderer.Render(context);
+                return;
+            }
+
+            await PopulateComponentsAsync(context, session, forceRefresh: context.Components.Count == 0);
+            var componentToken = fieldName[..separatorIndex];
+            var nestedFieldName = fieldName[(separatorIndex + 1)..];
+            var component = context.Components.FirstOrDefault(c => c.Name.Equals(componentToken, StringComparison.OrdinalIgnoreCase));
+            if (component is null)
+            {
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, $"[!] unknown component: {componentToken}");
+                _renderer.Render(context);
+                return;
+            }
+
+            var fetchedFields = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, component.Index);
+            var fieldEntries = fetchedFields ?? GetMockFields(component.Name);
+            var rootField = fieldEntries.FirstOrDefault(f => f.Name.Equals(nestedFieldName, StringComparison.OrdinalIgnoreCase));
+            if (rootField is null)
+            {
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, $"[!] unknown field: {component.Name}.{nestedFieldName}");
+                _renderer.Render(context);
+                return;
+            }
+
+            var rootMutationOk = await TrySendInspectorMutationAsync(
+                session,
+                new InspectorBridgeRequest(
+                    "set-field",
+                    context.TargetPath,
+                    component.Index,
+                    component.Name,
+                    rootField.Name,
+                    newValue));
+
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {newValue}");
+            if (!rootMutationOk)
+            {
+                AddStream(context, "[~] daemon bridge unavailable; applied to local inspector cache");
+            }
+
+            _renderer.Render(context);
+            return;
+        }
+
         var field = context.Fields.FirstOrDefault(f => f.Name.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
         if (field is null)
         {
@@ -391,7 +494,8 @@ internal sealed class InspectorModeService
         }
 
         session.Inspector = null;
-        log("[i] inspector exited to hierarchy context");
+        session.ContextMode = CliContextMode.Project;
+        log("[i] inspector exited to project context");
     }
 
     private async Task EnterInspectorRootAsync(
@@ -408,6 +512,8 @@ internal sealed class InspectorModeService
         context.BodyScrollOffset = 0;
         context.FollowStreamScroll = true;
         context.StreamScrollOffset = int.MaxValue;
+        session.ContextMode = CliContextMode.Inspector;
+        session.FocusPath = targetPath;
         await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"{context.PromptLabel} > {rawCommand}");
         AddStream(context, $"[i] entering inspector for: {context.TargetPath.TrimStart('/')}");
@@ -610,6 +716,20 @@ internal sealed class InspectorModeService
         {
             context.Fields[existingIndex] = field;
         }
+    }
+
+    private void HandleUnsupportedInspectorMutation(string input, CliSessionState session, Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: inspector mode is required");
+            return;
+        }
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        AddStream(context, "[!] command not implemented in inspector mode yet");
+        _renderer.Render(context);
     }
 
     private static void AddStream(InspectorContext context, string line)

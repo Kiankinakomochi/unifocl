@@ -465,6 +465,7 @@ internal sealed class ProjectLifecycleService
 
         session.CurrentProjectPath = projectPath;
         session.Mode = CliMode.Project;
+        session.ContextMode = CliContextMode.Project;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
         if (!_recentProjectHistoryService.TryRecordProjectOpen(projectPath, session.LastOpenedUtc.Value, out var historyError))
         {

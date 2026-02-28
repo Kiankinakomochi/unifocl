@@ -19,30 +19,51 @@ internal sealed class ProjectCommandRouterService
             return true;
         }
 
+        if (session.ContextMode == CliContextMode.None)
+        {
+            session.ContextMode = CliContextMode.Project;
+        }
+
         var projectPath = session.CurrentProjectPath;
-        if (await _projectViewService.TryHandleProjectViewCommandAsync(input, session, daemonControlService, daemonRuntime))
+        var normalizedInput = NormalizeContextualInput(input, session.ContextMode, log);
+        if (normalizedInput is null)
         {
             return true;
         }
 
-        var tokens = Tokenize(input);
+        if (session.ContextMode == CliContextMode.Hierarchy)
+        {
+            log("[yellow]mode[/]: hierarchy contextual commands run inside /hierarchy mode");
+            return true;
+        }
+
+        if (session.ContextMode == CliContextMode.Project
+            && await _projectViewService.TryHandleProjectViewCommandAsync(normalizedInput, session, daemonControlService, daemonRuntime))
+        {
+            return true;
+        }
+
+        var tokens = Tokenize(normalizedInput);
         if (tokens.Count == 0)
         {
             return true;
         }
 
-        if (await _inspectorModeService.TryHandleInspectorCommandAsync(
-                input,
+        if ((session.ContextMode == CliContextMode.Inspector || tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
+            && await _inspectorModeService.TryHandleInspectorCommandAsync(
+                normalizedInput,
                 tokens,
                 session,
                 log))
         {
+            session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
             return true;
         }
 
-        if (IsFileBypassCommand(tokens))
+        if (session.ContextMode == CliContextMode.Inspector)
         {
-            return HandleFileBypassCommand(tokens, projectPath, log);
+            log("[yellow]inspector[/]: unsupported command in inspector mode");
+            return true;
         }
 
         if (IsDaemonCommand(tokens))
@@ -65,17 +86,7 @@ internal sealed class ProjectCommandRouterService
             }
 
             log("[grey]daemon[/]: routed command to headless daemon (stub bridge)");
-            log($"[deepskyblue1]stub[/]: daemon command [white]{Markup.Escape(input)}[/]");
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsFileBypassCommand(IReadOnlyList<string> tokens)
-    {
-        if (tokens.Count >= 2 && tokens[0].Equals("mkdir", StringComparison.OrdinalIgnoreCase))
-        {
+            log($"[deepskyblue1]stub[/]: daemon command [white]{Markup.Escape(normalizedInput)}[/]");
             return true;
         }
 
@@ -89,7 +100,8 @@ internal sealed class ProjectCommandRouterService
             return false;
         }
 
-        if (tokens[0].Equals("mv", StringComparison.OrdinalIgnoreCase))
+        if (tokens[0].Equals("move", StringComparison.OrdinalIgnoreCase)
+            || tokens[0].Equals("mv", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -100,7 +112,7 @@ internal sealed class ProjectCommandRouterService
         }
 
         if (tokens.Count >= 2
-            && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase)
+            && (tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
             && tokens[1].Equals("cube", StringComparison.OrdinalIgnoreCase))
         {
             return true;
@@ -109,28 +121,66 @@ internal sealed class ProjectCommandRouterService
         return false;
     }
 
-    private static bool HandleFileBypassCommand(IReadOnlyList<string> tokens, string projectPath, Action<string> log)
+    private static string? NormalizeContextualInput(string input, CliContextMode mode, Action<string> log)
     {
-        if (tokens[0].Equals("mkdir", StringComparison.OrdinalIgnoreCase))
+        var tokens = Tokenize(input);
+        if (tokens.Count == 0)
         {
-            var relative = tokens[1];
-            var target = ResolveProjectPath(projectPath, relative);
-            Directory.CreateDirectory(target);
-            log($"[green]fs[/]: created directory [white]{Markup.Escape(target)}[/] (daemon bypass)");
-            return true;
+            return input;
         }
 
-        return false;
-    }
-
-    private static string ResolveProjectPath(string projectPath, string relativeOrAbsolute)
-    {
-        if (Path.IsPathRooted(relativeOrAbsolute))
+        tokens[0] = tokens[0].ToLowerInvariant() switch
         {
-            return relativeOrAbsolute;
+            "list" => "ls",
+            "ref" => "ls",
+            "enter" => "cd",
+            ".." => "up",
+            "make" => "mk",
+            "remove" => "rm",
+            "rn" => "rename",
+            "s" => "set",
+            "t" => "toggle",
+            "move" => "mv",
+            _ => tokens[0]
+        };
+
+        if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
+        {
+            tokens[0] = mode == CliContextMode.Inspector ? ":i" : "up";
         }
 
-        return Path.GetFullPath(Path.Combine(projectPath, relativeOrAbsolute));
+        if (tokens[0].Equals("cd", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tokens.Count < 2)
+            {
+                log("[yellow]usage[/]: enter <idx>");
+                return null;
+            }
+
+            if (mode == CliContextMode.Project)
+            {
+                return $"cd {tokens[1]} -nest";
+            }
+
+            if (mode == CliContextMode.Inspector)
+            {
+                return $"inspect {tokens[1]}";
+            }
+        }
+
+        if (tokens[0].Equals("set", StringComparison.OrdinalIgnoreCase) && mode == CliContextMode.Project)
+        {
+            log("[yellow]project[/]: set is blocked in project mode");
+            return null;
+        }
+
+        if (tokens[0].Equals("toggle", StringComparison.OrdinalIgnoreCase) && mode == CliContextMode.Project)
+        {
+            log("[yellow]project[/]: toggle is blocked in project mode");
+            return null;
+        }
+
+        return string.Join(' ', tokens);
     }
 
     private static List<string> Tokenize(string input)
