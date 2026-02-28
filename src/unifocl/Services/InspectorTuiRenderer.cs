@@ -3,26 +3,45 @@ using Spectre.Console;
 internal sealed class InspectorTuiRenderer
 {
     private const int InnerWidth = 78;
-    private const int BodyHeight = 9;
-    private const int StreamHeight = 10;
+    private const int MinBodyRows = 4;
+    private const int MinStreamRows = 4;
+    private const int ReservedPromptRows = 4;
+    private const int FrameOverheadRows = 5;
 
     public void Render(InspectorContext context)
     {
         AnsiConsole.Clear();
+        var availableRows = Math.Max(MinBodyRows + MinStreamRows, Console.WindowHeight - ReservedPromptRows);
+        var dynamicRows = Math.Max(MinBodyRows + MinStreamRows, availableRows - FrameOverheadRows);
 
-        var frame = new List<string>
+        var bodyRows = BuildBodyRows(context).ToList();
+        var streamRows = BuildStreamRows(context).ToList();
+        var hasStreamPane = streamRows.Count > 0;
+        var (bodyViewportRows, streamViewportRows) = hasStreamPane
+            ? AllocateViewportRows(dynamicRows, bodyRows.Count, streamRows.Count)
+            : (Math.Max(1, dynamicRows), 0);
+        var bodyOffset = context.BodyScrollOffset;
+        var streamOffset = context.StreamScrollOffset;
+        var visibleBody = SliceRows(bodyRows, bodyViewportRows, ref bodyOffset, followTail: false);
+        var visibleStream = hasStreamPane
+            ? SliceRows(streamRows, streamViewportRows, ref streamOffset, context.FollowStreamScroll)
+            : Array.Empty<string>();
+        context.BodyScrollOffset = bodyOffset;
+        context.StreamScrollOffset = streamOffset;
+
+        var frame = new List<string>(FrameOverheadRows + visibleBody.Count + (hasStreamPane ? visibleStream.Count + 1 : 0))
         {
             Border('┌', '┐'),
             Line(BuildHeader(context)),
             Border('├', '┤')
         };
 
-        frame.AddRange(context.Depth == InspectorDepth.ComponentList
-            ? BuildComponentBody(context)
-            : BuildFieldBody(context));
-
-        frame.Add(Border('├', '┤'));
-        frame.AddRange(BuildStreamBody(context));
+        frame.AddRange(visibleBody.Select(Line));
+        if (hasStreamPane)
+        {
+            frame.Add(Border('├', '┤'));
+            frame.AddRange(visibleStream.Select(Line));
+        }
         frame.Add(Border('└', '┘'));
 
         foreach (var line in frame)
@@ -31,56 +50,62 @@ internal sealed class InspectorTuiRenderer
         }
     }
 
-    private static IEnumerable<string> BuildComponentBody(InspectorContext context)
+    private static IEnumerable<string> BuildBodyRows(InspectorContext context)
     {
-        var lines = new List<string> { Line("COMPONENTS:") };
-        foreach (var component in context.Components)
-        {
-            lines.Add(Line($" [{component.Index}] {component.Name}"));
-        }
-
-        while (lines.Count < BodyHeight)
-        {
-            lines.Add(Line(string.Empty));
-        }
-
-        return lines.Take(BodyHeight);
+        return context.Depth == InspectorDepth.ComponentList
+            ? BuildComponentRows(context)
+            : BuildFieldRows(context);
     }
 
-    private static IEnumerable<string> BuildFieldBody(InspectorContext context)
+    private static IEnumerable<string> BuildComponentRows(InspectorContext context)
+    {
+        var lines = new List<string> { "COMPONENTS:" };
+        foreach (var component in context.Components)
+        {
+            lines.Add($" [{component.Index}] {component.Name}");
+        }
+
+        if (lines.Count == 1)
+        {
+            lines.Add(" [empty]");
+        }
+
+        return lines;
+    }
+
+    private static IEnumerable<string> BuildFieldRows(InspectorContext context)
     {
         var lines = new List<string>
         {
-            Line($"{PadRight("FIELD", 20)}{PadRight("VALUE", 26)}TYPE"),
-            Line(new string('─', InnerWidth - 1))
+            $"{PadRight("FIELD", 20)}{PadRight("VALUE", 26)}TYPE",
+            new string('─', InnerWidth - 1)
         };
 
         foreach (var field in context.Fields)
         {
             var typeCell = $"[{field.Type}]";
-            lines.Add(Line($"{PadRight(field.Name, 20)}{PadRight(field.Value, 26)}{typeCell}"));
+            lines.Add($"{PadRight(field.Name, 20)}{PadRight(field.Value, 26)}{typeCell}");
         }
 
-        while (lines.Count < BodyHeight)
+        if (context.Fields.Count == 0)
         {
-            lines.Add(Line(string.Empty));
+            lines.Add(" [empty]");
         }
 
-        return lines.Take(BodyHeight);
+        return lines;
     }
 
-    private static IEnumerable<string> BuildStreamBody(InspectorContext context)
+    private static IEnumerable<string> BuildStreamRows(InspectorContext context)
     {
-        var stream = context.CommandStream
-            .TakeLast(StreamHeight)
+        var rows = context.CommandStream
+            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
             .ToList();
-
-        while (stream.Count < StreamHeight)
+        if (rows.Count == 0)
         {
-            stream.Add(string.Empty);
+            return [];
         }
 
-        return stream.Select(Line);
+        return rows;
     }
 
     private static string BuildHeader(InspectorContext context)
@@ -100,6 +125,63 @@ internal sealed class InspectorTuiRenderer
     {
         var trimmed = content.Length > InnerWidth ? content[..InnerWidth] : content;
         return $"│{trimmed.PadRight(InnerWidth)}│";
+    }
+
+    private static (int BodyRows, int StreamRows) AllocateViewportRows(int dynamicRows, int bodyCount, int streamCount)
+    {
+        var preferredBody = Math.Max(MinBodyRows, bodyCount);
+        var preferredStream = Math.Max(MinStreamRows, streamCount);
+        var preferredTotal = preferredBody + preferredStream;
+        if (preferredTotal <= dynamicRows)
+        {
+            return (preferredBody, preferredStream);
+        }
+
+        var streamRows = Math.Min(preferredStream, Math.Max(MinStreamRows, dynamicRows / 3));
+        var bodyRows = dynamicRows - streamRows;
+        if (bodyRows < MinBodyRows)
+        {
+            bodyRows = MinBodyRows;
+            streamRows = Math.Max(MinStreamRows, dynamicRows - bodyRows);
+        }
+
+        return (Math.Max(1, bodyRows), Math.Max(1, streamRows));
+    }
+
+    private static IReadOnlyList<string> SliceRows(
+        IReadOnlyList<string> source,
+        int viewportRows,
+        ref int offset,
+        bool followTail)
+    {
+        viewportRows = Math.Max(1, viewportRows);
+        var rows = source.Count == 0 ? new List<string> { string.Empty } : source.ToList();
+        var maxOffset = Math.Max(0, rows.Count - viewportRows);
+        if (followTail)
+        {
+            offset = maxOffset;
+        }
+
+        offset = Math.Clamp(offset, 0, maxOffset);
+        var visible = rows.Skip(offset).Take(viewportRows).ToList();
+        while (visible.Count < viewportRows)
+        {
+            visible.Add(string.Empty);
+        }
+
+        var hiddenAbove = offset;
+        var hiddenBelow = Math.Max(0, rows.Count - (offset + visible.Count));
+        if (hiddenAbove > 0 && visible.Count > 0)
+        {
+            visible[0] = $"... {hiddenAbove} line(s) above ...";
+        }
+
+        if (hiddenBelow > 0 && visible.Count > 1)
+        {
+            visible[^1] = $"... {hiddenBelow} line(s) below ...";
+        }
+
+        return visible;
     }
 
     private static string PadRight(string value, int width)

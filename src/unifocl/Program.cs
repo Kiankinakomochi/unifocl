@@ -288,7 +288,7 @@ static int RenderComposerFrame(
     }
     else if (session.Inspector is not null)
     {
-        lines.Add("[dim]Inspector commands: inspect [idx], ls, set <field> <value>, toggle <field|idx>, :i[/]");
+        lines.Add("[dim]Inspector commands: inspect [idx], ls, set <field> <value>, toggle <field|idx>, scroll [body|stream] <up|down> [n], :i[/]");
     }
     else
     {

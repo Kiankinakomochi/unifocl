@@ -13,6 +13,9 @@ internal sealed class InspectorContext
     public int? SelectedComponentIndex { get; set; }
     public string? SelectedComponentName { get; set; }
     public List<string> CommandStream { get; } = [];
+    public int BodyScrollOffset { get; set; }
+    public int StreamScrollOffset { get; set; } = int.MaxValue;
+    public bool FollowStreamScroll { get; set; } = true;
 
     public string PromptPath =>
         Depth == InspectorDepth.ComponentFields && !string.IsNullOrWhiteSpace(SelectedComponentName)

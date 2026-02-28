@@ -21,7 +21,7 @@ internal sealed class InspectorModeService
 
         var command = tokens[0].ToLowerInvariant();
         var inInspector = session.Inspector is not null;
-        var isInspectorCommand = command is "inspect" or "set" or "toggle" or "ls" or ":i";
+        var isInspectorCommand = command is "inspect" or "set" or "toggle" or "ls" or "scroll" or ":i";
 
         if (!inInspector && !isInspectorCommand)
         {
@@ -46,6 +46,9 @@ internal sealed class InspectorModeService
                 return true;
             case "set":
                 await HandleSetAsync(input, tokens, session, log);
+                return true;
+            case "scroll":
+                HandleScroll(input, tokens, session, log);
                 return true;
             case ":i":
                 HandleStepUp(session, log);
@@ -281,6 +284,88 @@ internal sealed class InspectorModeService
         _renderer.Render(context);
     }
 
+    private void HandleScroll(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: scroll requires inspect mode");
+            return;
+        }
+
+        if (tokens.Count < 2)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: scroll [body|stream] <up|down> [count]");
+            _renderer.Render(context);
+            return;
+        }
+
+        var section = "body";
+        var directionTokenIndex = 1;
+        if (tokens[1].Equals("body", StringComparison.OrdinalIgnoreCase)
+            || tokens[1].Equals("stream", StringComparison.OrdinalIgnoreCase))
+        {
+            section = tokens[1].ToLowerInvariant();
+            directionTokenIndex = 2;
+        }
+
+        if (tokens.Count <= directionTokenIndex)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: scroll [body|stream] <up|down> [count]");
+            _renderer.Render(context);
+            return;
+        }
+
+        var direction = tokens[directionTokenIndex].ToLowerInvariant();
+        var amount = 1;
+        if (tokens.Count > directionTokenIndex + 1
+            && (!int.TryParse(tokens[directionTokenIndex + 1], out amount) || amount <= 0))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] count must be a positive integer");
+            _renderer.Render(context);
+            return;
+        }
+
+        if (direction is not ("up" or "down"))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] direction must be up or down");
+            _renderer.Render(context);
+            return;
+        }
+
+        var delta = direction == "up" ? -amount : amount;
+        if (section == "stream")
+        {
+            if (context.FollowStreamScroll)
+            {
+                context.StreamScrollOffset = Math.Max(0, context.CommandStream.Count - 1);
+            }
+
+            context.FollowStreamScroll = false;
+            context.StreamScrollOffset += delta;
+            if (context.StreamScrollOffset >= context.CommandStream.Count)
+            {
+                context.FollowStreamScroll = true;
+                context.StreamScrollOffset = int.MaxValue;
+            }
+        }
+        else
+        {
+            context.BodyScrollOffset += delta;
+        }
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        _renderer.Render(context);
+    }
+
     private void HandleStepUp(CliSessionState session, Action<string> log)
     {
         var context = session.Inspector;
@@ -296,6 +381,9 @@ internal sealed class InspectorModeService
             context.Fields.Clear();
             context.SelectedComponentIndex = null;
             context.SelectedComponentName = null;
+            context.BodyScrollOffset = 0;
+            context.FollowStreamScroll = true;
+            context.StreamScrollOffset = int.MaxValue;
             AddStream(context, $"{context.PromptLabel} > :i");
             AddStream(context, "[i] stepped up to component list");
             _renderer.Render(context);
@@ -317,6 +405,9 @@ internal sealed class InspectorModeService
         context.Fields.Clear();
         context.SelectedComponentIndex = null;
         context.SelectedComponentName = null;
+        context.BodyScrollOffset = 0;
+        context.FollowStreamScroll = true;
+        context.StreamScrollOffset = int.MaxValue;
         await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"{context.PromptLabel} > {rawCommand}");
         AddStream(context, $"[i] entering inspector for: {context.TargetPath.TrimStart('/')}");
@@ -341,6 +432,9 @@ internal sealed class InspectorModeService
         context.Depth = InspectorDepth.ComponentFields;
         context.SelectedComponentIndex = componentIndex;
         context.SelectedComponentName = component.Name;
+        context.BodyScrollOffset = 0;
+        context.FollowStreamScroll = true;
+        context.StreamScrollOffset = int.MaxValue;
         await PopulateFieldsAsync(context, session, componentIndex, forceRefresh: true);
         AddStream(context, $"UnityCLI:{context.TargetPath} [inspect] > {rawCommand}");
         AddStream(context, $"[i] inspecting component: {component.Name}");
@@ -524,6 +618,11 @@ internal sealed class InspectorModeService
         if (context.CommandStream.Count > 200)
         {
             context.CommandStream.RemoveRange(0, context.CommandStream.Count - 200);
+        }
+
+        if (context.FollowStreamScroll)
+        {
+            context.StreamScrollOffset = int.MaxValue;
         }
     }
 
