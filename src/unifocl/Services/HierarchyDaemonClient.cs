@@ -1,15 +1,15 @@
-using System.Net;
-using System.Net.Sockets;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 
 internal sealed class HierarchyDaemonClient
 {
+    private static readonly HttpClient Http = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<HierarchySnapshotDto?> GetSnapshotAsync(int port)
     {
-        var payload = await SendRequestAsync(port, "HIERARCHY_GET");
+        var payload = await SendGetAsync($"http://127.0.0.1:{port}/hierarchy/snapshot");
         if (payload is null)
         {
             return null;
@@ -27,8 +27,7 @@ internal sealed class HierarchyDaemonClient
 
     public async Task<HierarchyCommandResponseDto> ExecuteAsync(int port, HierarchyCommandRequestDto request)
     {
-        var json = JsonSerializer.Serialize(request, JsonOptions);
-        var payload = await SendRequestAsync(port, $"HIERARCHY_CMD {json}");
+        var payload = await SendPostJsonAsync($"http://127.0.0.1:{port}/hierarchy/command", request);
         if (payload is null)
         {
             return new HierarchyCommandResponseDto(false, "daemon did not return a hierarchy response", null, null);
@@ -47,8 +46,7 @@ internal sealed class HierarchyDaemonClient
 
     public async Task<HierarchySearchResponseDto?> SearchAsync(int port, HierarchySearchRequestDto request)
     {
-        var json = JsonSerializer.Serialize(request, JsonOptions);
-        var payload = await SendRequestAsync(port, $"HIERARCHY_FIND {json}");
+        var payload = await SendPostJsonAsync($"http://127.0.0.1:{port}/hierarchy/find", request);
         if (payload is null)
         {
             return null;
@@ -66,8 +64,10 @@ internal sealed class HierarchyDaemonClient
 
     public async Task<AssetIndexSyncResponseDto?> SyncAssetIndexAsync(int port, int knownRevision)
     {
-        var command = knownRevision <= 0 ? "ASSET_INDEX_GET" : $"ASSET_INDEX_SYNC {knownRevision}";
-        var payload = await SendRequestAsync(port, command);
+        var uri = knownRevision <= 0
+            ? $"http://127.0.0.1:{port}/asset-index"
+            : $"http://127.0.0.1:{port}/asset-index?revision={knownRevision}";
+        var payload = await SendGetAsync(uri);
         if (payload is null)
         {
             return null;
@@ -83,18 +83,39 @@ internal sealed class HierarchyDaemonClient
         }
     }
 
-    private static async Task<string?> SendRequestAsync(int port, string request)
+    private static async Task<string?> SendGetAsync(string uri)
     {
         try
         {
-            using var client = new TcpClient();
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            await client.ConnectAsync(IPAddress.Loopback, port, cts.Token);
-            await using var stream = client.GetStream();
-            using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
-            await writer.WriteLineAsync(request);
-            return await reader.ReadLineAsync();
+            var response = await Http.GetAsync(uri, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            return (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<string?> SendPostJsonAsync<T>(string uri, T payload)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync(uri, content, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            return (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
         }
         catch
         {

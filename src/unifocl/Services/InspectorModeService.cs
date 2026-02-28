@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Sockets;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 
@@ -7,6 +6,7 @@ internal sealed class InspectorModeService
 {
     private readonly InspectorTuiRenderer _renderer = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly HttpClient Http = new();
 
     public async Task<bool> TryHandleInspectorCommandAsync(
         string input,
@@ -868,16 +868,16 @@ internal sealed class InspectorModeService
 
         try
         {
-            using var client = new TcpClient();
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            await client.ConnectAsync(IPAddress.Loopback, port.Value, cts.Token);
-            await using var stream = client.GetStream();
-            using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
             var json = JsonSerializer.Serialize(request, _jsonOptions);
-            await writer.WriteLineAsync($"INSPECT {json}");
-            var response = await reader.ReadLineAsync();
-            return response;
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"http://127.0.0.1:{port.Value}/inspect", content, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            return (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
         }
         catch
         {
