@@ -3,7 +3,7 @@ using Spectre.Console;
 internal sealed class ProjectViewRenderer
 {
     private const int FrameWidth = 78;
-    private const int BottomPaddingRows = 2;
+    private const int CommandRows = 8;
 
     public IReadOnlyList<string> Render(ProjectViewState state)
     {
@@ -21,9 +21,16 @@ internal sealed class ProjectViewRenderer
             lines.Add(BorderBody(treeLine));
         }
 
-        for (var i = 0; i < BottomPaddingRows; i++)
+        lines.Add(BorderSeparator());
+        var recent = state.CommandTranscript
+            .Skip(Math.Max(0, state.CommandTranscript.Count - CommandRows))
+            .ToList();
+        for (var i = 0; i < CommandRows; i++)
         {
-            lines.Add(BorderBody(string.Empty));
+            var line = i < recent.Count
+                ? recent[i]
+                : (i == recent.Count ? $"UnityCLI:{cwd} > _" : string.Empty);
+            lines.Add(BorderBody($" {line}"));
         }
 
         lines.Add(BorderBottom());
