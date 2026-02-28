@@ -289,18 +289,26 @@ internal sealed class ProjectLifecycleService
 
         if (promptForInitialization)
         {
-            if (editorDependencyInitializerService.PromptForInitialization(log))
+            if (editorDependencyInitializerService.NeedsInitialization(projectPath, out var initReason))
             {
-                var initResult = editorDependencyInitializerService.InitializeProject(projectPath, log);
-                if (!initResult.Ok)
+                log($"[yellow]init[/]: editor bridge dependency is missing or invalid ({Markup.Escape(initReason)}).");
+                if (editorDependencyInitializerService.PromptForInitialization(log))
                 {
-                    log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
-                    return false;
+                    var initResult = editorDependencyInitializerService.InitializeProject(projectPath, log);
+                    if (!initResult.Ok)
+                    {
+                        log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
+                        return false;
+                    }
+                }
+                else
+                {
+                    log("[yellow]init[/]: skipped; run /init to enable editor-side bridge package");
                 }
             }
             else
             {
-                log("[yellow]init[/]: skipped; run /init to enable editor-side bridge package");
+                log("[grey]init[/]: editor bridge dependency already installed");
             }
         }
 
