@@ -338,7 +338,7 @@ internal sealed class ProjectLifecycleService
         session.Mode = CliMode.Project;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
         log("[grey]open[/]: step 4/4 load project context");
-        _projectViewService.OpenInitialView(session, log);
+        _projectViewService.OpenInitialView(session);
         return true;
     }
 

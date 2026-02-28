@@ -20,7 +20,7 @@ internal sealed class ProjectCommandRouterService
         }
 
         var projectPath = session.CurrentProjectPath;
-        if (await _projectViewService.TryHandleProjectViewCommandAsync(input, session, daemonControlService, daemonRuntime, log))
+        if (await _projectViewService.TryHandleProjectViewCommandAsync(input, session, daemonControlService, daemonRuntime))
         {
             return true;
         }
