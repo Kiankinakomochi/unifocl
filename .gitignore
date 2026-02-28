@@ -15,3 +15,7 @@
 # Unity submodule hygiene
 *.meta
 *.asmdef
+
+#exclude /.codex
+.codex/config.toml
+.codex/rules/default.rules
