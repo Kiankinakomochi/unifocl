@@ -6,6 +6,17 @@ internal sealed class ProjectViewService
 {
     private readonly ProjectViewRenderer _renderer = new();
 
+    public void OpenInitialView(CliSessionState session, Action<string> log)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return;
+        }
+
+        ResetToAssetsRoot(session.ProjectView, session.CurrentProjectPath);
+        RenderFrame(session.ProjectView, log);
+    }
+
     public async Task<bool> TryHandleProjectViewCommandAsync(
         string input,
         CliSessionState session,
@@ -82,14 +93,23 @@ internal sealed class ProjectViewService
             return;
         }
 
-        var defaultCwd = "Assets/Scripts";
-        var defaultPath = Path.Combine(projectPath, "Assets", "Scripts");
+        ResetToAssetsRoot(state, projectPath);
+    }
+
+    private static void ResetToAssetsRoot(ProjectViewState state, string projectPath)
+    {
+        var defaultCwd = "Assets";
+        var defaultPath = Path.Combine(projectPath, "Assets");
         if (!Directory.Exists(defaultPath))
         {
             Directory.CreateDirectory(defaultPath);
         }
 
         state.RelativeCwd = defaultCwd;
+        state.ExpandedDirectories.Clear();
+        state.VisibleEntries.Clear();
+        state.CommandTranscript.Clear();
+        state.DbState = ProjectDbState.IdleSafe;
         state.Initialized = true;
         RefreshTree(projectPath, state);
     }

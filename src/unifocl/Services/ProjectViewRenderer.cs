@@ -9,7 +9,7 @@ internal sealed class ProjectViewRenderer
     public IReadOnlyList<string> Render(ProjectViewState state)
     {
         var lines = new List<string>();
-        var cwd = string.IsNullOrWhiteSpace(state.RelativeCwd) ? "Assets/Scripts" : state.RelativeCwd;
+        var cwd = string.IsNullOrWhiteSpace(state.RelativeCwd) ? "Assets" : state.RelativeCwd;
         var db = state.DbState == ProjectDbState.LockedImporting ? "LOCKED (Importing)" : "IDLE (Safe)";
         var header = $" UnityCLI v0.1 | MODE: PROJECT | DB: {db} | CWD: {cwd}";
 
@@ -71,11 +71,6 @@ internal sealed class ProjectViewRenderer
 
     private static string GetRootLabel(string cwd)
     {
-        if (cwd.Equals("Assets/Scripts", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Assets/Scripts/";
-        }
-
         var normalized = cwd.TrimEnd('/', '\\');
         var name = Path.GetFileName(normalized);
         return string.IsNullOrWhiteSpace(name) ? $"{normalized}/" : $"{name}/";
