@@ -257,6 +257,47 @@ internal sealed class DaemonControlService
         return await TrySendControlAsync(session.AttachedPort.Value, "TOUCH", "OK");
     }
 
+    public async Task<bool> StopDaemonByPortAsync(
+        int port,
+        DaemonRuntime runtime,
+        CliSessionState session,
+        Action<string> log)
+    {
+        runtime.CleanStaleEntries();
+        var target = runtime.GetByPort(port);
+        if (target is null)
+        {
+            runtime.Remove(port);
+            if (session.AttachedPort == port)
+            {
+                session.AttachedPort = null;
+            }
+
+            return true;
+        }
+
+        var stopOk = await TrySendControlAsync(target.Port, "STOP", "STOPPING");
+        if (!stopOk)
+        {
+            log($"[red]daemon[/]: failed to stop daemon on port {target.Port} via control socket");
+            return false;
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(4);
+        while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(target.Pid))
+        {
+            await Task.Delay(120);
+        }
+
+        runtime.Remove(target.Port);
+        if (session.AttachedPort == target.Port)
+        {
+            session.AttachedPort = null;
+        }
+
+        return true;
+    }
+
     public static bool IsUnityClientActiveForProject(string projectPath)
     {
         var lockFile = Path.Combine(projectPath, "Temp", "UnityLockfile");
@@ -333,23 +374,9 @@ internal sealed class DaemonControlService
             return;
         }
 
-        var stopOk = await TrySendControlAsync(target.Port, "STOP", "STOPPING");
-        if (!stopOk)
+        if (!await StopDaemonByPortAsync(target.Port, runtime, session, log))
         {
-            log($"[red]daemon[/]: failed to stop daemon on port {target.Port} via control socket");
             return;
-        }
-
-        var deadline = DateTime.UtcNow.AddSeconds(4);
-        while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(target.Pid))
-        {
-            await Task.Delay(120);
-        }
-
-        runtime.Remove(target.Port);
-        if (session.AttachedPort == target.Port)
-        {
-            session.AttachedPort = null;
         }
 
         log($"[green]daemon[/]: stopped port {target.Port}");
@@ -365,17 +392,10 @@ internal sealed class DaemonControlService
 
         if (target is not null)
         {
-            var stopOk = await TrySendControlAsync(target.Port, "STOP", "STOPPING");
-            if (!stopOk)
+            if (!await StopDaemonByPortAsync(target.Port, runtime, session, log))
             {
                 log($"[red]daemon[/]: could not stop daemon on port {target.Port}; aborting restart");
                 return;
-            }
-
-            runtime.Remove(target.Port);
-            if (session.AttachedPort == target.Port)
-            {
-                session.AttachedPort = null;
             }
         }
 
