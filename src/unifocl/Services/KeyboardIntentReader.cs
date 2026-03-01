@@ -33,11 +33,6 @@ internal static class KeyboardIntentReader
             return KeyboardIntent.Escape;
         }
 
-        if (key.Key == ConsoleKey.F6)
-        {
-            return KeyboardIntent.FocusHierarchy;
-        }
-
         if (key.Key == ConsoleKey.F7)
         {
             return KeyboardIntent.FocusProject;

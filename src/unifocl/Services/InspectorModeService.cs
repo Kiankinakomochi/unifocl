@@ -152,12 +152,23 @@ internal sealed class InspectorModeService
                 var components = context.Components.OrderBy(component => component.Index).ToList();
                 if (components.Count == 0)
                 {
+                    context.FocusHighlightedComponentIndex = null;
                     _renderer.Render(context, null, null, focusModeEnabled: true);
                 }
                 else
                 {
+                    if (context.FocusHighlightedComponentIndex is int highlightedComponentIndex)
+                    {
+                        var highlightedPosition = components.FindIndex(component => component.Index == highlightedComponentIndex);
+                        if (highlightedPosition >= 0)
+                        {
+                            selectedComponentPosition = highlightedPosition;
+                        }
+                    }
+
                     selectedComponentPosition = Math.Clamp(selectedComponentPosition, 0, components.Count - 1);
                     var selectedComponent = components[selectedComponentPosition];
+                    context.FocusHighlightedComponentIndex = selectedComponent.Index;
                     _renderer.Render(context, selectedComponent.Index, null, focusModeEnabled: true);
                 }
             }
@@ -166,12 +177,24 @@ internal sealed class InspectorModeService
                 var fields = context.Fields;
                 if (fields.Count == 0)
                 {
+                    context.FocusHighlightedFieldName = null;
                     _renderer.Render(context, null, null, focusModeEnabled: true);
                 }
                 else
                 {
+                    if (!string.IsNullOrWhiteSpace(context.FocusHighlightedFieldName))
+                    {
+                        var highlightedPosition = fields.FindIndex(field =>
+                            field.Name.Equals(context.FocusHighlightedFieldName, StringComparison.OrdinalIgnoreCase));
+                        if (highlightedPosition >= 0)
+                        {
+                            selectedFieldPosition = highlightedPosition;
+                        }
+                    }
+
                     selectedFieldPosition = Math.Clamp(selectedFieldPosition, 0, fields.Count - 1);
-                    _renderer.Render(context, null, fields[selectedFieldPosition].Name, focusModeEnabled: true);
+                    context.FocusHighlightedFieldName = fields[selectedFieldPosition].Name;
+                    _renderer.Render(context, null, context.FocusHighlightedFieldName, focusModeEnabled: true);
                 }
             }
 
@@ -181,29 +204,35 @@ internal sealed class InspectorModeService
                 case KeyboardIntent.Up:
                     if (context.Depth == InspectorDepth.ComponentList && context.Components.Count > 0)
                     {
+                        var orderedComponentsForUp = context.Components.OrderBy(component => component.Index).ToList();
                         selectedComponentPosition = selectedComponentPosition <= 0
-                            ? context.Components.Count - 1
+                            ? orderedComponentsForUp.Count - 1
                             : selectedComponentPosition - 1;
+                        context.FocusHighlightedComponentIndex = orderedComponentsForUp[selectedComponentPosition].Index;
                     }
                     else if (context.Depth == InspectorDepth.ComponentFields && context.Fields.Count > 0)
                     {
                         selectedFieldPosition = selectedFieldPosition <= 0
                             ? context.Fields.Count - 1
                             : selectedFieldPosition - 1;
+                        context.FocusHighlightedFieldName = context.Fields[selectedFieldPosition].Name;
                     }
                     break;
                 case KeyboardIntent.Down:
                     if (context.Depth == InspectorDepth.ComponentList && context.Components.Count > 0)
                     {
-                        selectedComponentPosition = selectedComponentPosition >= context.Components.Count - 1
+                        var orderedComponentsForDown = context.Components.OrderBy(component => component.Index).ToList();
+                        selectedComponentPosition = selectedComponentPosition >= orderedComponentsForDown.Count - 1
                             ? 0
                             : selectedComponentPosition + 1;
+                        context.FocusHighlightedComponentIndex = orderedComponentsForDown[selectedComponentPosition].Index;
                     }
                     else if (context.Depth == InspectorDepth.ComponentFields && context.Fields.Count > 0)
                     {
                         selectedFieldPosition = selectedFieldPosition >= context.Fields.Count - 1
                             ? 0
                             : selectedFieldPosition + 1;
+                        context.FocusHighlightedFieldName = context.Fields[selectedFieldPosition].Name;
                     }
                     break;
                 case KeyboardIntent.Tab:
@@ -220,10 +249,13 @@ internal sealed class InspectorModeService
                         orderedComponents[selectedComponentPosition].Index,
                         $"inspect {orderedComponents[selectedComponentPosition].Index}");
                     selectedFieldPosition = 0;
+                    context.FocusHighlightedFieldName = null;
                     break;
                 case KeyboardIntent.ShiftTab:
                     if (context.Depth == InspectorDepth.ComponentFields)
                     {
+                        context.FocusHighlightedComponentIndex = context.SelectedComponentIndex;
+                        context.FocusHighlightedFieldName = null;
                         context.Depth = InspectorDepth.ComponentList;
                         context.Fields.Clear();
                         context.SelectedComponentIndex = null;
@@ -242,6 +274,8 @@ internal sealed class InspectorModeService
                 case KeyboardIntent.Escape:
                 case KeyboardIntent.FocusInspector:
                     AddStream(context, "[i] inspector focus mode disabled");
+                    context.FocusHighlightedFieldName = null;
+                    context.FocusHighlightedComponentIndex = null;
                     _renderer.Render(context);
                     return;
                 default:
@@ -696,6 +730,8 @@ internal sealed class InspectorModeService
 
         if (context.Depth == InspectorDepth.ComponentFields)
         {
+            context.FocusHighlightedComponentIndex = context.SelectedComponentIndex;
+            context.FocusHighlightedFieldName = null;
             context.Depth = InspectorDepth.ComponentList;
             context.Fields.Clear();
             context.SelectedComponentIndex = null;
@@ -722,6 +758,8 @@ internal sealed class InspectorModeService
     {
         context.TargetPath = targetPath;
         context.Depth = InspectorDepth.ComponentList;
+        context.FocusHighlightedComponentIndex = null;
+        context.FocusHighlightedFieldName = null;
         context.Fields.Clear();
         context.SelectedComponentIndex = null;
         context.SelectedComponentName = null;
@@ -759,6 +797,8 @@ internal sealed class InspectorModeService
         context.Depth = InspectorDepth.ComponentFields;
         context.SelectedComponentIndex = componentIndex;
         context.SelectedComponentName = component.Name;
+        context.FocusHighlightedComponentIndex = componentIndex;
+        context.FocusHighlightedFieldName = null;
         context.BodyScrollOffset = 0;
         context.FollowStreamScroll = true;
         context.StreamScrollOffset = int.MaxValue;

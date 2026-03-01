@@ -6,7 +6,6 @@ internal enum KeyboardIntent
     Tab,
     ShiftTab,
     Escape,
-    FocusHierarchy,
     FocusProject,
     FocusInspector
 }

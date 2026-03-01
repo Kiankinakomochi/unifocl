@@ -8,6 +8,8 @@ internal sealed class InspectorContext
 {
     public string TargetPath { get; set; } = "/Player";
     public InspectorDepth Depth { get; set; } = InspectorDepth.ComponentList;
+    public int? FocusHighlightedComponentIndex { get; set; }
+    public string? FocusHighlightedFieldName { get; set; }
     public List<InspectorComponentEntry> Components { get; } = [];
     public List<InspectorFieldEntry> Fields { get; } = [];
     public int? SelectedComponentIndex { get; set; }
