@@ -4,6 +4,7 @@ using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace UniFocl.EditorBridge
 {
@@ -117,13 +118,49 @@ namespace UniFocl.EditorBridge
             var extension = Path.GetExtension(request.assetPath);
             if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
             {
-                if (!File.Exists(Path.Combine(GetProjectRoot(), request.assetPath.Replace('/', Path.DirectorySeparatorChar))))
+                var requestedScenePath = request.assetPath.Replace('\\', '/');
+                if (!File.Exists(Path.Combine(GetProjectRoot(), requestedScenePath.Replace('/', Path.DirectorySeparatorChar))))
                 {
                     return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"scene not found: {request.assetPath}" });
                 }
 
-                EditorSceneManager.OpenScene(request.assetPath);
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "scene loaded", kind = "scene" });
+                try
+                {
+                    var loadedScene = EditorSceneManager.OpenScene(requestedScenePath, OpenSceneMode.Single);
+                    if (!loadedScene.IsValid() || !loadedScene.isLoaded)
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"scene load failed: {requestedScenePath}" });
+                    }
+
+                    var loadedScenePath = loadedScene.path.Replace('\\', '/');
+                    if (!loadedScenePath.Equals(requestedScenePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"scene load failed: requested '{requestedScenePath}', loaded '{loadedScenePath}'"
+                        });
+                    }
+
+                    if (!SceneManager.SetActiveScene(loadedScene))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"scene load failed: unable to activate scene '{requestedScenePath}'"
+                        });
+                    }
+
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "scene loaded", kind = "scene" });
+                }
+                catch (Exception ex)
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = $"scene load failed: {ex.Message}"
+                    });
+                }
             }
 
             if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))

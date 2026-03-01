@@ -2,7 +2,8 @@ using Spectre.Console;
 
 internal sealed class InspectorTuiRenderer
 {
-    private const int InnerWidth = 78;
+    private const int DefaultInnerWidth = 78;
+    private const int MinInnerWidth = 40;
     private const int MinBodyRows = 4;
     private const int MinStreamRows = 4;
     private const int ReservedPromptRows = 4;
@@ -16,11 +17,12 @@ internal sealed class InspectorTuiRenderer
         bool focusModeEnabled = false)
     {
         AnsiConsole.Clear();
+        var innerWidth = ResolveInnerWidth();
         var availableRows = Math.Max(MinBodyRows + MinStreamRows, Console.WindowHeight - ReservedPromptRows);
         var dynamicRows = Math.Max(MinBodyRows + MinStreamRows, availableRows - FrameOverheadRows);
 
-        var bodyRows = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName).ToList();
-        var streamRows = BuildStreamRows(context).ToList();
+        var bodyRows = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName, innerWidth).ToList();
+        var streamRows = BuildStreamRows(context, Math.Max(1, innerWidth - 1)).ToList();
         var hasStreamPane = streamRows.Count > 0;
         var (bodyViewportRows, streamViewportRows) = hasStreamPane
             ? AllocateViewportRows(dynamicRows, bodyRows.Count, streamRows.Count)
@@ -36,18 +38,18 @@ internal sealed class InspectorTuiRenderer
 
         var frame = new List<string>(FrameOverheadRows + visibleBody.Count + (hasStreamPane ? visibleStream.Count + 1 : 0))
         {
-            Border('┌', '┐'),
-            Line(BuildHeader(context, focusModeEnabled)),
-            Border('├', '┤')
+            Border('┌', '┐', innerWidth),
+            Line(BuildHeader(context, focusModeEnabled), innerWidth),
+            Border('├', '┤', innerWidth)
         };
 
-        frame.AddRange(visibleBody.Select(row => Line(row.Content, row.Highlight)));
+        frame.AddRange(visibleBody.Select(row => Line(row.Content, innerWidth, row.Highlight)));
         if (hasStreamPane)
         {
-            frame.Add(Border('├', '┤'));
-            frame.AddRange(visibleStream.Select(streamLine => Line(streamLine)));
+            frame.Add(Border('├', '┤', innerWidth));
+            frame.AddRange(visibleStream.Select(streamLine => Line(streamLine, innerWidth)));
         }
-        frame.Add(Border('└', '┘'));
+        frame.Add(Border('└', '┘', innerWidth));
 
         foreach (var line in frame)
         {
@@ -58,11 +60,12 @@ internal sealed class InspectorTuiRenderer
     private static IEnumerable<RenderRow> BuildBodyRows(
         InspectorContext context,
         int? highlightedComponentIndex,
-        string? highlightedFieldName)
+        string? highlightedFieldName,
+        int innerWidth)
     {
         return context.Depth == InspectorDepth.ComponentList
             ? BuildComponentRows(context, highlightedComponentIndex)
-            : BuildFieldRows(context, highlightedFieldName);
+            : BuildFieldRows(context, highlightedFieldName, innerWidth);
     }
 
     private static IEnumerable<RenderRow> BuildComponentRows(InspectorContext context, int? highlightedComponentIndex)
@@ -83,12 +86,12 @@ internal sealed class InspectorTuiRenderer
         return lines;
     }
 
-    private static IEnumerable<RenderRow> BuildFieldRows(InspectorContext context, string? highlightedFieldName)
+    private static IEnumerable<RenderRow> BuildFieldRows(InspectorContext context, string? highlightedFieldName, int innerWidth)
     {
         var lines = new List<RenderRow>
         {
             new($"{PadRight("FIELD", 20)}{PadRight("VALUE", 26)}TYPE", false),
-            new(new string('─', InnerWidth - 1), false)
+            new(new string('─', Math.Max(1, innerWidth - 1)), false)
         };
 
         foreach (var field in context.Fields)
@@ -107,10 +110,11 @@ internal sealed class InspectorTuiRenderer
         return lines;
     }
 
-    private static IEnumerable<string> BuildStreamRows(InspectorContext context)
+    private static IEnumerable<string> BuildStreamRows(InspectorContext context, int contentWidth)
     {
         var rows = context.CommandStream
             .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
             .ToList();
         if (rows.Count == 0)
         {
@@ -131,15 +135,15 @@ internal sealed class InspectorTuiRenderer
         return $"UnityCLI v0.1 | MODE: INSPECTOR | Target: {target}{focusLabel}";
     }
 
-    private static string Border(char left, char right)
+    private static string Border(char left, char right, int innerWidth)
     {
-        return $"{left}{new string('─', InnerWidth)}{right}";
+        return $"{left}{new string('─', innerWidth)}{right}";
     }
 
-    private static string Line(string content, bool highlight = false)
+    private static string Line(string content, int innerWidth, bool highlight = false)
     {
-        var trimmed = content.Length > InnerWidth ? content[..InnerWidth] : content;
-        var escaped = Markup.Escape(trimmed.PadRight(InnerWidth));
+        var trimmed = content.Length > innerWidth ? content[..innerWidth] : content;
+        var escaped = Markup.Escape(trimmed.PadRight(innerWidth));
         var line = $"│{escaped}│";
         return highlight ? CliTheme.CursorWrapEscaped(line) : line;
     }
@@ -245,5 +249,16 @@ internal sealed class InspectorTuiRenderer
         }
 
         return value.PadRight(width);
+    }
+
+    private static int ResolveInnerWidth()
+    {
+        var windowWidth = Console.WindowWidth;
+        if (windowWidth <= 2)
+        {
+            return DefaultInnerWidth;
+        }
+
+        return Math.Max(MinInnerWidth, windowWidth - 2);
     }
 }

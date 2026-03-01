@@ -3,7 +3,8 @@ using Spectre.Console;
 
 internal sealed class HierarchyTui
 {
-    private const int FrameWidth = 78;
+    private const int DefaultFrameWidth = 78;
+    private const int MinFrameWidth = 40;
     private const int MinTreeRows = 6;
     private const int MinCommandRows = 4;
     private const int ReservedPromptRows = 4;
@@ -333,14 +334,15 @@ internal sealed class HierarchyTui
         var delta = direction == "up" ? -amount : amount;
         if (section == "log")
         {
+            var wrappedStreamRowCount = BuildWrappedStreamRows(commandLog, Math.Max(1, ResolveFrameWidth() - 1)).Count;
             if (_followCommandScroll)
             {
-                _commandScrollOffset = Math.Max(0, commandLog.Count - 1);
+                _commandScrollOffset = Math.Max(0, wrappedStreamRowCount - 1);
             }
 
             _followCommandScroll = false;
             _commandScrollOffset += delta;
-            if (_commandScrollOffset >= commandLog.Count)
+            if (_commandScrollOffset >= wrappedStreamRowCount)
             {
                 _followCommandScroll = true;
                 _commandScrollOffset = int.MaxValue;
@@ -395,7 +397,8 @@ internal sealed class HierarchyTui
                 })
                 .ToList();
 
-            EnsureSelectedTreeVisibility(highlightedTree.Count, commandLog.Count, selectedEntryPosition + 1);
+            var wrappedStreamLineCount = BuildWrappedStreamRows(commandLog, Math.Max(1, ResolveFrameWidth() - 1)).Count;
+            EnsureSelectedTreeVisibility(highlightedTree.Count, wrappedStreamLineCount, selectedEntryPosition + 1);
             RenderFrame(port, snapshot.Scene, highlightedTree, commandLog, cwdPath, focusModeEnabled: true);
 
             var intent = KeyboardIntentReader.ReadIntent();
@@ -477,14 +480,13 @@ internal sealed class HierarchyTui
     {
         Console.Clear();
 
-        var borderTop = $"┌{new string('─', FrameWidth)}┐";
-        var borderMid = $"├{new string('─', FrameWidth)}┤";
-        var borderBottom = $"└{new string('─', FrameWidth)}┘";
+        var frameWidth = ResolveFrameWidth();
+        var borderTop = $"┌{new string('─', frameWidth)}┐";
+        var borderMid = $"├{new string('─', frameWidth)}┤";
+        var borderBottom = $"└{new string('─', frameWidth)}┘";
         var availableRows = Math.Max(MinTreeRows + MinCommandRows, Console.WindowHeight - ReservedPromptRows);
         var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
-        var streamRows = commandLog
-            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var streamRows = BuildWrappedStreamRows(commandLog, Math.Max(1, frameWidth - 1));
         var hasStreamPane = streamRows.Count > 0;
         var (treeRows, commandRows) = hasStreamPane
             ? AllocateViewportRows(dynamicRows, treeLines.Count, streamRows.Count)
@@ -499,13 +501,13 @@ internal sealed class HierarchyTui
             : $" | Focus Key: {FocusModeKey}";
 
         WriteFrameLine(borderTop);
-        WriteFrameLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}"));
+        WriteFrameLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}", frameWidth));
         WriteFrameLine(borderMid);
 
         foreach (var line in visibleTree)
         {
             var selected = focusModeEnabled && line.StartsWith("> ", StringComparison.Ordinal);
-            WriteFrameLine(ToFrameLine($" {line}"), selected);
+            WriteFrameLine(ToFrameLine($" {line}", frameWidth), selected);
         }
 
         if (hasStreamPane)
@@ -514,7 +516,7 @@ internal sealed class HierarchyTui
             for (var i = 0; i < visibleCommandLog.Count; i++)
             {
                 var line = visibleCommandLog[i];
-                WriteFrameLine(ToFrameLine($" {line}"));
+                WriteFrameLine(ToFrameLine($" {line}", frameWidth));
             }
         }
 
@@ -762,10 +764,10 @@ internal sealed class HierarchyTui
         commandLog.RemoveRange(0, commandLog.Count - maxLines);
     }
 
-    private static string ToFrameLine(string raw)
+    private static string ToFrameLine(string raw, int frameWidth)
     {
         var sanitized = raw.Replace('\t', ' ');
-        var content = sanitized.Length > FrameWidth ? sanitized[..FrameWidth] : sanitized.PadRight(FrameWidth, ' ');
+        var content = sanitized.Length > frameWidth ? sanitized[..frameWidth] : sanitized.PadRight(frameWidth, ' ');
         return $"│{content}│";
     }
 
@@ -826,5 +828,24 @@ internal sealed class HierarchyTui
         }
 
         return visible;
+    }
+
+    private static List<string> BuildWrappedStreamRows(IReadOnlyList<string> commandLog, int contentWidth)
+    {
+        return commandLog
+            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
+            .ToList();
+    }
+
+    private static int ResolveFrameWidth()
+    {
+        var windowWidth = Console.WindowWidth;
+        if (windowWidth <= 2)
+        {
+            return DefaultFrameWidth;
+        }
+
+        return Math.Max(MinFrameWidth, windowWidth - 2);
     }
 }

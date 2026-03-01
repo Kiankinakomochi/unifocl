@@ -590,7 +590,8 @@ static string BuildPromptLabelMarkup(CliSessionState session)
 
     if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        return $"[bold deepskyblue1]unifocl[/][grey]:[/][{CliTheme.Info}]{Markup.Escape(session.CurrentProjectPath)}[/]";
+        var safeLabel = session.SafeModeEnabled ? " [yellow][safe][/]" : string.Empty;
+        return $"[bold deepskyblue1]unifocl[/][grey]:[/][{CliTheme.Info}]{Markup.Escape(session.CurrentProjectPath)}[/]{safeLabel}";
     }
 
     return "[bold deepskyblue1]unifocl[/]";

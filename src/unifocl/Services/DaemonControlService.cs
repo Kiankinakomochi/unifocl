@@ -8,7 +8,9 @@ using System.Text;
 internal sealed class DaemonControlService
 {
     private const int DefaultInactivityTimeoutSeconds = 600;
+    private const int ProcessOutputTailMaxLines = 40;
     private static readonly HttpClient Http = new();
+    private DaemonStartupFailure? _lastStartupFailure;
 
     public async Task HandleDaemonCommandAsync(
         string input,
@@ -336,7 +338,8 @@ internal sealed class DaemonControlService
         string projectPath,
         DaemonRuntime runtime,
         CliSessionState session,
-        Action<string> log)
+        Action<string> log,
+        bool requireUnityBridge = false)
     {
         var port = ComputeProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
@@ -344,17 +347,37 @@ internal sealed class DaemonControlService
         // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
         if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
         {
-            return true;
+            if (!requireUnityBridge || IsUnityBridgeCapable(existing))
+            {
+                return true;
+            }
         }
 
         if (existing is not null)
         {
+            var stopped = await TrySendControlAsync(port, "STOP", "STOPPING");
+            if (stopped)
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(4);
+                while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(existing.Pid))
+                {
+                    await Task.Delay(120);
+                }
+            }
+
             runtime.Remove(port);
+        }
+
+        var unityPath = ResolveDefaultUnityPath(projectPath);
+        if (requireUnityBridge && string.IsNullOrWhiteSpace(unityPath))
+        {
+            log("[red]daemon[/]: scene load requires Unity editor bridge, but no Unity editor path is configured");
+            return false;
         }
 
         var startOptions = new DaemonStartOptions(
             port,
-            ResolveDefaultUnityPath(),
+            unityPath,
             projectPath,
             Headless: true);
 
@@ -367,6 +390,17 @@ internal sealed class DaemonControlService
         session.AttachedPort = port;
         await TrySendControlAsync(port, "TOUCH", "OK");
         return true;
+    }
+
+    private static bool IsUnityBridgeCapable(DaemonInstance? instance)
+    {
+        if (instance is null)
+        {
+            // Port is serving but not from runtime registry (likely InitializeOnLoad Unity bridge).
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(instance.UnityPath);
     }
 
     public async Task<bool> TryAttachProjectDaemonAsync(
@@ -506,15 +540,60 @@ internal sealed class DaemonControlService
             return false;
         }
 
-        var ready = await WaitForDaemonReadyAsync(startOptions.Port, TimeSpan.FromSeconds(25));
+        var outputTail = new Queue<string>();
+        StartBackgroundOutputDrain(
+            process,
+            startOptions.Headless,
+            line => CaptureProcessOutputLine(outputTail, line));
+
+        var startupTimeout = startOptions.Headless
+            ? TimeSpan.FromSeconds(120)
+            : TimeSpan.FromSeconds(25);
+        if (startOptions.Headless)
+        {
+            log($"[grey]daemon[/]: starting Unity headless bridge on port {startOptions.Port} (timeout {startupTimeout.TotalSeconds:0}s)");
+        }
+
+        var ready = await WaitForDaemonReadyAsync(startOptions.Port, startupTimeout, startOptions.Headless
+            ? elapsed => log($"[grey]daemon[/]: startup in progress... {elapsed.TotalSeconds:0}s elapsed")
+            : null);
         if (!ready)
         {
-            log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port}");
+            if (process.HasExited)
+            {
+                var details = BuildProcessFailureSummary(outputTail);
+                var compileLines = ExtractCompileErrorLines(outputTail);
+                _lastStartupFailure = new DaemonStartupFailure(
+                    IsCompileError: compileLines.Count > 0,
+                    Summary: string.IsNullOrWhiteSpace(details) ? $"process exited with code {process.ExitCode}" : details,
+                    Lines: compileLines.Count > 0 ? compileLines : outputTail.ToList());
+                log($"[red]daemon[/]: process exited before daemon became ready (pid {process.Id}, exit {process.ExitCode})");
+                if (!string.IsNullOrWhiteSpace(details))
+                {
+                    log($"[red]daemon[/]: startup output -> {Markup.Escape(details)}");
+                }
+            }
+            else
+            {
+                _lastStartupFailure = new DaemonStartupFailure(
+                    IsCompileError: false,
+                    Summary: $"daemon did not respond on port {startOptions.Port} within {startupTimeout.TotalSeconds:0}s",
+                    Lines: outputTail.ToList());
+                log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port} within {startupTimeout.TotalSeconds:0}s");
+            }
+
             return false;
         }
 
+        _lastStartupFailure = null;
         log($"[green]daemon[/]: started [white]pid={process.Id}[/] [white]port={startOptions.Port}[/] [white]headless={startOptions.Headless}[/]");
         return true;
+    }
+
+    public bool TryGetLastStartupFailure(out DaemonStartupFailure? failure)
+    {
+        failure = _lastStartupFailure;
+        return failure is not null;
     }
 
     private async Task HandleDaemonStopAsync(DaemonRuntime runtime, CliSessionState session, Action<string> log)
@@ -712,8 +791,8 @@ internal sealed class DaemonControlService
             var unityPsi = new ProcessStartInfo(options.UnityPath)
             {
                 UseShellExecute = false,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 CreateNoWindow = true
             };
 
@@ -721,7 +800,6 @@ internal sealed class DaemonControlService
             unityPsi.ArgumentList.Add(options.ProjectPath);
             unityPsi.ArgumentList.Add("-batchmode");
             unityPsi.ArgumentList.Add("-nographics");
-            unityPsi.ArgumentList.Add("-noUpm");
             unityPsi.ArgumentList.Add("-vcsMode");
             unityPsi.ArgumentList.Add("None");
             unityPsi.ArgumentList.Add("-executeMethod");
@@ -802,14 +880,116 @@ internal sealed class DaemonControlService
         return directPsi;
     }
 
-    private static async Task<bool> WaitForDaemonReadyAsync(int port, TimeSpan timeout)
+    private static void StartBackgroundOutputDrain(Process process, bool headless, Action<string>? onLine = null)
     {
-        var deadline = DateTime.UtcNow.Add(timeout);
+        if (!headless)
+        {
+            return;
+        }
+
+        if (process.StartInfo.RedirectStandardOutput)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (await process.StandardOutput.ReadLineAsync() is string line)
+                    {
+                        onLine?.Invoke(line);
+                    }
+                }
+                catch
+                {
+                }
+            });
+        }
+
+        if (process.StartInfo.RedirectStandardError)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (await process.StandardError.ReadLineAsync() is string line)
+                    {
+                        onLine?.Invoke(line);
+                    }
+                }
+                catch
+                {
+                }
+            });
+        }
+    }
+
+    private static void CaptureProcessOutputLine(Queue<string> tail, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return;
+        }
+
+        var trimmed = line.Trim();
+        if (tail.Count >= ProcessOutputTailMaxLines)
+        {
+            tail.Dequeue();
+        }
+
+        tail.Enqueue(trimmed);
+    }
+
+    private static string BuildProcessFailureSummary(Queue<string> outputTail)
+    {
+        if (outputTail.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var prioritized = outputTail
+            .Where(line => line.Contains("error", StringComparison.OrdinalIgnoreCase)
+                           || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+                           || line.Contains("failed", StringComparison.OrdinalIgnoreCase))
+            .Take(5)
+            .ToList();
+        if (prioritized.Count > 0)
+        {
+            return string.Join(" | ", prioritized);
+        }
+
+        return string.Join(" | ", outputTail.TakeLast(3));
+    }
+
+    private static List<string> ExtractCompileErrorLines(Queue<string> outputTail)
+    {
+        var lines = outputTail
+            .Where(line =>
+                line.Contains("error CS", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("Scripts have compiler errors", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("Script Compilation Error", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("Tundra build failed", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.Ordinal)
+            .Take(30)
+            .ToList();
+        return lines;
+    }
+
+    private static async Task<bool> WaitForDaemonReadyAsync(int port, TimeSpan timeout, Action<TimeSpan>? onProgress = null)
+    {
+        var startedAt = DateTime.UtcNow;
+        var deadline = startedAt.Add(timeout);
+        var nextProgressAt = startedAt.AddSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
             if (await TrySendControlAsync(port, "PING", "PONG"))
             {
                 return true;
+            }
+
+            var now = DateTime.UtcNow;
+            if (onProgress is not null && now >= nextProgressAt)
+            {
+                onProgress(now - startedAt);
+                nextProgressAt = now.AddSeconds(5);
             }
 
             await Task.Delay(180);
@@ -859,8 +1039,18 @@ internal sealed class DaemonControlService
         }
     }
 
-    private static string? ResolveDefaultUnityPath()
+    private static string? ResolveDefaultUnityPath(string projectPath)
     {
+        if (UnityEditorPathService.TryGetProjectEditorPath(projectPath, out var projectEditorPath))
+        {
+            return projectEditorPath;
+        }
+
+        if (UnityEditorPathService.TryGetDefaultEditorPath(out var defaultEditorPath))
+        {
+            return defaultEditorPath;
+        }
+
         var fromEnv = Environment.GetEnvironmentVariable("UNITY_PATH");
         if (!string.IsNullOrWhiteSpace(fromEnv))
         {
@@ -926,4 +1116,9 @@ internal sealed class DaemonControlService
 
         return tokens;
     }
+
+    internal sealed record DaemonStartupFailure(
+        bool IsCompileError,
+        string Summary,
+        IReadOnlyList<string> Lines);
 }

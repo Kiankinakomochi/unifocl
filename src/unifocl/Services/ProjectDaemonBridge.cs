@@ -178,9 +178,9 @@ internal sealed class ProjectDaemonBridge
         if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
         {
             return new ProjectCommandResponseDto(
-                true,
-                "scene path resolved (stubbed bridge fallback; Unity scene load unavailable)",
-                "scene");
+                false,
+                $"{StubbedBridgePrefix} scene load is unavailable without Unity editor bridge: {assetPath}",
+                null);
         }
 
         if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
