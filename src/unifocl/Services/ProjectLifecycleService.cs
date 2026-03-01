@@ -2,6 +2,7 @@ using Spectre.Console;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 internal sealed class ProjectLifecycleService
 {
@@ -23,6 +24,8 @@ internal sealed class ProjectLifecycleService
             "/new" => await HandleNewAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/clone" => await HandleCloneAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/recent" => await HandleRecentAsync(input, matched, session, daemonControlService, daemonRuntime, log),
+            "/unity detect" => await HandleUnityDetectAsync(log),
+            "/unity set" => await HandleUnitySetAsync(input, matched, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
             "/init" => await HandleInitAsync(input, matched, session, log),
             "/config" => await HandleConfigAsync(input, matched, log),
@@ -113,12 +116,49 @@ internal sealed class ProjectLifecycleService
         }
 
         var projectName = args[0].Trim();
-        var unityVersion = args.Count > 1 ? args[1].Trim() : "6000.0.0f1";
         if (string.IsNullOrWhiteSpace(projectName))
         {
             log("[red]error[/]: project name cannot be empty");
             return true;
         }
+
+        var availableEditors = UnityEditorPathService.DetectInstalledEditors(out var detectedHubRoot);
+        if (availableEditors.Count == 0)
+        {
+            log("[red]error[/]: no Unity editors were detected from Unity Hub/editor environment");
+            return true;
+        }
+
+        UnityEditorPathService.UnityEditorInstallation selectedEditor;
+        if (args.Count > 1)
+        {
+            var requestedVersion = args[1].Trim();
+            selectedEditor = availableEditors.FirstOrDefault(x => x.Version.Equals(requestedVersion, StringComparison.OrdinalIgnoreCase))
+                ?? new UnityEditorPathService.UnityEditorInstallation(string.Empty, string.Empty);
+            if (string.IsNullOrWhiteSpace(selectedEditor.Version))
+            {
+                log($"[red]error[/]: requested Unity version is not installed: {Markup.Escape(requestedVersion)}");
+                return true;
+            }
+        }
+        else if (Console.IsInputRedirected)
+        {
+            selectedEditor = availableEditors[0];
+            log($"[yellow]new[/]: non-interactive input; defaulting to newest detected editor [white]{Markup.Escape(selectedEditor.Version)}[/]");
+        }
+        else
+        {
+            var hubLabel = string.IsNullOrWhiteSpace(detectedHubRoot) ? "unknown location" : detectedHubRoot;
+            log($"[grey]new[/]: detected Unity Hub editors from [white]{Markup.Escape(hubLabel)}[/]");
+            selectedEditor = AnsiConsole.Prompt(
+                new SelectionPrompt<UnityEditorPathService.UnityEditorInstallation>()
+                    .Title("Choose Unity editor version")
+                    .PageSize(Math.Min(availableEditors.Count, 12))
+                    .UseConverter(editor => $"{editor.Version} ({editor.EditorPath})")
+                    .AddChoices(availableEditors));
+        }
+
+        var unityVersion = selectedEditor.Version;
 
         var projectPath = ResolveAbsolutePath(projectName, Directory.GetCurrentDirectory());
         log($"[grey]new[/]: step 1/5 create project directory -> [white]{Markup.Escape(projectPath)}[/]");
@@ -156,6 +196,11 @@ internal sealed class ProjectLifecycleService
         {
             log($"[red]error[/]: {Markup.Escape(versionResult.Error)}");
             return true;
+        }
+
+        if (!UnityEditorPathService.TrySaveProjectEditorPath(projectPath, selectedEditor.EditorPath, out var saveEditorError))
+        {
+            log($"[yellow]new[/]: unable to persist project-editor pair ({Markup.Escape(saveEditorError ?? "unknown error")})");
         }
 
         log("[grey]new[/]: step 4/5 generate local templates and bridge config");
@@ -405,6 +450,50 @@ internal sealed class ProjectLifecycleService
             log);
     }
 
+    private Task<bool> HandleUnityDetectAsync(Action<string> log)
+    {
+        var editors = UnityEditorPathService.DetectInstalledEditors(out var hubRoot);
+        if (editors.Count == 0)
+        {
+            log("[yellow]unity[/]: no installed editors detected");
+            return Task.FromResult(true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(hubRoot))
+        {
+            log($"[grey]unity[/]: Hub root [white]{Markup.Escape(hubRoot)}[/]");
+        }
+
+        log("[grey]unity[/]: detected installed editors");
+        foreach (var editor in editors)
+        {
+            log($"[grey]unity[/]: [white]{Markup.Escape(editor.Version)}[/] -> [white]{Markup.Escape(editor.EditorPath)}[/]");
+        }
+
+        return Task.FromResult(true);
+    }
+
+    private Task<bool> HandleUnitySetAsync(string input, CommandSpec matched, Action<string> log)
+    {
+        var args = ParseCommandArgs(input, matched.Trigger);
+        if (args.Count != 1)
+        {
+            log("[red]error[/]: usage /unity set <path>");
+            return Task.FromResult(true);
+        }
+
+        var unityPath = ResolveAbsolutePath(args[0], Directory.GetCurrentDirectory());
+        if (!UnityEditorPathService.TrySetDefaultEditorPath(unityPath, out var saveError))
+        {
+            log($"[red]error[/]: {Markup.Escape(saveError ?? "failed to save default Unity editor path")}");
+            return Task.FromResult(true);
+        }
+
+        Environment.SetEnvironmentVariable("UNITY_PATH", unityPath);
+        log($"[green]unity[/]: default editor set -> [white]{Markup.Escape(unityPath)}[/]");
+        return Task.FromResult(true);
+    }
+
     private Task<bool> HandleConfigAsync(
         string input,
         CommandSpec matched,
@@ -603,7 +692,7 @@ internal sealed class ProjectLifecycleService
         bool promptForInitialization,
         Action<string> log)
     {
-        log($"[grey]open[/]: step 1/4 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
+        log($"[grey]open[/]: step 1/5 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
 
         if (!Directory.Exists(projectPath))
         {
@@ -617,11 +706,18 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
-        log("[grey]open[/]: step 2/4 validate Unity project layout");
+        log("[grey]open[/]: step 2/5 validate Unity project layout");
         var bridgeResult = EnsureProjectLocalConfig(projectPath);
         if (!bridgeResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(bridgeResult.Error)}");
+            return false;
+        }
+
+        var packageFixResult = EnsureRequiredUnityPackageReferences(projectPath);
+        if (!packageFixResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(packageFixResult.Error)}");
             return false;
         }
 
@@ -650,7 +746,21 @@ internal sealed class ProjectLifecycleService
             }
         }
 
-        log("[grey]open[/]: step 3/4 route runtime by active Unity client lock");
+        if (!UnityEditorPathService.TryResolveEditorForProject(projectPath, out var resolvedEditorPath, out var resolvedEditorVersion, out var editorResolveError))
+        {
+            log($"[red]error[/]: {Markup.Escape(editorResolveError ?? "failed to resolve Unity editor for project")}");
+            return false;
+        }
+
+        if (!UnityEditorPathService.TrySetDefaultEditorPath(resolvedEditorPath, out var defaultEditorSaveError))
+        {
+            log($"[yellow]config[/]: unable to persist default editor path ({Markup.Escape(defaultEditorSaveError ?? "unknown error")})");
+        }
+
+        Environment.SetEnvironmentVariable("UNITY_PATH", resolvedEditorPath);
+        log($"[grey]open[/]: step 3/5 resolved Unity editor [white]{Markup.Escape(resolvedEditorVersion)}[/] -> [white]{Markup.Escape(resolvedEditorPath)}[/]");
+
+        log("[grey]open[/]: step 4/5 route runtime by active Unity client lock");
         var daemonPort = DaemonControlService.ComputeProjectDaemonPort(projectPath);
         if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
         {
@@ -670,12 +780,18 @@ internal sealed class ProjectLifecycleService
             var started = await daemonControlService.EnsureProjectDaemonAsync(projectPath, daemonRuntime, session, log);
             if (!started)
             {
-                log("[red]daemon[/]: failed to start or attach headless daemon");
-                return false;
+                if (!HandleDaemonStartupFailure(projectPath, session, daemonControlService, log))
+                {
+                    return false;
+                }
             }
-
-            SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
-            log($"[grey]daemon[/]: started headless daemon on [white]127.0.0.1:{daemonPort}[/]");
+            else
+            {
+                SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
+                log($"[grey]daemon[/]: started headless daemon on [white]127.0.0.1:{daemonPort}[/]");
+                session.SafeModeEnabled = false;
+                session.LastCompileError = null;
+            }
         }
 
         session.CurrentProjectPath = projectPath;
@@ -692,9 +808,88 @@ internal sealed class ProjectLifecycleService
             log($"[yellow]recent[/]: unable to update history ({Markup.Escape(historyError ?? "unknown error")})");
         }
 
-        log("[grey]open[/]: step 4/4 load project context");
+        log("[grey]open[/]: step 5/5 load project context");
         _projectViewService.OpenInitialView(session);
         return true;
+    }
+
+    private static bool HandleDaemonStartupFailure(
+        string projectPath,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        Action<string> log)
+    {
+        if (!daemonControlService.TryGetLastStartupFailure(out var failure) || failure is null)
+        {
+            log("[red]daemon[/]: failed to start or attach headless daemon");
+            return false;
+        }
+
+        if (!failure.IsCompileError)
+        {
+            log($"[red]daemon[/]: startup failed ({Markup.Escape(failure.Summary)})");
+            return false;
+        }
+
+        session.LastCompileError = new CompileErrorState(
+            projectPath,
+            DateTimeOffset.UtcNow,
+            failure.Summary,
+            failure.Lines.ToList());
+        log("[yellow]daemon[/]: Unity script compilation errors detected during daemon startup");
+        if (!string.IsNullOrWhiteSpace(failure.Summary))
+        {
+            log($"[yellow]daemon[/]: {Markup.Escape(failure.Summary)}");
+        }
+
+        var canEnterSafeMode = CanEnterSafeMode(projectPath);
+        if (Console.IsInputRedirected)
+        {
+            log("[red]daemon[/]: redirected input cannot answer compile-error prompt; aborting open");
+            return false;
+        }
+
+        var options = new List<string>
+        {
+            "Ignore and continue",
+            "Quit open"
+        };
+        if (canEnterSafeMode)
+        {
+            options.Insert(0, "Enter Safe mode");
+        }
+
+        var selected = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Daemon startup failed due to compile errors. Choose action:")
+                .PageSize(options.Count)
+                .AddChoices(options));
+
+        if (selected.Equals("Quit open", StringComparison.Ordinal))
+        {
+            log("[yellow]open[/]: cancelled due to compile errors");
+            return false;
+        }
+
+        if (selected.Equals("Enter Safe mode", StringComparison.Ordinal))
+        {
+            session.SafeModeEnabled = true;
+            session.AttachedPort = null;
+            log("[yellow]open[/]: entered safe mode (daemon unavailable; Unity bridge commands are limited)");
+            return true;
+        }
+
+        session.SafeModeEnabled = false;
+        session.AttachedPort = null;
+        log("[yellow]open[/]: continuing without daemon attachment; Unity bridge commands may fail until compile errors are fixed");
+        return true;
+    }
+
+    private static bool CanEnterSafeMode(string projectPath)
+    {
+        return Directory.Exists(projectPath)
+               && Directory.Exists(Path.Combine(projectPath, "Assets"))
+               && Directory.Exists(Path.Combine(projectPath, "ProjectSettings"));
     }
 
     private static void SaveDaemonSession(string projectPath, DaemonSessionInfo session)
@@ -839,6 +1034,7 @@ internal sealed class ProjectLifecycleService
                         ["com.unity.ide.rider"] = "3.0.35",
                         ["com.unity.ide.visualstudio"] = "2.0.24",
                         ["com.unity.test-framework"] = "1.4.5",
+                        ["com.unity.textmeshpro"] = "3.0.6",
                         ["com.unity.timeline"] = "1.8.9",
                         ["com.unity.ugui"] = "1.0.0"
                     }
@@ -869,6 +1065,115 @@ internal sealed class ProjectLifecycleService
         {
             return OperationResult.Fail($"failed to write ProjectVersion.txt ({ex.Message})");
         }
+    }
+
+    private static OperationResult EnsureRequiredUnityPackageReferences(string projectPath)
+    {
+        try
+        {
+            var manifestPath = Path.Combine(projectPath, "Packages", "manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                return OperationResult.Fail("Packages/manifest.json is missing");
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return OperationResult.Fail("manifest.json has invalid format");
+            }
+
+            var root = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                root[property.Name] = JsonSerializer.Deserialize<object>(property.Value.GetRawText());
+            }
+
+            var dependencies = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (document.RootElement.TryGetProperty("dependencies", out var depsElement)
+                && depsElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var dep in depsElement.EnumerateObject())
+                {
+                    if (dep.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var version = dep.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(version))
+                        {
+                            dependencies[dep.Name] = version;
+                        }
+                    }
+                }
+            }
+
+            var requiredPackages = InferRequiredUnityPackages(projectPath);
+            var changed = false;
+            foreach (var required in requiredPackages)
+            {
+                if (dependencies.ContainsKey(required.Key))
+                {
+                    continue;
+                }
+
+                dependencies[required.Key] = required.Value;
+                changed = true;
+            }
+
+            if (!changed)
+            {
+                return OperationResult.Success();
+            }
+
+            root["dependencies"] = dependencies
+                .OrderBy(x => x.Key, StringComparer.Ordinal)
+                .ToDictionary(x => x.Key, x => (object?)x.Value, StringComparer.Ordinal);
+            var updated = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(manifestPath, updated + Environment.NewLine);
+            return OperationResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail($"failed to update required Unity package references ({ex.Message})");
+        }
+    }
+
+    private static Dictionary<string, string> InferRequiredUnityPackages(string projectPath)
+    {
+        var namespaceToPackage = new Dictionary<string, (string PackageId, string Version)>(StringComparer.Ordinal)
+        {
+            ["UnityEngine.UI"] = ("com.unity.ugui", "1.0.0"),
+            ["UnityEngine.EventSystems"] = ("com.unity.ugui", "1.0.0"),
+            ["TMPro"] = ("com.unity.textmeshpro", "3.0.6")
+        };
+        var required = new Dictionary<string, string>(StringComparer.Ordinal);
+        var usingPattern = new Regex(@"^\s*using\s+([A-Za-z0-9_.]+)\s*;", RegexOptions.Compiled);
+        var assetsPath = Path.Combine(projectPath, "Assets");
+        if (!Directory.Exists(assetsPath))
+        {
+            return required;
+        }
+
+        foreach (var scriptPath in Directory.EnumerateFiles(assetsPath, "*.cs", SearchOption.AllDirectories))
+        {
+            foreach (var line in File.ReadLines(scriptPath))
+            {
+                var match = usingPattern.Match(line);
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                var ns = match.Groups[1].Value;
+                if (!namespaceToPackage.TryGetValue(ns, out var package))
+                {
+                    continue;
+                }
+
+                required[package.PackageId] = package.Version;
+            }
+        }
+
+        return required;
     }
 
     private static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)

@@ -4,6 +4,8 @@ using System.Text.Json;
 
 internal sealed class InspectorModeService
 {
+    private const int DefaultInnerWidth = 78;
+    private const int MinInnerWidth = 40;
     private readonly InspectorTuiRenderer _renderer = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly HttpClient Http = new();
@@ -660,14 +662,15 @@ internal sealed class InspectorModeService
         var delta = direction == "up" ? -amount : amount;
         if (section == "stream")
         {
+            var wrappedStreamCount = BuildWrappedStreamRows(context).Count;
             if (context.FollowStreamScroll)
             {
-                context.StreamScrollOffset = Math.Max(0, context.CommandStream.Count - 1);
+                context.StreamScrollOffset = Math.Max(0, wrappedStreamCount - 1);
             }
 
             context.FollowStreamScroll = false;
             context.StreamScrollOffset += delta;
-            if (context.StreamScrollOffset >= context.CommandStream.Count)
+            if (context.StreamScrollOffset >= wrappedStreamCount)
             {
                 context.FollowStreamScroll = true;
                 context.StreamScrollOffset = int.MaxValue;
@@ -958,6 +961,26 @@ internal sealed class InspectorModeService
         {
             AddStream(context, $"[{i}] {buffered[i]}");
         }
+    }
+
+    private static List<string> BuildWrappedStreamRows(InspectorContext context)
+    {
+        var contentWidth = Math.Max(1, ResolveInnerWidth() - 1);
+        return context.CommandStream
+            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
+            .ToList();
+    }
+
+    private static int ResolveInnerWidth()
+    {
+        var windowWidth = Console.WindowWidth;
+        if (windowWidth <= 2)
+        {
+            return DefaultInnerWidth;
+        }
+
+        return Math.Max(MinInnerWidth, windowWidth - 2);
     }
 
     private sealed record InspectorBridgeRequest(

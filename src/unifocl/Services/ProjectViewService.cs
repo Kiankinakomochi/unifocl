@@ -64,9 +64,8 @@ internal sealed class ProjectViewService
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("load", StringComparison.OrdinalIgnoreCase))
         {
-            await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
             var selector = string.Join(' ', tokens.Skip(1));
-            handled = await HandleLoadViaBridgeAsync(selector, session, outputs);
+            handled = await HandleLoadViaBridgeAsync(selector, session, outputs, daemonControlService, daemonRuntime);
         }
         else if (tokens.Count >= 3 && tokens[0].Equals("rename", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
@@ -356,8 +355,7 @@ internal sealed class ProjectViewService
             return;
         }
 
-        await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
-        await HandleLoadViaBridgeAsync(entry.Index.ToString(), session, outputs);
+        await HandleLoadViaBridgeAsync(entry.Index.ToString(), session, outputs, daemonControlService, daemonRuntime);
     }
 
     private async Task<bool> HandleMakeScriptViaBridgeAsync(
@@ -463,7 +461,12 @@ internal sealed class ProjectViewService
         }
     }
 
-    private async Task<bool> HandleLoadViaBridgeAsync(string selector, CliSessionState session, List<string> outputs)
+    private async Task<bool> HandleLoadViaBridgeAsync(
+        string selector,
+        CliSessionState session,
+        List<string> outputs,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime)
     {
         var state = session.ProjectView;
         if (string.IsNullOrWhiteSpace(selector))
@@ -485,6 +488,18 @@ internal sealed class ProjectViewService
             return true;
         }
 
+        var isSceneLoad = Path.GetExtension(target.Name).Equals(".unity", StringComparison.OrdinalIgnoreCase);
+        var unityReady = await EnsureUnityContextAsync(
+            session,
+            daemonControlService,
+            daemonRuntime,
+            requireUnityBridge: isSceneLoad);
+        if (!unityReady && isSceneLoad)
+        {
+            outputs.Add("[x] scene load failed: Unity editor bridge is unavailable; set UNITY_PATH or start Unity editor for this project");
+            return true;
+        }
+
         var response = await ExecuteProjectCommandAsync(
             session,
             new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null));
@@ -502,6 +517,12 @@ internal sealed class ProjectViewService
 
         if (!response.Ok)
         {
+            if (Path.GetExtension(target.Name).Equals(".unity", StringComparison.OrdinalIgnoreCase))
+            {
+                outputs.Add($"[x] scene load failed: {response.Message ?? "unknown error"}");
+                return true;
+            }
+
             outputs.Add(FormatProjectCommandFailure("load", response.Message));
             return true;
         }
@@ -814,28 +835,38 @@ internal sealed class ProjectViewService
         state.CommandTranscript.RemoveRange(0, overflow);
     }
 
-    private static async Task EnsureUnityContextAsync(
+    private static async Task<bool> EnsureUnityContextAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
-        DaemonRuntime daemonRuntime)
+        DaemonRuntime daemonRuntime,
+        bool requireUnityBridge = false)
     {
         if (await daemonControlService.TouchAttachedDaemonAsync(session))
         {
-            return;
+            if (!requireUnityBridge)
+            {
+                return true;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
-            return;
+            return false;
         }
 
-        if (DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
+        if (!requireUnityBridge
+            && DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
         {
             await daemonControlService.TryAttachProjectDaemonAsync(session.CurrentProjectPath, session);
-            return;
+            return true;
         }
 
-        await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, _ => { });
+        return await daemonControlService.EnsureProjectDaemonAsync(
+            session.CurrentProjectPath,
+            daemonRuntime,
+            session,
+            _ => { },
+            requireUnityBridge);
     }
 
     private static (string TemplateName, string TemplateSource, string Content) ResolveTemplate(string projectPath)
