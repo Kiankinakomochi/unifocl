@@ -178,7 +178,8 @@ namespace UniFocl.EditorBridge
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
                 {
                     MarkActivity();
-                    await WriteJsonResponseAsync(context.Response, DaemonHierarchyService.BuildSnapshotPayload());
+                    var response = await ExecuteOnMainThreadAsync(DaemonHierarchyService.BuildSnapshotPayload);
+                    await WriteJsonResponseAsync(context.Response, response);
                     return;
                 }
 
@@ -186,7 +187,8 @@ namespace UniFocl.EditorBridge
                 {
                     var payload = await ReadRequestBodyAsync(request);
                     MarkActivity();
-                    await WriteJsonResponseAsync(context.Response, DaemonHierarchyService.ExecuteCommand(payload));
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonHierarchyService.ExecuteCommand(payload));
+                    await WriteJsonResponseAsync(context.Response, response);
                     return;
                 }
 
@@ -194,7 +196,8 @@ namespace UniFocl.EditorBridge
                 {
                     var payload = await ReadRequestBodyAsync(request);
                     MarkActivity();
-                    await WriteJsonResponseAsync(context.Response, DaemonHierarchyService.ExecuteSearch(payload));
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonHierarchyService.ExecuteSearch(payload));
+                    await WriteJsonResponseAsync(context.Response, response);
                     return;
                 }
 
@@ -202,7 +205,17 @@ namespace UniFocl.EditorBridge
                 {
                     var payload = await ReadRequestBodyAsync(request);
                     MarkActivity();
-                    await WriteJsonResponseAsync(context.Response, DaemonInspectorService.Execute(payload));
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonInspectorService.Execute(payload));
+                    await WriteJsonResponseAsync(context.Response, response);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request);
+                    MarkActivity();
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.Execute(payload));
+                    await WriteJsonResponseAsync(context.Response, response);
                     return;
                 }
 
@@ -301,6 +314,25 @@ namespace UniFocl.EditorBridge
             if (quitEditor)
             {
                 EditorApplication.Exit(0);
+            }
+        }
+
+        private static Task<string> ExecuteOnMainThreadAsync(Func<string> work)
+        {
+            var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EditorApplication.delayCall += Execute;
+            return completion.Task;
+
+            void Execute()
+            {
+                try
+                {
+                    completion.TrySetResult(work());
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
             }
         }
 

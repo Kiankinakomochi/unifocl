@@ -122,6 +122,7 @@ internal sealed class DaemonControlService
         var hierarchyBridge = new HierarchyDaemonBridge(options.ProjectPath);
         using var assetIndexBridge = new AssetIndexDaemonBridge(options.ProjectPath);
         var inspectorBridge = new InspectorDaemonBridge();
+        var projectBridge = new ProjectDaemonBridge();
 
         runtime.Upsert(state);
         using var cts = new CancellationTokenSource();
@@ -253,6 +254,17 @@ internal sealed class DaemonControlService
                             }
                         }
 
+                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var payload = await ReadRequestBodyAsync(request);
+                            if (projectBridge.TryHandle($"PROJECT_CMD {payload}", out var projectResponse))
+                            {
+                                lastActivityUtc = DateTime.UtcNow;
+                                await WriteJsonResponseAsync(context.Response, projectResponse);
+                                return;
+                            }
+                        }
+
                         lastActivityUtc = DateTime.UtcNow;
                         await WriteTextResponseAsync(context.Response, "ERR", statusCode: 404);
                     }
@@ -329,7 +341,8 @@ internal sealed class DaemonControlService
         var port = ComputeProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
 
-        if (existing is not null && await TrySendControlAsync(port, "PING", "PONG"))
+        // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
+        if (await TrySendControlAsync(port, "PING", "PONG"))
         {
             session.AttachedPort = port;
             await TrySendControlAsync(port, "TOUCH", "OK");

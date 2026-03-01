@@ -360,15 +360,17 @@ internal sealed class InspectorModeService
                     null,
                     null));
 
-            context.Components.Remove(entry);
-            context.Components.Add(entry with { Enabled = newEnabled });
-            context.Components.Sort((a, b) => a.Index.CompareTo(b.Index));
-
             AddStream(context, $"{context.PromptLabel} > {input}");
-            AddStream(context, $"[*] ok: {entry.Name} set to {(newEnabled ? "activated" : "deactivated")}");
-            if (!bridged)
+            if (bridged)
             {
-                AddStream(context, "[~] daemon bridge unavailable; applied to local inspector cache");
+                context.Components.Remove(entry);
+                context.Components.Add(entry with { Enabled = newEnabled });
+                context.Components.Sort((a, b) => a.Index.CompareTo(b.Index));
+                AddStream(context, $"[*] ok: {entry.Name} set to {(newEnabled ? "activated" : "deactivated")}");
+            }
+            else
+            {
+                AddStream(context, "[!] failed to toggle component in Unity bridge");
             }
 
             _renderer.Render(context);
@@ -404,12 +406,15 @@ internal sealed class InspectorModeService
                 field.Name,
                 null,
                 null));
-        ReplaceField(context, field with { Value = newValue });
         AddStream(context, $"{context.PromptLabel} > {input}");
-        AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
-        if (!mutationOk)
+        if (mutationOk)
         {
-            AddStream(context, "[~] daemon bridge unavailable; applied to local inspector cache");
+            ReplaceField(context, field with { Value = newValue });
+            AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
+        }
+        else
+        {
+            AddStream(context, "[!] failed to toggle field in Unity bridge");
         }
 
         _renderer.Render(context);
@@ -463,7 +468,15 @@ internal sealed class InspectorModeService
             }
 
             var fetchedFields = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, component.Index);
-            var fieldEntries = fetchedFields ?? GetMockFields(component.Name);
+            if (fetchedFields is null)
+            {
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, "[!] unable to fetch inspector fields from Unity bridge");
+                _renderer.Render(context);
+                return;
+            }
+
+            var fieldEntries = fetchedFields;
             var rootField = fieldEntries.FirstOrDefault(f => f.Name.Equals(nestedFieldName, StringComparison.OrdinalIgnoreCase));
             if (rootField is null)
             {
@@ -485,10 +498,13 @@ internal sealed class InspectorModeService
                     null));
 
             AddStream(context, $"{context.PromptLabel} > {input}");
-            AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {newValue}");
-            if (!rootMutationOk)
+            if (rootMutationOk)
             {
-                AddStream(context, "[~] daemon bridge unavailable; applied to local inspector cache");
+                AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {newValue}");
+            }
+            else
+            {
+                AddStream(context, "[!] failed to set field in Unity bridge");
             }
 
             _renderer.Render(context);
@@ -515,12 +531,15 @@ internal sealed class InspectorModeService
                 newValue,
                 null));
 
-        ReplaceField(context, field with { Value = newValue });
         AddStream(context, $"{context.PromptLabel} > {input}");
-        AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
-        if (!mutationOk)
+        if (mutationOk)
         {
-            AddStream(context, "[~] daemon bridge unavailable; applied to local inspector cache");
+            ReplaceField(context, field with { Value = newValue });
+            AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
+        }
+        else
+        {
+            AddStream(context, "[!] failed to set field in Unity bridge");
         }
 
         _renderer.Render(context);
@@ -577,20 +596,7 @@ internal sealed class InspectorModeService
             }
         }
 
-        var localPaths = context.Depth == InspectorDepth.ComponentList
-            ? context.Components
-                .Select(c => c.Name)
-                .Where(name => FuzzyMatcher.TryScore(query, name, out _))
-                .Take(20)
-                .ToList()
-            : context.Fields
-                .Select(f => $"{context.SelectedComponentName}.{f.Name}")
-                .Where(path => FuzzyMatcher.TryScore(query, path, out _))
-                .Take(20)
-                .ToList();
-
-        AppendInspectorFuzzyResults(context, query, localPaths);
-        AddStream(context, "[~] daemon bridge unavailable; used local inspector cache");
+        AddStream(context, "[!] failed to query fuzzy results from Unity bridge");
         _renderer.Render(context);
     }
 
@@ -724,6 +730,11 @@ internal sealed class InspectorModeService
         await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"{context.PromptLabel} > {rawCommand}");
         AddStream(context, $"[i] entering inspector for: {context.TargetPath.TrimStart('/')}");
+        if (context.Components.Count == 0)
+        {
+            AddStream(context, "[!] no inspector components returned (check Unity bridge attachment/target path)");
+        }
+
         _renderer.Render(context);
     }
 
@@ -751,6 +762,11 @@ internal sealed class InspectorModeService
         await PopulateFieldsAsync(context, session, componentIndex, forceRefresh: true);
         AddStream(context, $"UnityCLI:{context.TargetPath} [inspect] > {rawCommand}");
         AddStream(context, $"[i] inspecting component: {component.Name}");
+        if (context.Fields.Count == 0)
+        {
+            AddStream(context, "[!] no serializable fields returned for selected component");
+        }
+
         _renderer.Render(context);
     }
 
@@ -766,7 +782,10 @@ internal sealed class InspectorModeService
 
         var fromBridge = await TryFetchComponentsFromBridgeAsync(session, context.TargetPath);
         context.Components.Clear();
-        context.Components.AddRange(fromBridge ?? GetMockComponents());
+        if (fromBridge is not null)
+        {
+            context.Components.AddRange(fromBridge);
+        }
     }
 
     private async Task PopulateFieldsAsync(
@@ -782,7 +801,10 @@ internal sealed class InspectorModeService
 
         var fromBridge = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, componentIndex);
         context.Fields.Clear();
-        context.Fields.AddRange(fromBridge ?? GetMockFields(context.SelectedComponentName ?? "Component"));
+        if (fromBridge is not null)
+        {
+            context.Fields.AddRange(fromBridge);
+        }
     }
 
     private async Task<List<InspectorComponentEntry>?> TryFetchComponentsFromBridgeAsync(CliSessionState session, string targetPath)
@@ -883,37 +905,6 @@ internal sealed class InspectorModeService
         {
             return null;
         }
-    }
-
-    private static List<InspectorComponentEntry> GetMockComponents()
-    {
-        return
-        [
-            new InspectorComponentEntry(0, "Transform", true),
-            new InspectorComponentEntry(1, "Rigidbody", true),
-            new InspectorComponentEntry(2, "CapsuleCollider", true),
-            new InspectorComponentEntry(3, "PlayerController", true)
-        ];
-    }
-
-    private static List<InspectorFieldEntry> GetMockFields(string componentName)
-    {
-        if (!componentName.Equals("PlayerController", StringComparison.OrdinalIgnoreCase))
-        {
-            return
-            [
-                new InspectorFieldEntry("enabled", "true", "bool", true)
-            ];
-        }
-
-        return
-        [
-            new InspectorFieldEntry("speed", "6.5", "float", false),
-            new InspectorFieldEntry("jumpForce", "12", "int", false),
-            new InspectorFieldEntry("grounded", "false", "bool", true),
-            new InspectorFieldEntry("playerColor", "RGBA(1.0, 0.0, 0.0, 1.0)", "Color", false),
-            new InspectorFieldEntry("startPos", "(0.0, 1.0, 0.0)", "Vector3", false)
-        ];
     }
 
     private static void ReplaceField(InspectorContext context, InspectorFieldEntry field)
