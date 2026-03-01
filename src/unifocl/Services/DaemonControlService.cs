@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 
 internal sealed class DaemonControlService
 {
@@ -344,7 +345,7 @@ internal sealed class DaemonControlService
         bool preferHeadless = false,
         bool allowUnsafe = false)
     {
-        var port = ComputeProjectDaemonPort(projectPath);
+        var port = ResolveProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
 
         // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
@@ -417,7 +418,7 @@ internal sealed class DaemonControlService
         int attemptCount = 8,
         int attemptDelayMs = 250)
     {
-        var port = ComputeProjectDaemonPort(projectPath);
+        var port = ResolveProjectDaemonPort(projectPath);
         var normalizedAttemptCount = Math.Max(1, attemptCount);
         var normalizedDelayMs = Math.Max(50, attemptDelayMs);
 
@@ -527,6 +528,33 @@ internal sealed class DaemonControlService
         }
     }
 
+    public static int ResolveProjectDaemonPort(string projectPath)
+    {
+        var bridgePath = Path.Combine(projectPath, ".unifocl", "bridge.json");
+        try
+        {
+            if (File.Exists(bridgePath))
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(bridgePath));
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("daemon", out var daemonElement)
+                    && daemonElement.ValueKind == JsonValueKind.Object
+                    && daemonElement.TryGetProperty("port", out var portElement)
+                    && portElement.TryGetInt32(out var configuredPort)
+                    && configuredPort is > 0 and <= 65535)
+                {
+                    return configuredPort;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore malformed local bridge config and fall back to deterministic port.
+        }
+
+        return ComputeProjectDaemonPort(projectPath);
+    }
+
     private async Task HandleDaemonStartAsync(string input, DaemonRuntime runtime, CliSessionState session, Action<string> log)
     {
         if (!TryParseDaemonStartArgs(input, out var startOptions, out var parseError))
@@ -544,7 +572,7 @@ internal sealed class DaemonControlService
             {
                 if (await TryAttachProjectDaemonAsync(projectPath, session, log, attemptCount: 2, attemptDelayMs: 250))
                 {
-                    log($"[green]daemon[/]: Unity editor is already running for project; attached bridge on [white]127.0.0.1:{ComputeProjectDaemonPort(projectPath)}[/]");
+                    log($"[green]daemon[/]: Unity editor is already running for project; attached bridge on [white]127.0.0.1:{ResolveProjectDaemonPort(projectPath)}[/]");
                 }
                 else
                 {
@@ -734,7 +762,7 @@ internal sealed class DaemonControlService
             return options with { ProjectPath = projectPath };
         }
 
-        var promotedPort = options.Port == 8080 ? ComputeProjectDaemonPort(projectPath) : options.Port;
+        var promotedPort = options.Port == 8080 ? ResolveProjectDaemonPort(projectPath) : options.Port;
         log($"[grey]daemon[/]: defaulting to headless Unity bridge for project [white]{Markup.Escape(projectPath)}[/]");
         return options with
         {
@@ -767,7 +795,7 @@ internal sealed class DaemonControlService
         var projectBridgePort = 0;
         if (instances.Count == 0 && !hasLiveAttachedOnly && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
-            projectBridgePort = ComputeProjectDaemonPort(session.CurrentProjectPath);
+            projectBridgePort = ResolveProjectDaemonPort(session.CurrentProjectPath);
             hasLiveProjectBridgeOnly = await TrySendControlAsync(projectBridgePort, "PING", "PONG");
         }
 

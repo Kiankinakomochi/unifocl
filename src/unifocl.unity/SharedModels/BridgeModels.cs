@@ -7,7 +7,7 @@ namespace UniFocl.SharedModels
     {
         public string projectPath = string.Empty;
         public DaemonEndpoint daemon = new();
-        public string protocol = "v1";
+        public string protocol = "v2";
         public string updatedAtUtc = string.Empty;
     }
 

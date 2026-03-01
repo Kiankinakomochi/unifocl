@@ -501,7 +501,7 @@ internal sealed class HierarchyTui
             : $" | Focus Key: {FocusModeKey}";
 
         WriteFrameLine(borderTop);
-        WriteFrameLine(ToFrameLine($" UnityCLI v0.1 | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}", frameWidth));
+        WriteFrameLine(ToFrameLine($" UnityCLI v{CliVersion.SemVer} | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}", frameWidth));
         WriteFrameLine(borderMid);
 
         foreach (var line in visibleTree)
