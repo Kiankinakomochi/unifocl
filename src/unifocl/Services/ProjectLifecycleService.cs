@@ -323,6 +323,20 @@ internal sealed class ProjectLifecycleService
             return Task.FromResult(true);
         }
 
+        var configResult = EnsureProjectLocalConfig(targetPath);
+        if (!configResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(configResult.Error)}");
+            return Task.FromResult(true);
+        }
+
+        var packageFixResult = EnsureRequiredUnityPackageReferences(targetPath);
+        if (!packageFixResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(packageFixResult.Error)}");
+            return Task.FromResult(true);
+        }
+
         var initResult = _editorDependencyInitializerService.InitializeProject(targetPath, log);
         if (!initResult.Ok)
         {
@@ -1190,7 +1204,7 @@ internal sealed class ProjectLifecycleService
             {
                 projectPath,
                 daemon = new { host = "127.0.0.1", port = DaemonControlService.ComputeProjectDaemonPort(projectPath) },
-                protocol = "v1",
+                protocol = CliVersion.Protocol,
                 updatedAtUtc = DateTimeOffset.UtcNow
             }, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(bridgePath, bridge + Environment.NewLine);
