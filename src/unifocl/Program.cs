@@ -18,7 +18,7 @@ if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOp
 var commands = new List<CommandSpec>
 {
     // System & lifecycle
-    new("/open <path>", "Open project (starts/attaches daemon, loads project)", "/open"),
+    new("/open <path> [--allow-unsafe]", "Open project (starts/attaches daemon, loads project)", "/open"),
     new("/o <path>", "Alias for /open", "/o"),
     new("/close", "Detach from current project and stop attached daemon", "/close"),
     new("/c", "Alias for /close", "/c"),
@@ -42,10 +42,10 @@ var commands = new List<CommandSpec>
     new("/i <idx|path>", "Alias for /inspect", "/i"),
 
     // Extended lifecycle (kept for compatibility)
-    new("/new <project-name> [unity-version]", "Bootstrap a new Unity project", "/new"),
-    new("/clone <git-url>", "Clone repo and set local CLI bridge config", "/clone"),
-    new("/recent [idx]", "Open recent projects (interactive or by index)", "/recent"),
-    new("/daemon start [--port 8080] [--unity <path>] [--project <path>] [--headless]", "Start always-warm daemon", "/daemon start"),
+    new("/new <project-name> [unity-version] [--allow-unsafe]", "Bootstrap a new Unity project", "/new"),
+    new("/clone <git-url> [--allow-unsafe]", "Clone repo and set local CLI bridge config", "/clone"),
+    new("/recent [idx] [--allow-unsafe]", "Open recent projects (interactive or by index)", "/recent"),
+    new("/daemon start [--port 8080] [--unity <path>] [--project <path>] [--headless] [--allow-unsafe]", "Start always-warm daemon", "/daemon start"),
     new("/daemon stop", "Stop daemon", "/daemon stop"),
     new("/daemon restart", "Restart daemon", "/daemon restart"),
     new("/daemon ps", "Show instances, ports, uptime, project", "/daemon ps"),

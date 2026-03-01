@@ -1,4 +1,5 @@
 using Spectre.Console;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
@@ -23,7 +24,7 @@ internal sealed class DaemonControlService
         switch (trigger)
         {
             case "/daemon start":
-                await HandleDaemonStartAsync(input, runtime, log);
+                await HandleDaemonStartAsync(input, runtime, session, log);
                 break;
             case "/daemon stop":
                 await HandleDaemonStopAsync(runtime, session, log);
@@ -32,7 +33,7 @@ internal sealed class DaemonControlService
                 await HandleDaemonRestartAsync(runtime, session, log);
                 break;
             case "/daemon ps":
-                HandleDaemonPs(runtime, session, streamLog, log);
+                await HandleDaemonPsAsync(runtime, session, streamLog, log);
                 break;
             case "/daemon attach":
                 await HandleDaemonAttachAsync(input, runtime, session, log);
@@ -339,7 +340,9 @@ internal sealed class DaemonControlService
         DaemonRuntime runtime,
         CliSessionState session,
         Action<string> log,
-        bool requireUnityBridge = false)
+        bool requireUnityBridge = false,
+        bool preferHeadless = false,
+        bool allowUnsafe = false)
     {
         var port = ComputeProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
@@ -347,7 +350,10 @@ internal sealed class DaemonControlService
         // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
         if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
         {
-            if (!requireUnityBridge || IsUnityBridgeCapable(existing))
+            var headlessSatisfied = !preferHeadless
+                                    || (existing?.Headless ?? false)
+                                    || IsUnityClientActiveForProject(projectPath);
+            if ((!requireUnityBridge || IsUnityBridgeCapable(existing)) && headlessSatisfied)
             {
                 return true;
             }
@@ -379,7 +385,8 @@ internal sealed class DaemonControlService
             port,
             unityPath,
             projectPath,
-            Headless: true);
+            Headless: true,
+            AllowUnsafe: allowUnsafe);
 
         var started = await StartDaemonAsync(startOptions, runtime, log);
         if (!started)
@@ -504,15 +511,48 @@ internal sealed class DaemonControlService
 
     public static int ComputeProjectDaemonPort(string projectPath)
     {
-        return 18080 + Math.Abs(projectPath.GetHashCode()) % 2000;
+        var normalized = Path.GetFullPath(projectPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Replace('\\', '/');
+
+        unchecked
+        {
+            var hash = 17;
+            foreach (var ch in normalized)
+            {
+                hash = (hash * 31) + ch;
+            }
+
+            return 18080 + ((hash & 0x7fffffff) % 2000);
+        }
     }
 
-    private async Task HandleDaemonStartAsync(string input, DaemonRuntime runtime, Action<string> log)
+    private async Task HandleDaemonStartAsync(string input, DaemonRuntime runtime, CliSessionState session, Action<string> log)
     {
         if (!TryParseDaemonStartArgs(input, out var startOptions, out var parseError))
         {
             log($"[red]daemon[/]: {Markup.Escape(parseError)}");
             return;
+        }
+
+        startOptions = PromoteToHeadlessProjectStart(startOptions, session, log);
+
+        if (startOptions.Headless && !string.IsNullOrWhiteSpace(startOptions.ProjectPath))
+        {
+            var projectPath = startOptions.ProjectPath;
+            if (IsUnityClientActiveForProject(projectPath))
+            {
+                if (await TryAttachProjectDaemonAsync(projectPath, session, log, attemptCount: 2, attemptDelayMs: 250))
+                {
+                    log($"[green]daemon[/]: Unity editor is already running for project; attached bridge on [white]127.0.0.1:{ComputeProjectDaemonPort(projectPath)}[/]");
+                }
+                else
+                {
+                    log("[yellow]daemon[/]: Unity editor lock detected for project; skipped starting another headless Unity instance");
+                }
+
+                return;
+            }
         }
 
         await StartDaemonAsync(startOptions, runtime, log);
@@ -539,26 +579,40 @@ internal sealed class DaemonControlService
             log("[red]daemon[/]: failed to start daemon process");
             return false;
         }
+        var launchedAtUtc = DateTime.UtcNow;
 
         var outputTail = new Queue<string>();
+        var outputLines = new ConcurrentQueue<string>();
+        if (startOptions.Headless)
+        {
+            var mode = startOptions.AllowUnsafe ? "unsafe (UPM disabled, ignore compile errors)" : "safe (UPM enabled)";
+            log($"[grey]daemon[/]: starting Unity headless bridge on port {startOptions.Port} ({mode})");
+        }
         StartBackgroundOutputDrain(
             process,
             startOptions.Headless,
-            line => CaptureProcessOutputLine(outputTail, line));
+            line =>
+            {
+                CaptureProcessOutputLine(outputTail, line);
+                outputLines.Enqueue(line);
+            });
 
-        var startupTimeout = startOptions.Headless
-            ? TimeSpan.FromSeconds(120)
-            : TimeSpan.FromSeconds(25);
-        if (startOptions.Headless)
-        {
-            log($"[grey]daemon[/]: starting Unity headless bridge on port {startOptions.Port} (timeout {startupTimeout.TotalSeconds:0}s)");
-        }
-
-        var ready = await WaitForDaemonReadyAsync(startOptions.Port, startupTimeout, startOptions.Headless
-            ? elapsed => log($"[grey]daemon[/]: startup in progress... {elapsed.TotalSeconds:0}s elapsed")
-            : null);
+        var startupTimeout = TimeSpan.FromSeconds(25);
+        var ready = startOptions.Headless
+            ? await WaitForHeadlessDaemonReadyAsync(
+                startOptions.Port,
+                process,
+                outputLines,
+                elapsed => log($"[grey]daemon[/]: startup in progress... {elapsed.TotalSeconds:0}s elapsed"),
+                line => log($"[grey]unity[/]: {Markup.Escape(line)}"))
+            : await WaitForDaemonReadyAsync(startOptions.Port, startupTimeout);
         if (!ready)
         {
+            while (outputLines.TryDequeue(out var line))
+            {
+                log($"[grey]unity[/]: {Markup.Escape(line)}");
+            }
+
             if (process.HasExited)
             {
                 var details = BuildProcessFailureSummary(outputTail);
@@ -583,6 +637,19 @@ internal sealed class DaemonControlService
             }
 
             return false;
+        }
+
+        // Headless Unity bridge launch does not self-register in daemon runtime metadata.
+        if (startOptions.Headless)
+        {
+            runtime.Upsert(new DaemonInstance(
+                startOptions.Port,
+                process.Id,
+                launchedAtUtc,
+                startOptions.UnityPath,
+                startOptions.Headless,
+                startOptions.ProjectPath,
+                DateTime.UtcNow));
         }
 
         _lastStartupFailure = null;
@@ -634,10 +701,51 @@ internal sealed class DaemonControlService
                           (restartUnity is null ? string.Empty : $" --unity \"{restartUnity}\"") +
                           (restartProject is null ? string.Empty : $" --project \"{restartProject}\"") +
                           (restartHeadless ? " --headless" : string.Empty);
-        await HandleDaemonStartAsync(synthesized, runtime, log);
+        await HandleDaemonStartAsync(synthesized, runtime, session, log);
     }
 
-    private static void HandleDaemonPs(
+    private static DaemonStartOptions PromoteToHeadlessProjectStart(DaemonStartOptions options, CliSessionState session, Action<string> log)
+    {
+        if (options.Headless)
+        {
+            return options;
+        }
+
+        var projectPath = options.ProjectPath;
+        if (string.IsNullOrWhiteSpace(projectPath) && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            projectPath = session.CurrentProjectPath;
+        }
+
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return options;
+        }
+
+        var unityPath = options.UnityPath;
+        if (string.IsNullOrWhiteSpace(unityPath))
+        {
+            unityPath = ResolveDefaultUnityPath(projectPath);
+        }
+
+        if (string.IsNullOrWhiteSpace(unityPath))
+        {
+            log("[yellow]daemon[/]: project context found but Unity path is unresolved; starting non-headless daemon");
+            return options with { ProjectPath = projectPath };
+        }
+
+        var promotedPort = options.Port == 8080 ? ComputeProjectDaemonPort(projectPath) : options.Port;
+        log($"[grey]daemon[/]: defaulting to headless Unity bridge for project [white]{Markup.Escape(projectPath)}[/]");
+        return options with
+        {
+            Port = promotedPort,
+            ProjectPath = projectPath,
+            UnityPath = unityPath,
+            Headless = true
+        };
+    }
+
+    private async Task HandleDaemonPsAsync(
         DaemonRuntime runtime,
         CliSessionState session,
         List<string> streamLog,
@@ -645,9 +753,31 @@ internal sealed class DaemonControlService
     {
         runtime.CleanStaleEntries();
         var instances = runtime.GetAll().OrderBy(i => i.Port).ToList();
-        if (instances.Count == 0)
+        var hasLiveAttachedOnly = false;
+        if (instances.Count == 0 && session.AttachedPort is int attachedPortProbe)
+        {
+            hasLiveAttachedOnly = await TrySendControlAsync(attachedPortProbe, "PING", "PONG");
+            if (!hasLiveAttachedOnly)
+            {
+                session.AttachedPort = null;
+            }
+        }
+
+        var hasLiveProjectBridgeOnly = false;
+        var projectBridgePort = 0;
+        if (instances.Count == 0 && !hasLiveAttachedOnly && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            projectBridgePort = ComputeProjectDaemonPort(session.CurrentProjectPath);
+            hasLiveProjectBridgeOnly = await TrySendControlAsync(projectBridgePort, "PING", "PONG");
+        }
+
+        if (instances.Count == 0 && !hasLiveAttachedOnly && !hasLiveProjectBridgeOnly)
         {
             log("[grey]daemon[/]: no running daemon instances");
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath) && IsUnityClientActiveForProject(session.CurrentProjectPath))
+            {
+                log("[yellow]daemon[/]: Unity editor lock exists for current project, but bridge endpoint is not responding yet");
+            }
             return;
         }
 
@@ -671,6 +801,36 @@ internal sealed class DaemonControlService
                 session.AttachedPort == instance.Port ? "yes" : "no");
         }
 
+        if (session.AttachedPort is int attachedPort && instances.All(i => i.Port != attachedPort))
+        {
+            if (await TrySendControlAsync(attachedPort, "PING", "PONG"))
+            {
+                table.AddRow(
+                    attachedPort.ToString(),
+                    "-",
+                    "-",
+                    "-",
+                    "unknown",
+                    "yes");
+            }
+            else
+            {
+                session.AttachedPort = null;
+                log($"[yellow]daemon[/]: detached stale session from port {attachedPort} (endpoint not responding)");
+            }
+        }
+
+        if (hasLiveProjectBridgeOnly && instances.All(i => i.Port != projectBridgePort))
+        {
+            table.AddRow(
+                projectBridgePort.ToString(),
+                "-",
+                "-",
+                "-",
+                IsUnityClientActiveForProject(session.CurrentProjectPath!) ? "editor-bridge" : "unknown",
+                session.AttachedPort == projectBridgePort ? "yes" : "no");
+        }
+
         AnsiConsole.Write(table);
         streamLog.Add("[grey]daemon[/]: listed active instances");
     }
@@ -684,13 +844,6 @@ internal sealed class DaemonControlService
             return;
         }
 
-        var instance = runtime.GetByPort(port);
-        if (instance is null || !ProcessUtil.IsAlive(instance.Pid))
-        {
-            log($"[red]daemon[/]: no running daemon registered on port {port}");
-            return;
-        }
-
         if (!await TrySendControlAsync(port, "PING", "PONG"))
         {
             log($"[red]daemon[/]: daemon on port {port} is not responding");
@@ -698,6 +851,13 @@ internal sealed class DaemonControlService
         }
 
         session.AttachedPort = port;
+        var known = runtime.GetByPort(port);
+        if (known is null)
+        {
+            log($"[yellow]daemon[/]: attached to live port {port} (runtime metadata not found)");
+            return;
+        }
+
         log($"[green]daemon[/]: attached to port {port}");
     }
 
@@ -734,7 +894,7 @@ internal sealed class DaemonControlService
     private static bool TryParseDaemonStartArgs(string input, out DaemonStartOptions options, out string error)
     {
         var tokens = TokenizeArgs(input);
-        options = new DaemonStartOptions(8080, null, null, false);
+        options = new DaemonStartOptions(8080, null, null, false, false);
         error = string.Empty;
 
         for (var i = 2; i < tokens.Count; i++)
@@ -775,6 +935,9 @@ internal sealed class DaemonControlService
                 case "--headless":
                     options = options with { Headless = true };
                     break;
+                case "--allow-unsafe":
+                    options = options with { AllowUnsafe = true };
+                    break;
                 default:
                     error = $"unrecognized option {token}";
                     return false;
@@ -802,8 +965,13 @@ internal sealed class DaemonControlService
             unityPsi.ArgumentList.Add("-nographics");
             unityPsi.ArgumentList.Add("-vcsMode");
             unityPsi.ArgumentList.Add("None");
+            if (options.AllowUnsafe)
+            {
+                unityPsi.ArgumentList.Add("-noUpm");
+                unityPsi.ArgumentList.Add("-ignoreCompileErrors");
+            }
             unityPsi.ArgumentList.Add("-executeMethod");
-            unityPsi.ArgumentList.Add("CLIDaemon.StartServer");
+            unityPsi.ArgumentList.Add("UniFocl.EditorBridge.CLIDaemon.StartServer");
             unityPsi.ArgumentList.Add("--daemon-service");
             unityPsi.ArgumentList.Add("--port");
             unityPsi.ArgumentList.Add(options.Port.ToString());
@@ -843,6 +1011,11 @@ internal sealed class DaemonControlService
         if (options.Headless)
         {
             daemonArgs.Add("--headless");
+        }
+
+        if (options.AllowUnsafe)
+        {
+            daemonArgs.Add("--allow-unsafe");
         }
 
         if (Path.GetFileNameWithoutExtension(processPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
@@ -996,6 +1169,44 @@ internal sealed class DaemonControlService
         }
 
         return false;
+    }
+
+    private static async Task<bool> WaitForHeadlessDaemonReadyAsync(
+        int port,
+        Process process,
+        ConcurrentQueue<string> outputLines,
+        Action<TimeSpan>? onProgress = null,
+        Action<string>? onOutput = null)
+    {
+        var startedAt = DateTime.UtcNow;
+        var nextProgressAt = startedAt.AddSeconds(5);
+
+        while (true)
+        {
+            while (outputLines.TryDequeue(out var line))
+            {
+                onOutput?.Invoke(line);
+            }
+
+            if (await TrySendControlAsync(port, "PING", "PONG"))
+            {
+                return true;
+            }
+
+            if (process.HasExited)
+            {
+                return false;
+            }
+
+            var now = DateTime.UtcNow;
+            if (onProgress is not null && now >= nextProgressAt)
+            {
+                onProgress(now - startedAt);
+                nextProgressAt = now.AddSeconds(5);
+            }
+
+            await Task.Delay(180);
+        }
     }
 
     private static async Task<bool> TrySendControlAsync(int port, string request, string expectedResponse)
