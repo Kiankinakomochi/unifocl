@@ -33,6 +33,28 @@ internal sealed class ProjectLifecycleService
         };
     }
 
+    public async Task<bool> TryHandleRecentSelectionToggleAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        if (Console.IsInputRedirected)
+        {
+            log("[yellow]recent[/]: selection mode requires a TTY terminal");
+            return true;
+        }
+
+        if (session.RecentProjectEntries.Count == 0)
+        {
+            log("[yellow]recent[/]: no cached recent list; run /recent first");
+            return true;
+        }
+
+        await RunRecentSelectionModeAsync(session, daemonControlService, daemonRuntime, log);
+        return true;
+    }
+
     public async Task PerformSafeExitCleanupAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -371,11 +393,16 @@ internal sealed class ProjectLifecycleService
 
         if (entries.Count == 0)
         {
+            session.RecentProjectEntries.Clear();
+            session.RecentSelectionAllowUnsafe = false;
             log("[grey]recent[/]: no recent projects found");
             return Task.FromResult(true);
         }
 
         LogRecentEntries(entries, log);
+        session.RecentProjectEntries.Clear();
+        session.RecentProjectEntries.AddRange(entries);
+        session.RecentSelectionAllowUnsafe = allowUnsafe;
 
         if (!string.IsNullOrWhiteSpace(indexRaw))
         {
@@ -402,25 +429,8 @@ internal sealed class ProjectLifecycleService
             return OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, allowUnsafe, log);
         }
 
-        if (Console.IsInputRedirected)
-        {
-            log("[yellow]recent[/]: interactive selection requires a TTY; use /recent <idx> to open a project");
-            return Task.FromResult(true);
-        }
-
-        var selected = AnsiConsole.Prompt(
-            new SelectionPrompt<RecentProjectEntry>()
-                .Title("Select a recent project to open")
-                .PageSize(ResolvePromptPageSize(entries.Count, 10))
-                .UseConverter(entry =>
-                {
-                    var index = entries.IndexOf(entry) + 1;
-                    var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
-                    return $"{index}. {entry.ProjectPath} ({opened})";
-                })
-                .AddChoices(entries));
-
-        return OpenRecentSelectionAsync(selected, session, daemonControlService, daemonRuntime, allowUnsafe, log);
+        log("[grey]recent[/]: press [white]F7[/] to enter selection mode ([white]↑/↓[/] move, [white]Enter[/] open, [white]F7[/] exit)");
+        return Task.FromResult(true);
     }
 
     private static void LogRecentEntries(IReadOnlyList<RecentProjectEntry> entries, Action<string> log)
@@ -452,6 +462,99 @@ internal sealed class ProjectLifecycleService
             promptForInitialization: true,
             allowUnsafe: allowUnsafe,
             log: log);
+    }
+
+    private async Task RunRecentSelectionModeAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        var entries = session.RecentProjectEntries;
+        if (entries.Count == 0)
+        {
+            log("[yellow]recent[/]: no recent entries are available");
+            return;
+        }
+
+        var selectedIndex = 0;
+        var lastRenderedSelectedIndex = -1;
+        log("[i] recent selection mode enabled ([white]↑/↓[/] move, [white]Enter[/] open, [white]F7[/] exit)");
+        LogRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex, log);
+
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.UpArrow)
+            {
+                var nextSelectedIndex = selectedIndex <= 0 ? entries.Count - 1 : selectedIndex - 1;
+                LogRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex, log);
+                selectedIndex = nextSelectedIndex;
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.DownArrow)
+            {
+                var nextSelectedIndex = selectedIndex >= entries.Count - 1 ? 0 : selectedIndex + 1;
+                LogRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex, log);
+                selectedIndex = nextSelectedIndex;
+                continue;
+            }
+
+            if (key.Key is ConsoleKey.F7 or ConsoleKey.Escape)
+            {
+                log("[i] recent selection mode disabled");
+                return;
+            }
+
+            if (key.Key != ConsoleKey.Enter)
+            {
+                continue;
+            }
+
+            var selectedEntry = entries[selectedIndex];
+            await OpenRecentSelectionAsync(
+                selectedEntry,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                session.RecentSelectionAllowUnsafe,
+                log);
+            return;
+        }
+    }
+
+    private static void LogRecentSelectionIfChanged(
+        IReadOnlyList<RecentProjectEntry> entries,
+        int selectedIndex,
+        ref int lastRenderedSelectedIndex,
+        Action<string> log)
+    {
+        if (selectedIndex == lastRenderedSelectedIndex)
+        {
+            return;
+        }
+
+        lastRenderedSelectedIndex = selectedIndex;
+        LogRecentSelectionList(entries, selectedIndex, log);
+    }
+
+    private static void LogRecentSelectionList(IReadOnlyList<RecentProjectEntry> entries, int selectedIndex, Action<string> log)
+    {
+        log("[grey]recent[/]: selection");
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
+            var plain = $"recent: {i + 1}. {entry.ProjectPath} ({opened})";
+            if (i == selectedIndex)
+            {
+                log(CliTheme.CursorWrapEscaped(Markup.Escape($"> {plain}")));
+                continue;
+            }
+
+            log($"[grey]{Markup.Escape(plain)}[/]");
+        }
     }
 
     private Task<bool> HandleUnityDetectAsync(Action<string> log)
