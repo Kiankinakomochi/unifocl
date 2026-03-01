@@ -51,7 +51,7 @@ var commands = new List<CommandSpec>
     new("/daemon ps", "Show instances, ports, uptime, project", "/daemon ps"),
     new("/daemon attach <port>", "Attach CLI to existing daemon", "/daemon attach"),
     new("/daemon detach", "Detach CLI and keep daemon alive", "/daemon detach"),
-    new("/init [path-to-project]", "Install editor-side CLI bridge dependencies", "/init"),
+    new("/init [path-to-project]", "Generate local bridge config and install editor-side CLI bridge dependencies", "/init"),
     new("/clear", "Clear and redraw boot screen", "/clear"),
 
     // Legacy compatibility commands (not all implemented yet)
@@ -266,6 +266,20 @@ while (true)
         if (matched.Trigger is "/keybinds" or "/shortcuts")
         {
             WriteKeybindsHelp(streamLog, session);
+            continue;
+        }
+
+        if (matched.Trigger == "/version")
+        {
+            var processPath = Environment.ProcessPath ?? AppContext.BaseDirectory;
+            AppendLog(streamLog, $"[grey]version[/]: cli [white]{Markup.Escape(CliVersion.SemVer)}[/], protocol [white]{Markup.Escape(CliVersion.Protocol)}[/]");
+            AppendLog(streamLog, $"[grey]binary[/]: [white]{Markup.Escape(processPath)}[/]");
+            continue;
+        }
+
+        if (matched.Trigger == "/protocol")
+        {
+            AppendLog(streamLog, $"[grey]protocol[/]: [white]{Markup.Escape(CliVersion.Protocol)}[/]");
             continue;
         }
 
@@ -623,6 +637,7 @@ static void SeedBootLog(List<string> streamLog)
 
     streamLog.Add("[bold deepskyblue1]unifocl[/]");
     streamLog.Add("[bold green]Welcome to unifocl[/]");
+    streamLog.Add($"[grey]cli[/]: [white]{Markup.Escape(CliVersion.SemVer)}[/] ([white]{Markup.Escape(CliVersion.Protocol)}[/])");
     streamLog.Add(string.Empty);
 
     var logo = """
