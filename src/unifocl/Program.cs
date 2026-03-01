@@ -311,6 +311,7 @@ static string? ReadInteractiveInput(
     var input = new StringBuilder();
     var selectedIntellisenseCandidateIndex = 0;
     var intellisenseDismissed = false;
+    var intellisenseSelectionArmed = false;
     var renderedLines = RenderComposerFrame(
         input.ToString(),
         commands,
@@ -338,7 +339,8 @@ static string? ReadInteractiveInput(
         {
             case ConsoleKey.Enter:
                 Console.WriteLine();
-                if (candidates.Count > 0
+                if (intellisenseSelectionArmed
+                    && candidates.Count > 0
                     && selectedIntellisenseCandidateIndex >= 0
                     && selectedIntellisenseCandidateIndex < candidates.Count
                     && !string.IsNullOrWhiteSpace(candidates[selectedIntellisenseCandidateIndex].CommitCommand))
@@ -354,6 +356,7 @@ static string? ReadInteractiveInput(
                 }
 
                 intellisenseDismissed = false;
+                intellisenseSelectionArmed = false;
                 break;
             case ConsoleKey.Escape:
                 if (!intellisenseDismissed && allCandidates.Count > 0)
@@ -367,6 +370,7 @@ static string? ReadInteractiveInput(
                 }
 
                 selectedIntellisenseCandidateIndex = 0;
+                intellisenseSelectionArmed = false;
                 break;
             case ConsoleKey.UpArrow:
                 if (intellisenseDismissed && allCandidates.Count > 0)
@@ -380,6 +384,7 @@ static string? ReadInteractiveInput(
                     selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex <= 0
                         ? candidates.Count - 1
                         : selectedIntellisenseCandidateIndex - 1;
+                    intellisenseSelectionArmed = true;
                 }
                 break;
             case ConsoleKey.DownArrow:
@@ -394,6 +399,7 @@ static string? ReadInteractiveInput(
                     selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex >= candidates.Count - 1
                         ? 0
                         : selectedIntellisenseCandidateIndex + 1;
+                    intellisenseSelectionArmed = true;
                 }
                 break;
             case ConsoleKey.F7:
@@ -419,6 +425,7 @@ static string? ReadInteractiveInput(
                 {
                     input.Append(key.KeyChar);
                     intellisenseDismissed = false;
+                    intellisenseSelectionArmed = false;
                 }
                 break;
         }
