@@ -108,40 +108,105 @@ RenderInitialLog(streamLog);
 
 while (true)
 {
-    var rawInput = ReadInput(commands, projectCommands, streamLog, session);
+    string? rawInput;
+    try
+    {
+        rawInput = ReadInput(commands, projectCommands, streamLog, session);
+    }
+    catch (Exception ex)
+    {
+        LogUnhandledException(streamLog, ex, "input");
+        continue;
+    }
+
     if (rawInput is null)
     {
-        await projectLifecycleService.PerformSafeExitCleanupAsync(
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line));
+        try
+        {
+            await projectLifecycleService.PerformSafeExitCleanupAsync(
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+        }
+        catch (Exception ex)
+        {
+            LogUnhandledException(streamLog, ex, "shutdown");
+        }
+
         CliTheme.MarkupLine("[grey]Input stream closed. Session ended.[/]");
         return;
     }
 
-    var input = rawInput.Trim();
-    if (string.IsNullOrWhiteSpace(input))
+    try
     {
-        continue;
-    }
-
-    if (!input.StartsWith('/'))
-    {
-        var handledProjectCommand = await projectCommandRouterService.TryHandleProjectCommandAsync(
-            input,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line));
-        if (!handledProjectCommand)
+        var input = rawInput.Trim();
+        if (string.IsNullOrWhiteSpace(input))
         {
-            AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
+            continue;
         }
 
-        if (handledProjectCommand && session.AutoEnterHierarchyRequested)
+        if (!input.StartsWith('/'))
         {
-            session.AutoEnterHierarchyRequested = false;
+            var handledProjectCommand = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                input,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+            if (!handledProjectCommand)
+            {
+                AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
+            }
+
+            if (handledProjectCommand && session.AutoEnterHierarchyRequested)
+            {
+                session.AutoEnterHierarchyRequested = false;
+                session.ContextMode = CliContextMode.Hierarchy;
+                await hierarchyTui.RunAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => AppendLog(streamLog, line));
+                if (session.Mode == CliMode.Project)
+                {
+                    session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
+                }
+            }
+
+            continue;
+        }
+
+        if (input == "/")
+        {
+            continue;
+        }
+
+        input = NormalizeSlashCommand(input);
+        var matched = MatchCommand(input, commands);
+        if (matched is null)
+        {
+            AppendLog(streamLog, $"[grey]system[/]: unknown command [white]{Markup.Escape(input)}[/]");
+            continue;
+        }
+
+        if (matched.Trigger == "/quit")
+        {
+            CliTheme.MarkupLine("[grey]Session closed.[/]");
+            return;
+        }
+
+        if (matched.Trigger == "/clear")
+        {
+            streamLog.Clear();
+            SeedBootLog(streamLog);
+            AnsiConsole.Clear();
+            RenderInitialLog(streamLog);
+            continue;
+        }
+
+        if (matched.Trigger == "/hierarchy")
+        {
             session.ContextMode = CliContextMode.Hierarchy;
             await hierarchyTui.RunAsync(
                 session,
@@ -152,139 +217,100 @@ while (true)
             {
                 session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
             }
-        }
-        continue;
-    }
-
-    if (input == "/")
-    {
-        continue;
-    }
-
-    input = NormalizeSlashCommand(input);
-    var matched = MatchCommand(input, commands);
-    if (matched is null)
-    {
-        AppendLog(streamLog, $"[grey]system[/]: unknown command [white]{Markup.Escape(input)}[/]");
-        continue;
-    }
-
-    if (matched.Trigger == "/quit")
-    {
-        CliTheme.MarkupLine("[grey]Session closed.[/]");
-        return;
-    }
-
-    if (matched.Trigger == "/clear")
-    {
-        streamLog.Clear();
-        SeedBootLog(streamLog);
-        AnsiConsole.Clear();
-        RenderInitialLog(streamLog);
-        continue;
-    }
-
-    if (matched.Trigger == "/hierarchy")
-    {
-        session.ContextMode = CliContextMode.Hierarchy;
-        await hierarchyTui.RunAsync(
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line));
-        if (session.Mode == CliMode.Project)
-        {
-            session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
-        }
-        continue;
-    }
-
-    if (matched.Trigger == "/project")
-    {
-        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
-        {
-            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
             continue;
         }
 
-        session.ContextMode = CliContextMode.Project;
-        session.Inspector = null;
-        await projectCommandRouterService.TryHandleProjectCommandAsync(
-            string.Empty,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line));
-        continue;
-    }
-
-    if (matched.Trigger == "/inspect")
-    {
-        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        if (matched.Trigger == "/project")
         {
-            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
-            continue;
-        }
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                continue;
+            }
 
-        var inspectInput = input.Length > "/inspect".Length
-            ? $"inspect {input["/inspect".Length..].Trim()}"
-            : "inspect";
-        await projectCommandRouterService.TryHandleProjectCommandAsync(
-            inspectInput,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line));
-        if (session.Inspector is not null)
-        {
-            session.ContextMode = CliContextMode.Inspector;
-        }
-        continue;
-    }
-
-    if (matched.Trigger is "/keybinds" or "/shortcuts")
-    {
-        WriteKeybindsHelp(streamLog, session);
-        continue;
-    }
-
-    AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
-    if (matched.Trigger.StartsWith("/daemon", StringComparison.Ordinal))
-    {
-        await daemonControlService.HandleDaemonCommandAsync(
-            input,
-            matched.Trigger,
-            daemonRuntime,
-            session,
-            line => AppendLog(streamLog, line),
-            streamLog);
-        continue;
-    }
-    if (await projectLifecycleService.TryHandleLifecycleCommandAsync(
-            input,
-            matched,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => AppendLog(streamLog, line)))
-    {
-        if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone")
-            && session.Mode == CliMode.Project
-            && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
-        {
+            session.ContextMode = CliContextMode.Project;
+            session.Inspector = null;
             await projectCommandRouterService.TryHandleProjectCommandAsync(
                 string.Empty,
                 session,
                 daemonControlService,
                 daemonRuntime,
                 line => AppendLog(streamLog, line));
+            continue;
         }
 
-        continue;
-    }
+        if (matched.Trigger == "/inspect")
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                continue;
+            }
 
-    AppendLog(streamLog, $"[yellow]command[/]: not implemented yet -> {Markup.Escape(matched.Signature)}");
-    AppendLog(streamLog, "[grey]hint[/]: run /help for implemented commands and mode-specific workflows");
+            var inspectInput = input.Length > "/inspect".Length
+                ? $"inspect {input["/inspect".Length..].Trim()}"
+                : "inspect";
+            await projectCommandRouterService.TryHandleProjectCommandAsync(
+                inspectInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+            if (session.Inspector is not null)
+            {
+                session.ContextMode = CliContextMode.Inspector;
+            }
+            continue;
+        }
+
+        if (matched.Trigger is "/keybinds" or "/shortcuts")
+        {
+            WriteKeybindsHelp(streamLog, session);
+            continue;
+        }
+
+        AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
+        if (matched.Trigger.StartsWith("/daemon", StringComparison.Ordinal))
+        {
+            await daemonControlService.HandleDaemonCommandAsync(
+                input,
+                matched.Trigger,
+                daemonRuntime,
+                session,
+                line => AppendLog(streamLog, line),
+                streamLog);
+            continue;
+        }
+        if (await projectLifecycleService.TryHandleLifecycleCommandAsync(
+                input,
+                matched,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line)))
+        {
+            if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone")
+                && session.Mode == CliMode.Project
+                && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                await projectCommandRouterService.TryHandleProjectCommandAsync(
+                    string.Empty,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => AppendLog(streamLog, line));
+            }
+
+            continue;
+        }
+
+        AppendLog(streamLog, $"[yellow]command[/]: not implemented yet -> {Markup.Escape(matched.Signature)}");
+        AppendLog(streamLog, "[grey]hint[/]: run /help for implemented commands and mode-specific workflows");
+    }
+    catch (Exception ex)
+    {
+        LogUnhandledException(streamLog, ex, "command");
+    }
 }
 
 static string? ReadInput(
@@ -295,7 +321,7 @@ static string? ReadInput(
 {
     if (Console.IsInputRedirected)
     {
-        CliTheme.Markup($"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] ");
+        CliTheme.Markup($"{BuildPromptLabelMarkup(session)} [grey]>[/] ");
         return Console.ReadLine();
     }
 
@@ -454,7 +480,7 @@ static int RenderComposerFrame(
     lines.AddRange(new[]
     {
         "[grey]Input[/]",
-        $"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
+        $"{BuildPromptLabelMarkup(session)} [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
     });
 
     if (suppressIntellisense)
@@ -499,6 +525,11 @@ static int RenderComposerFrame(
 
 static IEnumerable<string> BuildComposerUnityLogPane(CliSessionState session)
 {
+    if (session.UnityLogPane.Count == 0)
+    {
+        return [];
+    }
+
     const int maxLogRows = 6;
     const int fallbackPaneWidth = 78;
     var paneWidth = Math.Max(30, (Console.IsOutputRedirected ? fallbackPaneWidth : Console.WindowWidth) - 2);
@@ -510,10 +541,6 @@ static IEnumerable<string> BuildComposerUnityLogPane(CliSessionState session)
     };
 
     var visible = session.UnityLogPane.Skip(Math.Max(0, session.UnityLogPane.Count - maxLogRows)).ToList();
-    if (visible.Count == 0)
-    {
-        visible.Add("[no Unity logs]");
-    }
 
     for (var i = 0; i < maxLogRows; i++)
     {
@@ -546,20 +573,23 @@ static string FitForPane(string text, int width)
     return Markup.Escape(normalized);
 }
 
-static string BuildPromptLabel(CliSessionState session)
+static string BuildPromptLabelMarkup(CliSessionState session)
 {
     var context = session.Inspector;
     if (context is not null)
     {
-        return context.PromptLabel;
+        var escapedPromptPath = Markup.Escape(context.PromptPath);
+        return context.Depth == InspectorDepth.ComponentList
+            ? $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/] [grey][inspect][/]"
+            : $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/]";
     }
 
     if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        return "unifocl:project";
+        return $"[bold deepskyblue1]unifocl[/][grey]:[/][{CliTheme.Info}]{Markup.Escape(session.CurrentProjectPath)}[/]";
     }
 
-    return "unifocl";
+    return "[bold deepskyblue1]unifocl[/]";
 }
 
 static void ClearComposerFrame(int renderedLines)
@@ -1060,4 +1090,12 @@ static void AppendLog(List<string> streamLog, string line)
 {
     streamLog.Add(line);
     CliTheme.MarkupLine(line);
+}
+
+static void LogUnhandledException(List<string> streamLog, Exception ex, string phase)
+{
+    var typeName = ex.GetType().Name;
+    AppendLog(streamLog, $"[red]error[/]: unhandled {Markup.Escape(phase)} exception <{Markup.Escape(typeName)}>");
+    AppendLog(streamLog, $"[red]error[/]: {Markup.Escape(ex.Message)}");
+    AppendLog(streamLog, "[yellow]system[/]: recovered and continuing session");
 }
