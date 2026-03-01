@@ -122,7 +122,7 @@ internal sealed class DaemonControlService
         var hierarchyBridge = new HierarchyDaemonBridge(options.ProjectPath);
         using var assetIndexBridge = new AssetIndexDaemonBridge(options.ProjectPath);
         var inspectorBridge = new InspectorDaemonBridge();
-        var projectBridge = new ProjectDaemonBridge();
+        var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
 
         runtime.Upsert(state);
         using var cts = new CancellationTokenSource();
