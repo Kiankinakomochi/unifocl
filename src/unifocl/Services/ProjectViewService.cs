@@ -397,7 +397,7 @@ internal sealed class ProjectViewService
 
             if (!response.Ok)
             {
-                outputs.Add($"[x] create failed: {response.Message}");
+                outputs.Add(FormatProjectCommandFailure("create", response.Message));
                 return true;
             }
 
@@ -430,7 +430,7 @@ internal sealed class ProjectViewService
                 new ProjectCommandRequestDto("remove-asset", target.RelativePath, null, null));
             if (!response.Ok)
             {
-                outputs.Add($"[x] remove failed: {response.Message}");
+                outputs.Add(FormatProjectCommandFailure("remove", response.Message));
                 return true;
             }
 
@@ -476,7 +476,7 @@ internal sealed class ProjectViewService
             new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null));
         if (!response.Ok)
         {
-            outputs.Add($"[x] load failed: {response.Message}");
+            outputs.Add(FormatProjectCommandFailure("load", response.Message));
             return true;
         }
 
@@ -524,7 +524,7 @@ internal sealed class ProjectViewService
                 new ProjectCommandRequestDto("rename-asset", target.RelativePath, destinationRelative, null));
             if (!response.Ok)
             {
-                outputs.Add($"[x] rename failed: {response.Message}");
+                outputs.Add(FormatProjectCommandFailure("rename", response.Message));
                 return true;
             }
 
@@ -833,6 +833,37 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
             "animation" => ext is ".anim" or ".controller",
             _ => path.Contains(typeFilter, StringComparison.OrdinalIgnoreCase)
         };
+    }
+
+    private static string FormatProjectCommandFailure(string action, string? message)
+    {
+        var (category, hint) = ClassifyProjectBridgeFailure(message);
+        var details = string.IsNullOrWhiteSpace(message) ? "unknown error" : message;
+        return string.IsNullOrWhiteSpace(hint)
+            ? $"[x] {action} failed ({category}): {details}"
+            : $"[x] {action} failed ({category}): {details} [grey]{hint}[/]";
+    }
+
+    private static (string Category, string Hint) ClassifyProjectBridgeFailure(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return ("bridge runtime error", "Command is implemented; inspect bridge logs for details.");
+        }
+
+        if (message.StartsWith(ProjectDaemonBridge.StubbedBridgePrefix, StringComparison.Ordinal))
+        {
+            return ("stubbed bridge", "This daemon path is not implemented; run with Unity editor bridge attached.");
+        }
+
+        if (message.Contains("daemon did not return", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("daemon returned", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("daemon is not attached", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("bridge transport error", "Bridge connection failed; ensure daemon/editor bridge is running and attached.");
+        }
+
+        return ("bridge runtime error", "Command is implemented; bridge returned an operational error.");
     }
 
     private static List<string> Tokenize(string input)
