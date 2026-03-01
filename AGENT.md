@@ -15,6 +15,7 @@ The agent must treat the following as **non-negotiable principles**:
 - **Security:** Never commit secrets or machine-local credentials/tokens
 - **Build Command:** Run builds or tests on `src/unifocl/unifocl.csproj` with `--disable-build-servers -v minimal`
 - **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in English
+- **Mainline Sync Rule:** Before finalizing work (push/PR), merge latest `main` (or `origin/main`) to detect upstream leading changes early and resolve any conflicts before continuing
 - **Deployment:** NEVER deploy or publish artifacts without permission
 
 ---
