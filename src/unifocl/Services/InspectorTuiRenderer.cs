@@ -132,7 +132,7 @@ internal sealed class InspectorTuiRenderer
         var focusLabel = focusModeEnabled
             ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
             : " | Focus Key: F8";
-        return $"UnityCLI v0.1 | MODE: INSPECTOR | Target: {target}{focusLabel}";
+        return $"UnityCLI v{CliVersion.SemVer} | MODE: INSPECTOR | Target: {target}{focusLabel}";
     }
 
     private static string Border(char left, char right, int innerWidth)

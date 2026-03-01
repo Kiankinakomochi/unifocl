@@ -146,7 +146,7 @@ internal sealed class ProjectLifecycleService
             selectedEditor = AnsiConsole.Prompt(
                 new SelectionPrompt<UnityEditorPathService.UnityEditorInstallation>()
                     .Title("Choose Unity editor version")
-                    .PageSize(Math.Min(availableEditors.Count, 12))
+                    .PageSize(ResolvePromptPageSize(availableEditors.Count, 12))
                     .UseConverter(editor => $"{editor.Version} ({editor.EditorPath})")
                     .AddChoices(availableEditors));
         }
@@ -411,7 +411,7 @@ internal sealed class ProjectLifecycleService
         var selected = AnsiConsole.Prompt(
             new SelectionPrompt<RecentProjectEntry>()
                 .Title("Select a recent project to open")
-                .PageSize(Math.Min(entries.Count, 10))
+                .PageSize(ResolvePromptPageSize(entries.Count, 10))
                 .UseConverter(entry =>
                 {
                     var index = entries.IndexOf(entry) + 1;
@@ -657,7 +657,7 @@ internal sealed class ProjectLifecycleService
 
         if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
-            candidatePorts.Add(DaemonControlService.ComputeProjectDaemonPort(session.CurrentProjectPath));
+            candidatePorts.Add(DaemonControlService.ResolveProjectDaemonPort(session.CurrentProjectPath));
         }
 
         var hadDaemonTarget = candidatePorts.Count > 0;
@@ -711,6 +711,9 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
+        var hasProtocolMismatch = TryGetProjectBridgeProtocol(projectPath, out var configuredProtocol)
+                                  && !string.Equals(configuredProtocol, CliVersion.Protocol, StringComparison.Ordinal);
+
         log("[grey]open[/]: step 2/5 validate Unity project layout");
         var bridgeResult = EnsureProjectLocalConfig(projectPath);
         if (!bridgeResult.Ok)
@@ -728,6 +731,17 @@ internal sealed class ProjectLifecycleService
 
         if (promptForInitialization)
         {
+            if (hasProtocolMismatch)
+            {
+                log($"[yellow]init[/]: bridge protocol mismatch detected (project: [white]{Markup.Escape(configuredProtocol!)}[/], cli: [white]{Markup.Escape(CliVersion.Protocol)}[/]); reinitializing editor dependencies");
+                var initResult = editorDependencyInitializerService.InitializeProject(projectPath, log);
+                if (!initResult.Ok)
+                {
+                    log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
+                    return false;
+                }
+            }
+
             if (editorDependencyInitializerService.NeedsInitialization(projectPath, out var initReason))
             {
                 log($"[yellow]init[/]: editor bridge dependency is missing or invalid ({Markup.Escape(initReason)}).");
@@ -766,15 +780,16 @@ internal sealed class ProjectLifecycleService
         log($"[grey]open[/]: step 3/5 resolved Unity editor [white]{Markup.Escape(resolvedEditorVersion)}[/] -> [white]{Markup.Escape(resolvedEditorPath)}[/]");
 
         log("[grey]open[/]: step 4/5 route runtime by active Unity client lock");
-        var daemonPort = DaemonControlService.ComputeProjectDaemonPort(projectPath);
+        var daemonPort = DaemonControlService.ResolveProjectDaemonPort(projectPath);
         if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
         {
+            log($"[grey]daemon[/]: Unity editor lock detected; waiting for bridge endpoint [white]127.0.0.1:{daemonPort}[/]");
             var attached = await daemonControlService.TryAttachProjectDaemonAsync(
                 projectPath,
                 session,
                 log: null,
-                attemptCount: 32,
-                attemptDelayMs: 250);
+                attemptCount: 120,
+                attemptDelayMs: 500);
             if (attached && session.AttachedPort == daemonPort)
             {
                 SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, false));
@@ -886,7 +901,7 @@ internal sealed class ProjectLifecycleService
         var selected = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("Daemon startup failed due to compile errors. Choose action:")
-                .PageSize(options.Count)
+                .PageSize(ResolvePromptPageSize(options.Count, 10))
                 .AddChoices(options));
 
         if (selected.Equals("Quit open", StringComparison.Ordinal))
@@ -1154,6 +1169,16 @@ internal sealed class ProjectLifecycleService
                || arg.Equals("--alow-unsafe", StringComparison.Ordinal);
     }
 
+    private static int ResolvePromptPageSize(int itemCount, int maxPageSize)
+    {
+        if (itemCount <= 0)
+        {
+            return 3;
+        }
+
+        return Math.Max(3, Math.Min(itemCount, maxPageSize));
+    }
+
     private static string ResolveAbsolutePath(string path, string baseDirectory)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -1175,6 +1200,42 @@ internal sealed class ProjectLifecycleService
     {
         return Directory.Exists(Path.Combine(projectPath, "Assets"))
                && Directory.Exists(Path.Combine(projectPath, "ProjectSettings"));
+    }
+
+    private static bool TryGetProjectBridgeProtocol(string projectPath, out string? protocol)
+    {
+        protocol = null;
+        var bridgePath = Path.Combine(projectPath, ".unifocl", "bridge.json");
+        if (!File.Exists(bridgePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(bridgePath));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!document.RootElement.TryGetProperty("protocol", out var protocolElement))
+            {
+                return false;
+            }
+
+            if (protocolElement.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            protocol = protocolElement.GetString();
+            return !string.IsNullOrWhiteSpace(protocol);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static OperationResult EnsureProjectLocalConfig(string projectPath)
@@ -1203,7 +1264,7 @@ internal sealed class ProjectLifecycleService
             var bridge = JsonSerializer.Serialize(new
             {
                 projectPath,
-                daemon = new { host = "127.0.0.1", port = DaemonControlService.ComputeProjectDaemonPort(projectPath) },
+                daemon = new { host = "127.0.0.1", port = DaemonControlService.ResolveProjectDaemonPort(projectPath) },
                 protocol = CliVersion.Protocol,
                 updatedAtUtc = DateTimeOffset.UtcNow
             }, new JsonSerializerOptions { WriteIndented = true });
