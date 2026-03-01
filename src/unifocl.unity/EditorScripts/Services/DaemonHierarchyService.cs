@@ -2,27 +2,27 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace UniFocl.EditorBridge
 {
     internal static class DaemonHierarchyService
     {
         private static readonly object Sync = new();
-        private static HierarchyNodeState _root = BuildSeedHierarchy();
+        private const int SceneRootNodeId = int.MaxValue;
         private static int _snapshotVersion = 1;
-        private static int _nextId = ComputeMaxId(_root) + 1;
+        private static int _lastSnapshotHash;
+        private static bool _hasSnapshotHash;
 
         public static string BuildSnapshotPayload()
         {
             lock (Sync)
             {
-                return JsonUtility.ToJson(new HierarchySnapshotResponse
-                {
-                    scene = "Arena",
-                    snapshotVersion = _snapshotVersion,
-                    root = ToDto(_root)
-                });
+                var snapshot = BuildSnapshot();
+                return JsonUtility.ToJson(snapshot);
             }
         }
 
@@ -89,10 +89,11 @@ namespace UniFocl.EditorBridge
             var matches = new List<HierarchySearchResult>();
             lock (Sync)
             {
-                var origin = request.parentId > 0
-                    ? FindNode(_root, request.parentId) ?? _root
-                    : _root;
-                var originPath = BuildPath(_root, origin.id);
+                var snapshot = BuildSnapshot();
+                var origin = request.parentId != 0
+                    ? FindNode(snapshot.root, request.parentId) ?? snapshot.root
+                    : snapshot.root;
+                var originPath = BuildPath(snapshot.root, origin.id);
                 CollectMatches(origin, originPath, request.query, matches);
             }
 
@@ -118,61 +119,133 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk requires a name" });
             }
 
-            var parentId = request.parentId > 0 ? request.parentId : _root.id;
-            var parent = FindNode(_root, parentId);
-            if (parent is null)
+            var activeScene = SceneManager.GetActiveScene();
+            if (!activeScene.IsValid())
             {
-                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {parentId}" });
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "active scene is not valid" });
             }
 
-            var created = new HierarchyNodeState(_nextId++, request.name.Trim(), true, new List<HierarchyNodeState>());
-            parent.children.Add(created);
+            var parentId = request.parentId != 0 ? request.parentId : SceneRootNodeId;
+            var created = request.primitive
+                ? GameObject.CreatePrimitive(PrimitiveType.Cube)
+                : new GameObject();
+            created.name = request.name.Trim();
+
+            if (parentId == SceneRootNodeId)
+            {
+                SceneManager.MoveGameObjectToScene(created, activeScene);
+            }
+            else
+            {
+                var parentObject = EditorUtility.InstanceIDToObject(parentId) as GameObject;
+                if (parentObject is null)
+                {
+                    UnityEngine.Object.DestroyImmediate(created);
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {parentId}" });
+                }
+
+                created.transform.SetParent(parentObject.transform, false);
+                SceneManager.MoveGameObjectToScene(created, parentObject.scene);
+            }
+
+            EditorSceneManager.MarkSceneDirty(created.scene);
             _snapshotVersion++;
+
             return JsonUtility.ToJson(new HierarchyCommandResponse
             {
                 ok = true,
                 message = "created",
-                nodeId = created.id,
-                isActive = created.active
+                nodeId = created.GetInstanceID(),
+                isActive = created.activeSelf
             });
         }
 
         private static string ExecuteToggle(HierarchyCommandRequest request)
         {
-            if (request.targetId <= 0)
+            if (request.targetId == 0)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "toggle requires target id" });
             }
 
-            var node = FindNode(_root, request.targetId);
-            if (node is null)
+            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            if (target is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
             }
 
-            node.active = !node.active;
+            Undo.RecordObject(target, "unifocl toggle hierarchy active");
+            target.SetActive(!target.activeSelf);
+            EditorSceneManager.MarkSceneDirty(target.scene);
             _snapshotVersion++;
+
             return JsonUtility.ToJson(new HierarchyCommandResponse
             {
                 ok = true,
                 message = "toggled",
-                nodeId = node.id,
-                isActive = node.active
+                nodeId = target.GetInstanceID(),
+                isActive = target.activeSelf
             });
         }
 
-        private static HierarchyNodeDto ToDto(HierarchyNodeState node)
+        private static HierarchySnapshotResponse BuildSnapshot()
         {
-            return new HierarchyNodeDto
+            var scene = SceneManager.GetActiveScene();
+            var sceneName = ResolveSceneName(scene);
+            var children = scene.IsValid()
+                ? scene.GetRootGameObjects()
+                    .Select(ToDto)
+                    .OrderBy(node => node.name, StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+                : Array.Empty<HierarchyNodeDto>();
+
+            var hash = ComputeHierarchyHash(sceneName, children);
+            if (_hasSnapshotHash)
             {
-                id = node.id,
-                name = node.name,
-                active = node.active,
-                children = node.children.Select(ToDto).ToArray()
+                if (_lastSnapshotHash != hash)
+                {
+                    _snapshotVersion++;
+                }
+            }
+            else
+            {
+                _hasSnapshotHash = true;
+            }
+
+            _lastSnapshotHash = hash;
+
+            return new HierarchySnapshotResponse
+            {
+                scene = sceneName,
+                snapshotVersion = _snapshotVersion,
+                root = new HierarchyNodeDto
+                {
+                    id = SceneRootNodeId,
+                    name = sceneName,
+                    active = true,
+                    children = children
+                }
             };
         }
 
-        private static HierarchyNodeState? FindNode(HierarchyNodeState node, int id)
+        private static HierarchyNodeDto ToDto(GameObject gameObject)
+        {
+            var transform = gameObject.transform;
+            var children = new HierarchyNodeDto[transform.childCount];
+            for (var i = 0; i < transform.childCount; i++)
+            {
+                children[i] = ToDto(transform.GetChild(i).gameObject);
+            }
+
+            return new HierarchyNodeDto
+            {
+                id = gameObject.GetInstanceID(),
+                name = gameObject.name,
+                active = gameObject.activeSelf,
+                children = children
+            };
+        }
+
+        private static HierarchyNodeDto? FindNode(HierarchyNodeDto node, int id)
         {
             if (node.id == id)
             {
@@ -191,7 +264,7 @@ namespace UniFocl.EditorBridge
             return null;
         }
 
-        private static void CollectMatches(HierarchyNodeState node, string path, string query, List<HierarchySearchResult> output)
+        private static void CollectMatches(HierarchyNodeDto node, string path, string query, List<HierarchySearchResult> output)
         {
             if (TryScore(query, path, out var pathScore))
             {
@@ -261,45 +334,7 @@ namespace UniFocl.EditorBridge
             return true;
         }
 
-        private static int ComputeMaxId(HierarchyNodeState node)
-        {
-            var max = node.id;
-            foreach (var child in node.children)
-            {
-                var childMax = ComputeMaxId(child);
-                if (childMax > max)
-                {
-                    max = childMax;
-                }
-            }
-
-            return max;
-        }
-
-        private static HierarchyNodeState BuildSeedHierarchy()
-        {
-            return new HierarchyNodeState(
-                100,
-                "Player",
-                true,
-                new List<HierarchyNodeState>
-                {
-                    new(101, "WeaponMount", true, new List<HierarchyNodeState>
-                    {
-                        new(102, "LeftBlaster", true, new List<HierarchyNodeState>()),
-                        new(103, "RightBlaster", false, new List<HierarchyNodeState>())
-                    }),
-                    new(104, "Mesh", true, new List<HierarchyNodeState>
-                    {
-                        new(105, "PlayerModel", true, new List<HierarchyNodeState>())
-                    }),
-                    new(106, "Audio", false, new List<HierarchyNodeState>()),
-                    new(107, "CapsuleCollider", true, new List<HierarchyNodeState>()),
-                    new(108, "Rigidbody", true, new List<HierarchyNodeState>())
-                });
-        }
-
-        private static string BuildPath(HierarchyNodeState root, int targetId)
+        private static string BuildPath(HierarchyNodeDto root, int targetId)
         {
             var segments = new List<string>();
             if (!TryCollectPath(root, targetId, segments))
@@ -311,7 +346,7 @@ namespace UniFocl.EditorBridge
             return "/" + string.Join('/', segments);
         }
 
-        private static bool TryCollectPath(HierarchyNodeState node, int targetId, List<string> segments)
+        private static bool TryCollectPath(HierarchyNodeDto node, int targetId, List<string> segments)
         {
             if (node.id == targetId)
             {
@@ -329,6 +364,46 @@ namespace UniFocl.EditorBridge
             }
 
             return false;
+        }
+
+        private static string ResolveSceneName(Scene scene)
+        {
+            if (!scene.IsValid())
+            {
+                return "No Scene";
+            }
+
+            return string.IsNullOrWhiteSpace(scene.name) ? "Untitled Scene" : scene.name;
+        }
+
+        private static int ComputeHierarchyHash(string sceneName, IReadOnlyList<HierarchyNodeDto> roots)
+        {
+            unchecked
+            {
+                var hash = StringComparer.Ordinal.GetHashCode(sceneName);
+                for (var i = 0; i < roots.Count; i++)
+                {
+                    hash = (hash * 397) ^ ComputeNodeHash(roots[i]);
+                }
+
+                return hash;
+            }
+        }
+
+        private static int ComputeNodeHash(HierarchyNodeDto node)
+        {
+            unchecked
+            {
+                var hash = node.id;
+                hash = (hash * 397) ^ StringComparer.Ordinal.GetHashCode(node.name);
+                hash = (hash * 397) ^ (node.active ? 1 : 0);
+                for (var i = 0; i < node.children.Length; i++)
+                {
+                    hash = (hash * 397) ^ ComputeNodeHash(node.children[i]);
+                }
+
+                return hash;
+            }
         }
     }
 }
