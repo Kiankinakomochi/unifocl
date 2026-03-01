@@ -82,13 +82,13 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
-        if (args.Count < 1)
+        if (!TryParseOpenArgs(args, out var openPath, out var allowUnsafe, out var openParseError))
         {
-            log("[red]error[/]: usage /open <path>");
+            log($"[red]error[/]: {Markup.Escape(openParseError)}");
             return true;
         }
 
-        var projectPath = ResolveAbsolutePath(args[0], Directory.GetCurrentDirectory());
+        var projectPath = ResolveAbsolutePath(openPath, Directory.GetCurrentDirectory());
         await TryOpenProjectAsync(
             projectPath,
             session,
@@ -96,7 +96,8 @@ internal sealed class ProjectLifecycleService
             daemonRuntime,
             _editorDependencyInitializerService,
             promptForInitialization: true,
-            log);
+            allowUnsafe: allowUnsafe,
+            log: log);
         return true;
     }
 
@@ -109,16 +110,9 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
-        if (args.Count < 1)
+        if (!TryParseNewArgs(args, out var projectName, out var requestedVersion, out var allowUnsafe, out var parseError))
         {
-            log("[red]error[/]: usage /new <project-name> <unity-version?>");
-            return true;
-        }
-
-        var projectName = args[0].Trim();
-        if (string.IsNullOrWhiteSpace(projectName))
-        {
-            log("[red]error[/]: project name cannot be empty");
+            log($"[red]error[/]: {Markup.Escape(parseError)}");
             return true;
         }
 
@@ -130,9 +124,8 @@ internal sealed class ProjectLifecycleService
         }
 
         UnityEditorPathService.UnityEditorInstallation selectedEditor;
-        if (args.Count > 1)
+        if (!string.IsNullOrWhiteSpace(requestedVersion))
         {
-            var requestedVersion = args[1].Trim();
             selectedEditor = availableEditors.FirstOrDefault(x => x.Version.Equals(requestedVersion, StringComparison.OrdinalIgnoreCase))
                 ?? new UnityEditorPathService.UnityEditorInstallation(string.Empty, string.Empty);
             if (string.IsNullOrWhiteSpace(selectedEditor.Version))
@@ -219,7 +212,8 @@ internal sealed class ProjectLifecycleService
                 daemonRuntime,
                 _editorDependencyInitializerService,
                 promptForInitialization: true,
-                log))
+                allowUnsafe: allowUnsafe,
+                log: log))
         {
             log("[green]new[/]: Unity project scaffold ready");
         }
@@ -240,16 +234,9 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
-        if (args.Count < 1)
+        if (!TryParseCloneArgs(args, out var gitUrl, out var allowUnsafe, out var parseError))
         {
-            log("[red]error[/]: usage /clone <git-url>");
-            return true;
-        }
-
-        var gitUrl = args[0].Trim();
-        if (string.IsNullOrWhiteSpace(gitUrl))
-        {
-            log("[red]error[/]: git url cannot be empty");
+            log($"[red]error[/]: {Markup.Escape(parseError)}");
             return true;
         }
 
@@ -294,7 +281,8 @@ internal sealed class ProjectLifecycleService
                 daemonRuntime,
                 _editorDependencyInitializerService,
                 promptForInitialization: true,
-                log))
+                allowUnsafe: allowUnsafe,
+                log: log))
         {
             log("[green]clone[/]: repository cloned and prepared");
         }
@@ -355,9 +343,9 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
-        if (args.Count > 1)
+        if (!TryParseRecentArgs(args, out var indexRaw, out var allowUnsafe, out var parseError))
         {
-            log("[red]error[/]: usage /recent <idx?>");
+            log($"[red]error[/]: {Markup.Escape(parseError)}");
             return Task.FromResult(true);
         }
 
@@ -375,9 +363,9 @@ internal sealed class ProjectLifecycleService
 
         LogRecentEntries(entries, log);
 
-        if (args.Count == 1)
+        if (!string.IsNullOrWhiteSpace(indexRaw))
         {
-            if (!int.TryParse(args[0], out var idx) || idx <= 0)
+            if (!int.TryParse(indexRaw, out var idx) || idx <= 0)
             {
                 log("[red]error[/]: idx must be a positive integer");
                 return Task.FromResult(true);
@@ -397,7 +385,7 @@ internal sealed class ProjectLifecycleService
                 return Task.FromResult(true);
             }
 
-            return OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, log);
+            return OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, allowUnsafe, log);
         }
 
         if (Console.IsInputRedirected)
@@ -418,7 +406,7 @@ internal sealed class ProjectLifecycleService
                 })
                 .AddChoices(entries));
 
-        return OpenRecentSelectionAsync(selected, session, daemonControlService, daemonRuntime, log);
+        return OpenRecentSelectionAsync(selected, session, daemonControlService, daemonRuntime, allowUnsafe, log);
     }
 
     private static void LogRecentEntries(IReadOnlyList<RecentProjectEntry> entries, Action<string> log)
@@ -437,6 +425,7 @@ internal sealed class ProjectLifecycleService
         CliSessionState session,
         DaemonControlService daemonControlService,
         DaemonRuntime daemonRuntime,
+        bool allowUnsafe,
         Action<string> log)
     {
         log($"[grey]recent[/]: opening [white]{Markup.Escape(selectedEntry.ProjectPath)}[/]");
@@ -447,7 +436,8 @@ internal sealed class ProjectLifecycleService
             daemonRuntime,
             _editorDependencyInitializerService,
             promptForInitialization: true,
-            log);
+            allowUnsafe: allowUnsafe,
+            log: log);
     }
 
     private Task<bool> HandleUnityDetectAsync(Action<string> log)
@@ -690,6 +680,7 @@ internal sealed class ProjectLifecycleService
         DaemonRuntime daemonRuntime,
         EditorDependencyInitializerService editorDependencyInitializerService,
         bool promptForInitialization,
+        bool allowUnsafe,
         Action<string> log)
     {
         log($"[grey]open[/]: step 1/5 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
@@ -764,20 +755,39 @@ internal sealed class ProjectLifecycleService
         var daemonPort = DaemonControlService.ComputeProjectDaemonPort(projectPath);
         if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
         {
-            await daemonControlService.TryAttachProjectDaemonAsync(projectPath, session, log);
-            SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, false));
-            if (session.AttachedPort == daemonPort)
+            var attached = await daemonControlService.TryAttachProjectDaemonAsync(
+                projectPath,
+                session,
+                log: null,
+                attemptCount: 32,
+                attemptDelayMs: 250);
+            if (attached && session.AttachedPort == daemonPort)
             {
+                SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, false));
                 log($"[grey]daemon[/]: Unity editor lock detected; attached bridge on [white]127.0.0.1:{daemonPort}[/]");
             }
             else
             {
-                log("[grey]daemon[/]: Unity editor lock detected; routing operations via InitializeOnLoad bridge");
+                log($"[red]daemon[/]: Unity editor lock detected, but bridge endpoint [white]127.0.0.1:{daemonPort}[/] is not responding");
+                log("[yellow]daemon[/]: wait for Unity editor script compilation/domain reload, then retry /open");
+                return false;
             }
         }
         else
         {
-            var started = await daemonControlService.EnsureProjectDaemonAsync(projectPath, daemonRuntime, session, log);
+            if (allowUnsafe)
+            {
+                log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster headless boot)");
+            }
+
+            var started = await daemonControlService.EnsureProjectDaemonAsync(
+                projectPath,
+                daemonRuntime,
+                session,
+                log,
+                requireUnityBridge: true,
+                preferHeadless: true,
+                allowUnsafe: allowUnsafe);
             if (!started)
             {
                 if (!HandleDaemonStartupFailure(projectPath, session, daemonControlService, log))
@@ -953,6 +963,183 @@ internal sealed class ProjectLifecycleService
         return tokens;
     }
 
+    private static bool TryParseOpenArgs(
+        IReadOnlyList<string> args,
+        out string projectPath,
+        out bool allowUnsafe,
+        out string error)
+    {
+        projectPath = string.Empty;
+        allowUnsafe = false;
+        error = string.Empty;
+
+        foreach (var arg in args)
+        {
+            if (arg.Equals("--allow-unsafe", StringComparison.Ordinal))
+            {
+                allowUnsafe = true;
+                continue;
+            }
+
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                error = $"unrecognized option {arg}; usage /open <path> [--allow-unsafe]";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(projectPath))
+            {
+                error = "too many positional arguments; usage /open <path> [--allow-unsafe]";
+                return false;
+            }
+
+            projectPath = arg;
+        }
+
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            error = "usage /open <path> [--allow-unsafe]";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseNewArgs(
+        IReadOnlyList<string> args,
+        out string projectName,
+        out string? unityVersion,
+        out bool allowUnsafe,
+        out string error)
+    {
+        projectName = string.Empty;
+        unityVersion = null;
+        allowUnsafe = false;
+        error = string.Empty;
+
+        foreach (var arg in args)
+        {
+            if (IsAllowUnsafeFlag(arg))
+            {
+                allowUnsafe = true;
+                continue;
+            }
+
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                error = $"unrecognized option {arg}; usage /new <project-name> [unity-version] [--allow-unsafe]";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                projectName = arg.Trim();
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(unityVersion))
+            {
+                unityVersion = arg.Trim();
+                continue;
+            }
+
+            error = "too many positional arguments; usage /new <project-name> [unity-version] [--allow-unsafe]";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(projectName))
+        {
+            error = "usage /new <project-name> [unity-version] [--allow-unsafe]";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseCloneArgs(
+        IReadOnlyList<string> args,
+        out string gitUrl,
+        out bool allowUnsafe,
+        out string error)
+    {
+        gitUrl = string.Empty;
+        allowUnsafe = false;
+        error = string.Empty;
+
+        foreach (var arg in args)
+        {
+            if (IsAllowUnsafeFlag(arg))
+            {
+                allowUnsafe = true;
+                continue;
+            }
+
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                error = $"unrecognized option {arg}; usage /clone <git-url> [--allow-unsafe]";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(gitUrl))
+            {
+                error = "too many positional arguments; usage /clone <git-url> [--allow-unsafe]";
+                return false;
+            }
+
+            gitUrl = arg.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(gitUrl))
+        {
+            error = "usage /clone <git-url> [--allow-unsafe]";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseRecentArgs(
+        IReadOnlyList<string> args,
+        out string? indexRaw,
+        out bool allowUnsafe,
+        out string error)
+    {
+        indexRaw = null;
+        allowUnsafe = false;
+        error = string.Empty;
+
+        foreach (var arg in args)
+        {
+            if (IsAllowUnsafeFlag(arg))
+            {
+                allowUnsafe = true;
+                continue;
+            }
+
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                error = $"unrecognized option {arg}; usage /recent [idx] [--allow-unsafe]";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(indexRaw))
+            {
+                error = "too many positional arguments; usage /recent [idx] [--allow-unsafe]";
+                return false;
+            }
+
+            indexRaw = arg.Trim();
+        }
+
+        return true;
+    }
+
+    private static bool IsAllowUnsafeFlag(string arg)
+    {
+        return arg.Equals("--allow-unsafe", StringComparison.Ordinal)
+               || arg.Equals("--alow-unsafe", StringComparison.Ordinal);
+    }
+
     private static string ResolveAbsolutePath(string path, string baseDirectory)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -999,17 +1186,14 @@ internal sealed class ProjectLifecycleService
             Directory.CreateDirectory(bridgeDir);
 
             var bridgePath = Path.Combine(bridgeDir, "bridge.json");
-            if (!File.Exists(bridgePath))
+            var bridge = JsonSerializer.Serialize(new
             {
-                var bridge = JsonSerializer.Serialize(new
-                {
-                    projectPath,
-                    daemon = new { host = "127.0.0.1", port = 18080 },
-                    protocol = "v1",
-                    updatedAtUtc = DateTimeOffset.UtcNow
-                }, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(bridgePath, bridge + Environment.NewLine);
-            }
+                projectPath,
+                daemon = new { host = "127.0.0.1", port = DaemonControlService.ComputeProjectDaemonPort(projectPath) },
+                protocol = "v1",
+                updatedAtUtc = DateTimeOffset.UtcNow
+            }, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(bridgePath, bridge + Environment.NewLine);
 
             return OperationResult.Success();
         }
