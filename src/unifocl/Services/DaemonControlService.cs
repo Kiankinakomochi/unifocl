@@ -342,10 +342,8 @@ internal sealed class DaemonControlService
         var existing = runtime.GetByPort(port);
 
         // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
-        if (await TrySendControlAsync(port, "PING", "PONG"))
+        if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
         {
-            session.AttachedPort = port;
-            await TrySendControlAsync(port, "TOUCH", "OK");
             return true;
         }
 
@@ -369,6 +367,36 @@ internal sealed class DaemonControlService
         session.AttachedPort = port;
         await TrySendControlAsync(port, "TOUCH", "OK");
         return true;
+    }
+
+    public async Task<bool> TryAttachProjectDaemonAsync(
+        string projectPath,
+        CliSessionState session,
+        Action<string>? log = null,
+        int attemptCount = 8,
+        int attemptDelayMs = 250)
+    {
+        var port = ComputeProjectDaemonPort(projectPath);
+        var normalizedAttemptCount = Math.Max(1, attemptCount);
+        var normalizedDelayMs = Math.Max(50, attemptDelayMs);
+
+        for (var attempt = 1; attempt <= normalizedAttemptCount; attempt++)
+        {
+            if (await TrySendControlAsync(port, "PING", "PONG"))
+            {
+                session.AttachedPort = port;
+                await TrySendControlAsync(port, "TOUCH", "OK");
+                return true;
+            }
+
+            if (attempt < normalizedAttemptCount)
+            {
+                await Task.Delay(normalizedDelayMs);
+            }
+        }
+
+        log?.Invoke($"[yellow]daemon[/]: project daemon endpoint 127.0.0.1:{port} is not ready for attachment");
+        return false;
     }
 
     public async Task<bool> TouchAttachedDaemonAsync(CliSessionState session)
