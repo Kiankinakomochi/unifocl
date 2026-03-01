@@ -654,9 +654,16 @@ internal sealed class ProjectLifecycleService
         var daemonPort = DaemonControlService.ComputeProjectDaemonPort(projectPath);
         if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
         {
-            session.AttachedPort = null;
+            await daemonControlService.TryAttachProjectDaemonAsync(projectPath, session, log);
             SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, false));
-            log("[grey]daemon[/]: Unity editor lock detected; routing operations via InitializeOnLoad bridge");
+            if (session.AttachedPort == daemonPort)
+            {
+                log($"[grey]daemon[/]: Unity editor lock detected; attached bridge on [white]127.0.0.1:{daemonPort}[/]");
+            }
+            else
+            {
+                log("[grey]daemon[/]: Unity editor lock detected; routing operations via InitializeOnLoad bridge");
+            }
         }
         else
         {

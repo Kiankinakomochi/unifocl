@@ -684,10 +684,13 @@ internal sealed class ProjectViewService
             return;
         }
 
-        if (!DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
+        if (DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
         {
-            await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, _ => { });
+            await daemonControlService.TryAttachProjectDaemonAsync(session.CurrentProjectPath, session);
+            return;
         }
+
+        await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, _ => { });
     }
 
     private static (string TemplateName, string TemplateSource, string Content) ResolveTemplate(string projectPath)
