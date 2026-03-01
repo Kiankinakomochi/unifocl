@@ -27,14 +27,26 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "missing project command payload" });
             }
 
-            return request.action switch
+            try
             {
-                "mk-script" => ExecuteCreateScript(request),
-                "rename-asset" => ExecuteRenameAsset(request),
-                "remove-asset" => ExecuteRemoveAsset(request),
-                "load-asset" => ExecuteLoadAsset(request),
-                _ => JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" })
-            };
+                return request.action switch
+                {
+                    "healthcheck" => JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "project command endpoint ready", kind = "healthcheck" }),
+                    "mk-script" => ExecuteCreateScript(request),
+                    "rename-asset" => ExecuteRenameAsset(request),
+                    "remove-asset" => ExecuteRemoveAsset(request),
+                    "load-asset" => ExecuteLoadAsset(request),
+                    _ => JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" })
+                };
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"project command exception: {ex.GetType().Name}: {ex.Message}"
+                });
+            }
         }
 
         private static string ExecuteCreateScript(ProjectCommandRequest request)

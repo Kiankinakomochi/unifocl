@@ -123,6 +123,20 @@ internal sealed class EditorDependencyInitializerService
             }
         }
 
+        var expectedDaemonSource = ReadEmbeddedResource(DaemonSourceResource);
+        if (string.IsNullOrWhiteSpace(expectedDaemonSource))
+        {
+            reason = "embedded daemon payload is unavailable";
+            return true;
+        }
+
+        var installedDaemonSource = File.ReadAllText(Path.Combine(packagePath, "Editor", "CLIDaemon.cs"));
+        if (!NormalizeText(installedDaemonSource).Equals(NormalizeText(expectedDaemonSource), StringComparison.Ordinal))
+        {
+            reason = "embedded daemon package is outdated; CLIDaemon.cs does not match current CLI payload";
+            return true;
+        }
+
         reason = string.Empty;
         return false;
     }
@@ -334,5 +348,11 @@ internal sealed class EditorDependencyInitializerService
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(file, destination, overwrite: true);
         }
+    }
+
+    private static string NormalizeText(string value)
+    {
+        return value.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Trim();
     }
 }

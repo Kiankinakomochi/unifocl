@@ -11,6 +11,7 @@ internal sealed class DaemonControlService
 {
     private const int DefaultInactivityTimeoutSeconds = 600;
     private const int ProcessOutputTailMaxLines = 40;
+    private static readonly TimeSpan ProjectCommandReadyTimeout = TimeSpan.FromSeconds(30);
     private static readonly HttpClient Http = new();
     private DaemonStartupFailure? _lastStartupFailure;
 
@@ -351,12 +352,34 @@ internal sealed class DaemonControlService
         // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
         if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
         {
-            var headlessSatisfied = !preferHeadless
-                                    || (existing?.Headless ?? false)
-                                    || IsUnityClientActiveForProject(projectPath);
-            if ((!requireUnityBridge || IsUnityBridgeCapable(existing)) && headlessSatisfied)
+            var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(port, TimeSpan.FromSeconds(3));
+            if (!projectCommandReady)
             {
-                return true;
+                log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} responds to ping but project commands are unresponsive; restarting bridge");
+                await TrySendControlAsync(port, "STOP", "STOPPING");
+                session.AttachedPort = null;
+                await Task.Delay(200);
+            }
+            else
+            {
+                var bridgeSatisfied = !requireUnityBridge || IsUnityBridgeCapable(existing);
+                var headlessSatisfied = !preferHeadless || (existing?.Headless ?? false);
+                var managedRuntimePresent = existing is not null;
+
+                if (managedRuntimePresent && bridgeSatisfied && headlessSatisfied)
+                {
+                    return true;
+                }
+
+                if (!preferHeadless && bridgeSatisfied)
+                {
+                    return true;
+                }
+
+                log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} is attachable but unmanaged; restarting as managed headless bridge");
+                await TrySendControlAsync(port, "STOP", "STOPPING");
+                session.AttachedPort = null;
+                await Task.Delay(200);
             }
         }
 
@@ -397,7 +420,57 @@ internal sealed class DaemonControlService
 
         session.AttachedPort = port;
         await TrySendControlAsync(port, "TOUCH", "OK");
+        var projectCommandReadyAfterStart = await WaitForProjectCommandReadyAsync(
+            port,
+            ProjectCommandReadyTimeout,
+            elapsed => log($"[grey]daemon[/]: waiting for project command endpoint... {elapsed.TotalSeconds:0}s elapsed"));
+        if (!projectCommandReadyAfterStart)
+        {
+            var probe = await ProbeProjectCommandEndpointAsync(port, TimeSpan.FromSeconds(8));
+            _lastStartupFailure = new DaemonStartupFailure(
+                IsCompileError: false,
+                Summary: $"project command endpoint is not ready on port {port} ({probe.Detail})",
+                Lines: []);
+            log($"[red]daemon[/]: project command endpoint is not ready on [white]127.0.0.1:{port}[/] ({Markup.Escape(probe.Detail)})");
+            await TrySendControlAsync(port, "STOP", "STOPPING");
+            var launched = runtime.GetByPort(port);
+            if (launched is not null)
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(4);
+                while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(launched.Pid))
+                {
+                    await Task.Delay(120);
+                }
+            }
+
+            runtime.Remove(port);
+            session.AttachedPort = null;
+            return false;
+        }
+
         return true;
+    }
+
+    public async Task<bool> HasStableManagedProjectDaemonAsync(string projectPath, DaemonRuntime runtime, CliSessionState session)
+    {
+        var port = ResolveProjectDaemonPort(projectPath);
+        if (session.AttachedPort != port)
+        {
+            return false;
+        }
+
+        var instance = runtime.GetByPort(port);
+        if (instance is null || string.IsNullOrWhiteSpace(instance.UnityPath))
+        {
+            return false;
+        }
+
+        if (!await TrySendControlAsync(port, "PING", "PONG"))
+        {
+            return false;
+        }
+
+        return await WaitForProjectCommandReadyAsync(port, TimeSpan.FromSeconds(8));
     }
 
     private static bool IsUnityBridgeCapable(DaemonInstance? instance)
@@ -506,7 +579,7 @@ internal sealed class DaemonControlService
         }
         catch
         {
-            return true;
+            return false;
         }
     }
 
@@ -570,16 +643,25 @@ internal sealed class DaemonControlService
             var projectPath = startOptions.ProjectPath;
             if (IsUnityClientActiveForProject(projectPath))
             {
+                var projectPort = ResolveProjectDaemonPort(projectPath);
                 if (await TryAttachProjectDaemonAsync(projectPath, session, log, attemptCount: 2, attemptDelayMs: 250))
                 {
-                    log($"[green]daemon[/]: Unity editor is already running for project; attached bridge on [white]127.0.0.1:{ResolveProjectDaemonPort(projectPath)}[/]");
+                    var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(projectPort, TimeSpan.FromSeconds(3));
+                    if (projectCommandReady)
+                    {
+                        log($"[green]daemon[/]: Unity editor is already running for project; attached bridge on [white]127.0.0.1:{projectPort}[/]");
+                        return;
+                    }
+
+                    log($"[yellow]daemon[/]: existing bridge on port {projectPort} responds to ping but project commands are unresponsive; restarting bridge");
+                    await TrySendControlAsync(projectPort, "STOP", "STOPPING");
+                    session.AttachedPort = null;
+                    await Task.Delay(200);
                 }
                 else
                 {
-                    log("[yellow]daemon[/]: Unity editor lock detected for project; skipped starting another headless Unity instance");
+                    log("[yellow]daemon[/]: Unity lock detected, but bridge endpoint is not attachable; starting a new headless bridge");
                 }
-
-                return;
             }
         }
 
@@ -662,8 +744,10 @@ internal sealed class DaemonControlService
                     Summary: $"daemon did not respond on port {startOptions.Port} within {startupTimeout.TotalSeconds:0}s",
                     Lines: outputTail.ToList());
                 log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port} within {startupTimeout.TotalSeconds:0}s");
+                TryTerminateSpawnedProcess(process, log);
             }
 
+            runtime.Remove(startOptions.Port);
             return false;
         }
 
@@ -711,7 +795,8 @@ internal sealed class DaemonControlService
     private async Task HandleDaemonRestartAsync(DaemonRuntime runtime, CliSessionState session, Action<string> log)
     {
         var target = ResolveTargetDaemon(runtime, session);
-        var restartPort = target?.Port ?? 8080;
+        var attachedOnlyPort = target is null ? await ResolveAttachedOnlyPortAsync(session) : null;
+        var restartPort = target?.Port ?? attachedOnlyPort ?? 8080;
         var restartHeadless = target?.Headless ?? false;
         var restartUnity = target?.UnityPath;
         var restartProject = target?.ProjectPath;
@@ -723,6 +808,22 @@ internal sealed class DaemonControlService
                 log($"[red]daemon[/]: could not stop daemon on port {target.Port}; aborting restart");
                 return;
             }
+        }
+        else if (attachedOnlyPort is int attachedPort)
+        {
+            var stopped = await TrySendControlAsync(attachedPort, "STOP", "STOPPING");
+            if (!stopped)
+            {
+                log($"[red]daemon[/]: could not stop attached endpoint on port {attachedPort}; aborting restart");
+                return;
+            }
+
+            if (session.AttachedPort == attachedPort)
+            {
+                session.AttachedPort = null;
+            }
+
+            log($"[grey]daemon[/]: stopped attached endpoint on port {attachedPort}");
         }
 
         var synthesized = $"/daemon start --port {restartPort}" +
@@ -1174,6 +1275,30 @@ internal sealed class DaemonControlService
         return lines;
     }
 
+    private static void TryTerminateSpawnedProcess(Process process, Action<string> log)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return;
+            }
+
+            process.Kill(entireProcessTree: true);
+            if (!process.WaitForExit(5000))
+            {
+                log($"[yellow]daemon[/]: failed to terminate stalled Unity process pid={process.Id} within 5s");
+                return;
+            }
+
+            log($"[yellow]daemon[/]: terminated stalled Unity process pid={process.Id}");
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]daemon[/]: unable to terminate stalled Unity process pid={process.Id} ({Markup.Escape(ex.Message)})");
+        }
+    }
+
     private static async Task<bool> WaitForDaemonReadyAsync(int port, TimeSpan timeout, Action<TimeSpan>? onProgress = null)
     {
         var startedAt = DateTime.UtcNow;
@@ -1276,6 +1401,82 @@ internal sealed class DaemonControlService
         {
             return false;
         }
+    }
+
+    private static async Task<bool> IsProjectCommandEndpointResponsiveAsync(int port, TimeSpan timeout)
+    {
+        var probe = await ProbeProjectCommandEndpointAsync(port, timeout);
+        return probe.Ok;
+    }
+
+    private static async Task<ProjectCommandProbeResult> ProbeProjectCommandEndpointAsync(int port, TimeSpan timeout)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            using var content = new StringContent("{\"action\":\"healthcheck\"}", Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"http://127.0.0.1:{port}/project/command", content, cts.Token);
+            var payload = (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ProjectCommandProbeResult(false, $"HTTP {(int)response.StatusCode}: {(string.IsNullOrWhiteSpace(payload) ? "<empty>" : payload)}");
+            }
+
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return new ProjectCommandProbeResult(false, "HTTP 200 with empty payload");
+            }
+
+            return new ProjectCommandProbeResult(true, "ok");
+        }
+        catch (OperationCanceledException)
+        {
+            return new ProjectCommandProbeResult(false, $"timeout after {(int)timeout.TotalSeconds}s");
+        }
+        catch (Exception ex)
+        {
+            return new ProjectCommandProbeResult(false, ex.Message);
+        }
+    }
+
+    private static async Task<bool> WaitForProjectCommandReadyAsync(
+        int port,
+        TimeSpan timeout,
+        Action<TimeSpan>? onProgress = null)
+    {
+        var startedAt = DateTime.UtcNow;
+        var deadline = startedAt.Add(timeout);
+        var nextProgressAt = startedAt.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await IsProjectCommandEndpointResponsiveAsync(port, TimeSpan.FromSeconds(8)))
+            {
+                return true;
+            }
+
+            var now = DateTime.UtcNow;
+            if (onProgress is not null && now >= nextProgressAt)
+            {
+                onProgress(now - startedAt);
+                nextProgressAt = now.AddSeconds(5);
+            }
+
+            await Task.Delay(1000);
+        }
+
+        return false;
+    }
+
+    private readonly record struct ProjectCommandProbeResult(bool Ok, string Detail);
+
+    private static async Task<int?> ResolveAttachedOnlyPortAsync(CliSessionState session)
+    {
+        if (session.AttachedPort is not int attachedPort)
+        {
+            return null;
+        }
+
+        return await TrySendControlAsync(attachedPort, "PING", "PONG") ? attachedPort : null;
     }
 
     private static string? ResolveDefaultUnityPath(string projectPath)

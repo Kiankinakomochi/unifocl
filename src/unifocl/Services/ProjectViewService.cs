@@ -489,6 +489,9 @@ internal sealed class ProjectViewService
         }
 
         var isSceneLoad = Path.GetExtension(target.Name).Equals(".unity", StringComparison.OrdinalIgnoreCase);
+        EmitImmediateLoadFeedback(state, target.Name, isSceneLoad);
+        EmitLoadDiagnostic(state, $"selector '{selector}' resolved to '{target.RelativePath}'");
+        EmitLoadDiagnostic(state, "ensuring Unity bridge context");
         var unityReady = await EnsureUnityContextAsync(
             session,
             daemonControlService,
@@ -499,21 +502,30 @@ internal sealed class ProjectViewService
             outputs.Add("[x] scene load failed: Unity editor bridge is unavailable; set UNITY_PATH or start Unity editor for this project");
             return true;
         }
+        if (isSceneLoad)
+        {
+            EmitLoadDiagnostic(state, "Unity bridge context ready");
+        }
 
         var response = await ExecuteProjectCommandAsync(
             session,
-            new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null));
+            new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null),
+            status => EmitLoadDiagnostic(state, status));
         if (!response.Ok && IsAssetNotFoundFailure(response.Message))
         {
             var fallbackPath = await ResolveAssetFallbackPathAsync(session, target.RelativePath, allowDirectoryFallback: false);
             if (!string.IsNullOrWhiteSpace(fallbackPath)
                 && !fallbackPath.Equals(target.RelativePath, StringComparison.OrdinalIgnoreCase))
             {
+                EmitLoadDiagnostic(state, $"asset fallback path resolved: '{fallbackPath}'");
                 response = await ExecuteProjectCommandAsync(
                     session,
-                    new ProjectCommandRequestDto("load-asset", fallbackPath, null, null));
+                    new ProjectCommandRequestDto("load-asset", fallbackPath, null, null),
+                    status => EmitLoadDiagnostic(state, status));
             }
         }
+
+        EmitLoadDiagnostic(state, $"daemon result: ok={response.Ok}, kind={response.Kind ?? "null"}");
 
         if (!response.Ok)
         {
@@ -601,14 +613,17 @@ internal sealed class ProjectViewService
         }
     }
 
-    private async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(CliSessionState session, ProjectCommandRequestDto request)
+    private async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(
+        CliSessionState session,
+        ProjectCommandRequestDto request,
+        Action<string>? onStatus = null)
     {
         if (session.AttachedPort is not int port)
         {
             return new ProjectCommandResponseDto(false, "daemon is not attached", null);
         }
 
-        return await _daemonClient.ExecuteProjectCommandAsync(port, request);
+        return await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus);
     }
 
     private static ProjectTreeEntry? FindEntryBySelector(ProjectViewState state, string selector)
@@ -833,6 +848,19 @@ internal sealed class ProjectViewService
 
         var overflow = state.CommandTranscript.Count - MaxTranscriptEntries;
         state.CommandTranscript.RemoveRange(0, overflow);
+    }
+
+    private void EmitImmediateLoadFeedback(ProjectViewState state, string targetName, bool isSceneLoad)
+    {
+        var prefix = isSceneLoad ? "scene" : "script";
+        AppendTranscript(state, [$"[*] loading {prefix}: {targetName}"]);
+        RenderFrame(state);
+    }
+
+    private void EmitLoadDiagnostic(ProjectViewState state, string message)
+    {
+        AppendTranscript(state, [$"[grey]load[/]: {Markup.Escape(message)}"]);
+        RenderFrame(state);
     }
 
     private static async Task<bool> EnsureUnityContextAsync(
