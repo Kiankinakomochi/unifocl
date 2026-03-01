@@ -44,7 +44,7 @@ var commands = new List<CommandSpec>
     // Extended lifecycle (kept for compatibility)
     new("/new <project-name> [unity-version]", "Bootstrap a new Unity project", "/new"),
     new("/clone <git-url>", "Clone repo and set local CLI bridge config", "/clone"),
-    new("/recent [n]", "List recently opened projects", "/recent"),
+    new("/recent [idx]", "Open recent projects (interactive or by index)", "/recent"),
     new("/daemon start [--port 8080] [--unity <path>] [--project <path>] [--headless]", "Start always-warm daemon", "/daemon start"),
     new("/daemon stop", "Stop daemon", "/daemon stop"),
     new("/daemon restart", "Restart daemon", "/daemon restart"),
@@ -289,7 +289,7 @@ while (true)
                 daemonRuntime,
                 line => AppendLog(streamLog, line)))
         {
-            if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone")
+            if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone" || matched.Trigger == "/recent")
                 && session.Mode == CliMode.Project
                 && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
             {

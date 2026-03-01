@@ -22,7 +22,7 @@ internal sealed class ProjectLifecycleService
             "/open" => await HandleOpenAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/new" => await HandleNewAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/clone" => await HandleCloneAsync(input, matched, session, daemonControlService, daemonRuntime, log),
-            "/recent" => await HandleRecentAsync(input, matched, log),
+            "/recent" => await HandleRecentAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
             "/init" => await HandleInitAsync(input, matched, session, log),
             "/config" => await HandleConfigAsync(input, matched, log),
@@ -304,23 +304,19 @@ internal sealed class ProjectLifecycleService
     private Task<bool> HandleRecentAsync(
         string input,
         CommandSpec matched,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count > 1)
         {
-            log("[red]error[/]: usage /recent <n?>");
+            log("[red]error[/]: usage /recent <idx?>");
             return Task.FromResult(true);
         }
 
-        var count = 10;
-        if (args.Count == 1 && (!int.TryParse(args[0], out count) || count <= 0))
-        {
-            log("[red]error[/]: n must be a positive integer");
-            return Task.FromResult(true);
-        }
-
-        if (!_recentProjectHistoryService.TryGetRecentProjects(count, out var entries, out var historyError))
+        if (!_recentProjectHistoryService.TryGetRecentProjects(100, out var entries, out var historyError))
         {
             log($"[red]error[/]: {Markup.Escape(historyError ?? "failed to load recent projects")}");
             return Task.FromResult(true);
@@ -332,6 +328,56 @@ internal sealed class ProjectLifecycleService
             return Task.FromResult(true);
         }
 
+        LogRecentEntries(entries, log);
+
+        if (args.Count == 1)
+        {
+            if (!int.TryParse(args[0], out var idx) || idx <= 0)
+            {
+                log("[red]error[/]: idx must be a positive integer");
+                return Task.FromResult(true);
+            }
+
+            if (idx > entries.Count)
+            {
+                log($"[red]error[/]: idx {idx} is out of range (1-{entries.Count})");
+                return Task.FromResult(true);
+            }
+
+            var selectedEntry = entries[idx - 1];
+            var confirmMessage = $"Open recent project [white]{idx}[/]: [white]{Markup.Escape(selectedEntry.ProjectPath)}[/]?";
+            if (!AnsiConsole.Confirm(confirmMessage, defaultValue: true))
+            {
+                log("[grey]recent[/]: cancelled");
+                return Task.FromResult(true);
+            }
+
+            return OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, log);
+        }
+
+        if (Console.IsInputRedirected)
+        {
+            log("[yellow]recent[/]: interactive selection requires a TTY; use /recent <idx> to open a project");
+            return Task.FromResult(true);
+        }
+
+        var selected = AnsiConsole.Prompt(
+            new SelectionPrompt<RecentProjectEntry>()
+                .Title("Select a recent project to open")
+                .PageSize(Math.Min(entries.Count, 10))
+                .UseConverter(entry =>
+                {
+                    var index = entries.IndexOf(entry) + 1;
+                    var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
+                    return $"{index}. {entry.ProjectPath} ({opened})";
+                })
+                .AddChoices(entries));
+
+        return OpenRecentSelectionAsync(selected, session, daemonControlService, daemonRuntime, log);
+    }
+
+    private static void LogRecentEntries(IReadOnlyList<RecentProjectEntry> entries, Action<string> log)
+    {
         log("[grey]recent[/]: most recently opened projects");
         for (var i = 0; i < entries.Count; i++)
         {
@@ -339,8 +385,24 @@ internal sealed class ProjectLifecycleService
             var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
             log($"[grey]recent[/]: [white]{i + 1}[/]. [white]{Markup.Escape(entry.ProjectPath)}[/] [dim]({opened})[/]");
         }
+    }
 
-        return Task.FromResult(true);
+    private Task<bool> OpenRecentSelectionAsync(
+        RecentProjectEntry selectedEntry,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        log($"[grey]recent[/]: opening [white]{Markup.Escape(selectedEntry.ProjectPath)}[/]");
+        return TryOpenProjectAsync(
+            selectedEntry.ProjectPath,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            _editorDependencyInitializerService,
+            promptForInitialization: true,
+            log);
     }
 
     private Task<bool> HandleConfigAsync(
