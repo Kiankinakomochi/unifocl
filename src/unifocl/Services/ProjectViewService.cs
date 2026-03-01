@@ -425,16 +425,30 @@ internal sealed class ProjectViewService
         state.DbState = ProjectDbState.LockedImporting;
         try
         {
+            var sourcePath = target.RelativePath;
             var response = await ExecuteProjectCommandAsync(
                 session,
-                new ProjectCommandRequestDto("remove-asset", target.RelativePath, null, null));
+                new ProjectCommandRequestDto("remove-asset", sourcePath, null, null));
+            if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+            {
+                var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourcePath, allowDirectoryFallback: target.IsDirectory);
+                if (!string.IsNullOrWhiteSpace(fallbackPath)
+                    && !fallbackPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourcePath = fallbackPath;
+                    response = await ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto("remove-asset", sourcePath, null, null));
+                }
+            }
+
             if (!response.Ok)
             {
                 outputs.Add(FormatProjectCommandFailure("remove", response.Message));
                 return true;
             }
 
-            outputs.Add($"[=] removed: {target.RelativePath}");
+            outputs.Add($"[=] removed: {sourcePath}");
             if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
             {
                 RefreshTree(session.CurrentProjectPath, state);
@@ -474,6 +488,18 @@ internal sealed class ProjectViewService
         var response = await ExecuteProjectCommandAsync(
             session,
             new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null));
+        if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+        {
+            var fallbackPath = await ResolveAssetFallbackPathAsync(session, target.RelativePath, allowDirectoryFallback: false);
+            if (!string.IsNullOrWhiteSpace(fallbackPath)
+                && !fallbackPath.Equals(target.RelativePath, StringComparison.OrdinalIgnoreCase))
+            {
+                response = await ExecuteProjectCommandAsync(
+                    session,
+                    new ProjectCommandRequestDto("load-asset", fallbackPath, null, null));
+            }
+        }
+
         if (!response.Ok)
         {
             outputs.Add(FormatProjectCommandFailure("load", response.Message));
@@ -510,18 +536,29 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        var parentRelative = Path.GetDirectoryName(target.RelativePath)?.Replace('\\', '/') ?? string.Empty;
-        var finalName = target.IsDirectory
-            ? newName
-            : (Path.HasExtension(newName) ? newName : $"{newName}{Path.GetExtension(target.Name)}");
-        var destinationRelative = string.IsNullOrEmpty(parentRelative) ? finalName : $"{parentRelative}/{finalName}";
+        var sourceRelativePath = target.RelativePath;
+        var destinationRelative = ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
 
         state.DbState = ProjectDbState.LockedImporting;
         try
         {
             var response = await ExecuteProjectCommandAsync(
                 session,
-                new ProjectCommandRequestDto("rename-asset", target.RelativePath, destinationRelative, null));
+                new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null));
+            if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+            {
+                var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourceRelativePath, allowDirectoryFallback: target.IsDirectory);
+                if (!string.IsNullOrWhiteSpace(fallbackPath)
+                    && !fallbackPath.Equals(sourceRelativePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceRelativePath = fallbackPath;
+                    destinationRelative = ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
+                    response = await ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null));
+                }
+            }
+
             if (!response.Ok)
             {
                 outputs.Add(FormatProjectCommandFailure("rename", response.Message));
@@ -555,7 +592,8 @@ internal sealed class ProjectViewService
 
     private static ProjectTreeEntry? FindEntryBySelector(ProjectViewState state, string selector)
     {
-        if (int.TryParse(selector, out var index))
+        var normalizedSelector = NormalizeLoadSelector(selector);
+        if (int.TryParse(normalizedSelector, out var index))
         {
             var visible = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
             if (visible is not null)
@@ -573,11 +611,118 @@ internal sealed class ProjectViewService
             return null;
         }
 
-        var normalized = selector.Trim().Replace('\\', '/');
+        var normalized = normalizedSelector.Replace('\\', '/');
         return state.VisibleEntries.FirstOrDefault(entry =>
             entry.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase)
             || entry.RelativePath.Equals(normalized, StringComparison.OrdinalIgnoreCase)
             || entry.RelativePath.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeLoadSelector(string selector)
+    {
+        var normalized = selector.Trim();
+        if (normalized.Length >= 2
+            && ((normalized.StartsWith('<') && normalized.EndsWith('>'))
+                || (normalized.StartsWith('"') && normalized.EndsWith('"'))
+                || (normalized.StartsWith('\'') && normalized.EndsWith('\''))))
+        {
+            normalized = normalized[1..^1].Trim();
+        }
+
+        return normalized;
+    }
+
+    private static string ComputeRenameDestinationPath(string sourceRelativePath, bool isDirectory, string newName)
+    {
+        var parentRelative = Path.GetDirectoryName(sourceRelativePath)?.Replace('\\', '/') ?? string.Empty;
+        var sourceName = Path.GetFileName(sourceRelativePath);
+        var finalName = isDirectory
+            ? newName
+            : (Path.HasExtension(newName) ? newName : $"{newName}{Path.GetExtension(sourceName)}");
+        return string.IsNullOrEmpty(parentRelative) ? finalName : $"{parentRelative}/{finalName}";
+    }
+
+    private async Task<string?> ResolveAssetFallbackPathAsync(CliSessionState session, string targetRelativePath, bool allowDirectoryFallback)
+    {
+        var targetPath = targetRelativePath.Replace('\\', '/');
+        if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            var targetAbsolutePath = ResolveAbsolutePath(session.CurrentProjectPath, targetPath);
+            if (File.Exists(targetAbsolutePath) || Directory.Exists(targetAbsolutePath))
+            {
+                return targetPath;
+            }
+        }
+
+        await SyncAssetIndexAsync(session);
+        var paths = session.ProjectView.AssetPathByInstanceId.Values
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (paths.Count > 0)
+        {
+            var exact = paths.FirstOrDefault(path => path.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(exact))
+            {
+                return exact;
+            }
+
+            var fileName = Path.GetFileName(targetPath);
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                var sameFileName = paths
+                    .Where(path => Path.GetFileName(path).Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (sameFileName.Count == 1)
+                {
+                    return sameFileName[0];
+                }
+
+                var extension = Path.GetExtension(fileName);
+                if (!string.IsNullOrWhiteSpace(extension))
+                {
+                    var stem = Path.GetFileNameWithoutExtension(fileName);
+                    var sameStem = paths
+                        .Where(path => Path.GetExtension(path).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                        .Where(path => Path.GetFileNameWithoutExtension(path).Equals(stem, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (sameStem.Count == 1)
+                    {
+                        return sameStem[0];
+                    }
+                }
+            }
+        }
+
+        if (!allowDirectoryFallback || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return null;
+        }
+
+        var projectAssetsPath = Path.Combine(session.CurrentProjectPath, "Assets");
+        if (!Directory.Exists(projectAssetsPath))
+        {
+            return null;
+        }
+
+        var targetDirectoryName = Path.GetFileName(targetPath.TrimEnd('/', '\\'));
+        if (string.IsNullOrWhiteSpace(targetDirectoryName))
+        {
+            return null;
+        }
+
+        var matchingDirectories = Directory
+            .EnumerateDirectories(projectAssetsPath, targetDirectoryName, SearchOption.AllDirectories)
+            .Select(path => "Assets/" + Path.GetRelativePath(projectAssetsPath, path).Replace('\\', '/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return matchingDirectories.Count == 1 ? matchingDirectories[0] : null;
+    }
+
+    private static bool IsAssetNotFoundFailure(string? message)
+    {
+        return !string.IsNullOrWhiteSpace(message)
+               && message.Contains("asset not found", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<bool> HandleFuzzyFindAsync(CliSessionState session, IReadOnlyList<string> tokens, List<string> outputs)
