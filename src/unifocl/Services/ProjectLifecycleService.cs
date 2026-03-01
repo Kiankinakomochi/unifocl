@@ -108,7 +108,7 @@ internal sealed class ProjectLifecycleService
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count < 1)
         {
-            log("[red]error[/]: usage /new <project-name> [unity-version]");
+            log("[red]error[/]: usage /new <project-name> <unity-version?>");
             return true;
         }
 
@@ -270,7 +270,7 @@ internal sealed class ProjectLifecycleService
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count > 1)
         {
-            log("[red]error[/]: usage /init [path-to-project]");
+            log("[red]error[/]: usage /init <path-to-project?>");
             return Task.FromResult(true);
         }
 
@@ -309,7 +309,7 @@ internal sealed class ProjectLifecycleService
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count > 1)
         {
-            log("[red]error[/]: usage /recent [n]");
+            log("[red]error[/]: usage /recent <n?>");
             return Task.FromResult(true);
         }
 
@@ -351,7 +351,7 @@ internal sealed class ProjectLifecycleService
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count == 0)
         {
-            log("[red]error[/]: usage /config <get|set|list|reset> [theme] [value]");
+            log("[red]error[/]: usage /config <get|set|list|reset> <theme?> <value?>");
             return Task.FromResult(true);
         }
 
@@ -453,7 +453,7 @@ internal sealed class ProjectLifecycleService
     {
         if (args.Count > 1)
         {
-            log("[red]error[/]: usage /config reset [theme]");
+            log("[red]error[/]: usage /config reset <theme?>");
             return Task.FromResult(true);
         }
 
@@ -484,7 +484,7 @@ internal sealed class ProjectLifecycleService
 
     private static bool LogConfigUsage(Action<string> log)
     {
-        log("[red]error[/]: usage /config <get|set|list|reset> [theme] [value]");
+        log("[red]error[/]: usage /config <get|set|list|reset> <theme?> <value?>");
         return true;
     }
 

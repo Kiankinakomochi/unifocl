@@ -46,12 +46,29 @@ internal static class CliTheme
 
     public static void MarkupLine(string markupLine)
     {
-        AnsiConsole.MarkupLine(ApplyMarkupPalette(markupLine));
+        var themed = ApplyMarkupPalette(markupLine);
+        try
+        {
+            AnsiConsole.MarkupLine(themed);
+        }
+        catch (InvalidOperationException)
+        {
+            // Fallback to plain output if invalid Spectre markup slips through.
+            AnsiConsole.MarkupLine(Spectre.Console.Markup.Escape(themed));
+        }
     }
 
     public static void Markup(string markup)
     {
-        AnsiConsole.Markup(ApplyMarkupPalette(markup));
+        var themed = ApplyMarkupPalette(markup);
+        try
+        {
+            AnsiConsole.Markup(themed);
+        }
+        catch (InvalidOperationException)
+        {
+            AnsiConsole.Markup(Spectre.Console.Markup.Escape(themed));
+        }
     }
 
     public static string CursorWrapEscaped(string escapedContent)
