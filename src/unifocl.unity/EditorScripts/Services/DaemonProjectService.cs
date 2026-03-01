@@ -154,7 +154,7 @@ namespace UniFocl.EditorBridge
                         });
                     }
 
-                    if (!SceneManager.SetActiveScene(loadedScene))
+                    if (!TryEnsureActiveScene(loadedScene, requestedScenePath))
                     {
                         return JsonUtility.ToJson(new ProjectCommandResponse
                         {
@@ -199,6 +199,44 @@ namespace UniFocl.EditorBridge
             return !string.IsNullOrWhiteSpace(assetPath)
                    && assetPath.StartsWith("Assets/", StringComparison.Ordinal)
                    && !assetPath.Contains("..", StringComparison.Ordinal);
+        }
+
+        private static bool TryEnsureActiveScene(Scene loadedScene, string requestedScenePath)
+        {
+            if (!loadedScene.IsValid() || !loadedScene.isLoaded)
+            {
+                return false;
+            }
+
+            if (IsRequestedSceneActive(requestedScenePath))
+            {
+                return true;
+            }
+
+            if (SceneManager.SetActiveScene(loadedScene) && IsRequestedSceneActive(requestedScenePath))
+            {
+                return true;
+            }
+
+            if (EditorSceneManager.SetActiveScene(loadedScene) && IsRequestedSceneActive(requestedScenePath))
+            {
+                return true;
+            }
+
+            // Opening with OpenSceneMode.Single usually makes the scene active already.
+            return IsRequestedSceneActive(requestedScenePath);
+        }
+
+        private static bool IsRequestedSceneActive(string requestedScenePath)
+        {
+            var activeScene = SceneManager.GetActiveScene();
+            if (!activeScene.IsValid() || !activeScene.isLoaded)
+            {
+                return false;
+            }
+
+            return activeScene.path.Replace('\\', '/')
+                .Equals(requestedScenePath, StringComparison.OrdinalIgnoreCase);
         }
 
         private static string GetProjectRoot()
