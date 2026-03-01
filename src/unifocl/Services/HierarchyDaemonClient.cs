@@ -83,6 +83,25 @@ internal sealed class HierarchyDaemonClient
         }
     }
 
+    public async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(int port, ProjectCommandRequestDto request)
+    {
+        var payload = await SendPostJsonAsync($"http://127.0.0.1:{port}/project/command", request);
+        if (payload is null)
+        {
+            return new ProjectCommandResponseDto(false, "daemon did not return a project response", null);
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<ProjectCommandResponseDto>(payload, JsonOptions);
+            return parsed ?? new ProjectCommandResponseDto(false, "daemon returned empty project response", null);
+        }
+        catch
+        {
+            return new ProjectCommandResponseDto(false, "daemon returned invalid project response", null);
+        }
+    }
+
     private static async Task<string?> SendGetAsync(string uri)
     {
         try

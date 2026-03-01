@@ -17,6 +17,7 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonAssetIndexService.cs" LogicalName="Payload/EditorScripts/Services/DaemonAssetIndexService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonHierarchyService.cs" LogicalName="Payload/EditorScripts/Services/DaemonHierarchyService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonInspectorService.cs" LogicalName="Payload/EditorScripts/Services/DaemonInspectorService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.cs" />
     <EmbeddedResource Include="../unifocl.unity/SharedModels/BridgeModels.cs" LogicalName="Payload/SharedModels/BridgeModels.cs" />
   </ItemGroup>
 

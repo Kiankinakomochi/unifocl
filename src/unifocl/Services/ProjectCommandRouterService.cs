@@ -48,7 +48,6 @@ internal sealed class ProjectCommandRouterService
             return true;
         }
 
-        var projectPath = session.CurrentProjectPath;
         var normalizedInput = NormalizeContextualInput(input, session.ContextMode, log);
         if (normalizedInput is null)
         {
@@ -92,25 +91,8 @@ internal sealed class ProjectCommandRouterService
 
         if (IsDaemonCommand(tokens))
         {
-            var touched = await daemonControlService.TouchAttachedDaemonAsync(session);
-            if (!touched)
-            {
-                await AnsiConsole.Status()
-                    .Spinner(Spinner.Known.Dots)
-                    .StartAsync("Headless daemon sleeping. Cold starting...", async _ =>
-                    {
-                        await daemonControlService.EnsureProjectDaemonAsync(projectPath, daemonRuntime, session, log);
-                    });
-            }
-
-            if (!await daemonControlService.TouchAttachedDaemonAsync(session))
-            {
-                log("[red]daemon[/]: unavailable after cold start attempt");
-                return true;
-            }
-
-            log("[grey]daemon[/]: routed command to headless daemon (stub bridge)");
-            log($"[deepskyblue1]stub[/]: daemon command [white]{Markup.Escape(normalizedInput)}[/]");
+            log($"[yellow]project[/]: unsupported project command: [white]{Markup.Escape(normalizedInput)}[/]");
+            log("[grey]project[/]: use load/mk script/rename/rm/f inside project mode, or /hierarchy and /inspect for scene/object operations");
             return true;
         }
 

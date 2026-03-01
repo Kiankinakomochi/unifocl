@@ -60,23 +60,23 @@ internal sealed class ProjectViewService
                  && tokens[1].Equals("script", StringComparison.OrdinalIgnoreCase))
         {
             await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
-            handled = HandleMakeScript(tokens[2], session.CurrentProjectPath, session.ProjectView, outputs);
+            handled = await HandleMakeScriptViaBridgeAsync(tokens[2], session.CurrentProjectPath, session, outputs);
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("load", StringComparison.OrdinalIgnoreCase))
         {
             await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
             var selector = string.Join(' ', tokens.Skip(1));
-            handled = HandleLoad(selector, session, outputs);
+            handled = await HandleLoadViaBridgeAsync(selector, session, outputs);
         }
         else if (tokens.Count >= 3 && tokens[0].Equals("rename", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
             await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
-            handled = HandleRename(index, tokens[2], session.CurrentProjectPath, session.ProjectView, outputs);
+            handled = await HandleRenameViaBridgeAsync(index, tokens[2], session, outputs);
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
             await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
-            handled = HandleRemove(index, session.CurrentProjectPath, session.ProjectView, outputs);
+            handled = await HandleRemoveViaBridgeAsync(index, session, outputs);
         }
         else if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
         {
@@ -337,7 +337,7 @@ internal sealed class ProjectViewService
         return state.ExpandedDirectories.Contains(entry.RelativePath);
     }
 
-    private static async Task HandleProjectFocusTabAsync(
+    private async Task HandleProjectFocusTabAsync(
         ProjectTreeEntry entry,
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -357,11 +357,16 @@ internal sealed class ProjectViewService
         }
 
         await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
-        HandleLoad(entry.Index.ToString(), session, outputs);
+        await HandleLoadViaBridgeAsync(entry.Index.ToString(), session, outputs);
     }
 
-    private static bool HandleMakeScript(string rawName, string projectPath, ProjectViewState state, List<string> outputs)
+    private async Task<bool> HandleMakeScriptViaBridgeAsync(
+        string rawName,
+        string projectPath,
+        CliSessionState session,
+        List<string> outputs)
     {
+        var state = session.ProjectView;
         var typeName = SanitizeTypeName(rawName);
         if (string.IsNullOrWhiteSpace(typeName))
         {
@@ -378,20 +383,38 @@ internal sealed class ProjectViewService
         }
 
         var template = ResolveTemplate(projectPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(targetAbsolute) ?? ResolveAbsolutePath(projectPath, state.RelativeCwd));
-
         state.DbState = ProjectDbState.LockedImporting;
-        outputs.Add($"[*] template: found '{template.TemplateName}' in {template.TemplateSource}");
-        File.WriteAllText(targetAbsolute, template.Content.Replace("#NAME#", typeName));
-        outputs.Add($"[+] write: {targetRelative}");
-        outputs.Add("[!] Unity AssetDatabase locking... (Importing)");
-        outputs.Add("[=] import complete. metadata synced.");
-        state.DbState = ProjectDbState.IdleSafe;
-        return true;
+        try
+        {
+            outputs.Add($"[*] template: found '{template.TemplateName}' in {template.TemplateSource}");
+            var response = await ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto(
+                    "mk-script",
+                    targetRelative,
+                    null,
+                    template.Content.Replace("#NAME#", typeName)));
+
+            if (!response.Ok)
+            {
+                outputs.Add($"[x] create failed: {response.Message}");
+                return true;
+            }
+
+            outputs.Add($"[+] created: {targetRelative}");
+            await SyncAssetIndexAsync(session);
+            RefreshTree(projectPath, state);
+            return true;
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
     }
 
-    private static bool HandleRemove(int index, string projectPath, ProjectViewState state, List<string> outputs)
+    private async Task<bool> HandleRemoveViaBridgeAsync(int index, CliSessionState session, List<string> outputs)
     {
+        var state = session.ProjectView;
         var target = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
         if (target is null)
         {
@@ -399,35 +422,34 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        var targetAbsolute = ResolveAbsolutePath(projectPath, target.RelativePath);
         state.DbState = ProjectDbState.LockedImporting;
-        outputs.Add($"[!] AssetDatabase.MoveAssetToTrash({target.RelativePath})");
         try
         {
-            if (target.IsDirectory)
+            var response = await ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto("remove-asset", target.RelativePath, null, null));
+            if (!response.Ok)
             {
-                Directory.Delete(targetAbsolute, recursive: true);
-            }
-            else
-            {
-                File.Delete(targetAbsolute);
+                outputs.Add($"[x] remove failed: {response.Message}");
+                return true;
             }
 
             outputs.Add($"[=] removed: {target.RelativePath}");
-        }
-        catch (Exception ex)
-        {
-            outputs.Add($"[x] remove failed: {ex.Message}");
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                RefreshTree(session.CurrentProjectPath, state);
+            }
+
+            await SyncAssetIndexAsync(session);
+            return true;
         }
         finally
         {
             state.DbState = ProjectDbState.IdleSafe;
         }
-
-        return true;
     }
 
-    private static bool HandleLoad(string selector, CliSessionState session, List<string> outputs)
+    private async Task<bool> HandleLoadViaBridgeAsync(string selector, CliSessionState session, List<string> outputs)
     {
         var state = session.ProjectView;
         if (string.IsNullOrWhiteSpace(selector))
@@ -449,10 +471,18 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        var extension = Path.GetExtension(target.Name);
-        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
+        var response = await ExecuteProjectCommandAsync(
+            session,
+            new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null));
+        if (!response.Ok)
         {
-            outputs.Add($"[*] EditorSceneManager.OpenScene({target.RelativePath})");
+            outputs.Add($"[x] load failed: {response.Message}");
+            return true;
+        }
+
+        var extension = Path.GetExtension(target.Name);
+        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase) || response.Kind?.Equals("scene", StringComparison.OrdinalIgnoreCase) == true)
+        {
             outputs.Add($"[=] loaded scene: {target.Name}");
             outputs.Add("[i] switched to hierarchy mode");
             session.ContextMode = CliContextMode.Hierarchy;
@@ -460,15 +490,67 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
+        outputs.Add($"[=] opened script: {target.Name}");
+        return true;
+    }
+
+    private async Task<bool> HandleRenameViaBridgeAsync(int index, string newName, CliSessionState session, List<string> outputs)
+    {
+        var state = session.ProjectView;
+        var target = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
+        if (target is null)
         {
-            outputs.Add($"[*] AssetDatabase.OpenAsset({target.RelativePath})");
-            outputs.Add($"[=] opened script: {target.Name}");
+            outputs.Add($"[x] invalid index: {index}");
             return true;
         }
 
-        outputs.Add($"[x] unsupported asset type: {extension} (supported: .unity, .cs)");
-        return true;
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            outputs.Add("[x] new name cannot be empty");
+            return true;
+        }
+
+        var parentRelative = Path.GetDirectoryName(target.RelativePath)?.Replace('\\', '/') ?? string.Empty;
+        var finalName = target.IsDirectory
+            ? newName
+            : (Path.HasExtension(newName) ? newName : $"{newName}{Path.GetExtension(target.Name)}");
+        var destinationRelative = string.IsNullOrEmpty(parentRelative) ? finalName : $"{parentRelative}/{finalName}";
+
+        state.DbState = ProjectDbState.LockedImporting;
+        try
+        {
+            var response = await ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto("rename-asset", target.RelativePath, destinationRelative, null));
+            if (!response.Ok)
+            {
+                outputs.Add($"[x] rename failed: {response.Message}");
+                return true;
+            }
+
+            outputs.Add("[=] rename complete. .meta file updated successfully.");
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                RefreshTree(session.CurrentProjectPath, state);
+            }
+
+            await SyncAssetIndexAsync(session);
+            return true;
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
+    }
+
+    private async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(CliSessionState session, ProjectCommandRequestDto request)
+    {
+        if (session.AttachedPort is not int port)
+        {
+            return new ProjectCommandResponseDto(false, "daemon is not attached", null);
+        }
+
+        return await _daemonClient.ExecuteProjectCommandAsync(port, request);
     }
 
     private static ProjectTreeEntry? FindEntryBySelector(ProjectViewState state, string selector)
@@ -555,74 +637,6 @@ internal sealed class ProjectViewService
         foreach (var match in top)
         {
             outputs.Add($"[{match.Index}] {match.Path}");
-        }
-
-        return true;
-    }
-
-    private static bool HandleRename(int index, string newName, string projectPath, ProjectViewState state, List<string> outputs)
-    {
-        var target = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
-        if (target is null)
-        {
-            outputs.Add($"[x] invalid index: {index}");
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(newName))
-        {
-            outputs.Add("[x] new name cannot be empty");
-            return true;
-        }
-
-        var sourceAbsolute = ResolveAbsolutePath(projectPath, target.RelativePath);
-        var parentRelative = Path.GetDirectoryName(target.RelativePath)?.Replace('\\', '/') ?? string.Empty;
-        var sourceDisplay = target.IsDirectory ? $"{target.Name}/" : target.Name;
-        var targetDisplay = newName;
-
-        string finalName;
-        if (target.IsDirectory)
-        {
-            finalName = newName;
-        }
-        else
-        {
-            var extension = Path.GetExtension(target.Name);
-            finalName = Path.HasExtension(newName) ? newName : $"{newName}{extension}";
-            targetDisplay = finalName;
-        }
-
-        var destinationRelative = string.IsNullOrEmpty(parentRelative) ? finalName : $"{parentRelative}/{finalName}";
-        var destinationAbsolute = ResolveAbsolutePath(projectPath, destinationRelative);
-        if (File.Exists(destinationAbsolute) || Directory.Exists(destinationAbsolute))
-        {
-            outputs.Add($"[x] target already exists: {destinationRelative}");
-            return true;
-        }
-
-        state.DbState = ProjectDbState.LockedImporting;
-        outputs.Add($"[!] AssetDatabase.RenameAsset({sourceDisplay} -> {targetDisplay})");
-
-        try
-        {
-            if (target.IsDirectory)
-            {
-                Directory.Move(sourceAbsolute, destinationAbsolute);
-            }
-            else
-            {
-                File.Move(sourceAbsolute, destinationAbsolute);
-            }
-
-            outputs.Add("[=] rename complete. .meta file updated successfully.");
-        }
-        catch (Exception ex)
-        {
-            outputs.Add($"[x] rename failed: {ex.Message}");
-        }
-        finally
-        {
-            state.DbState = ProjectDbState.IdleSafe;
         }
 
         return true;

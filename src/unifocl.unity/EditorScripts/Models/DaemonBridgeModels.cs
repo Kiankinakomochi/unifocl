@@ -161,5 +161,22 @@ namespace UniFocl.EditorBridge
     {
         public bool ok;
     }
+
+    [Serializable]
+    internal sealed class ProjectCommandRequest
+    {
+        public string action = string.Empty;
+        public string assetPath = string.Empty;
+        public string newAssetPath = string.Empty;
+        public string content = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class ProjectCommandResponse
+    {
+        public bool ok;
+        public string message = string.Empty;
+        public string kind = string.Empty;
+    }
 }
 #endif

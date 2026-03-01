@@ -54,7 +54,7 @@ var commands = new List<CommandSpec>
     new("/init [path-to-project]", "Install editor-side CLI bridge dependencies", "/init"),
     new("/clear", "Clear and redraw boot screen", "/clear"),
 
-    // Legacy stubs (visible but non-authoritative schema)
+    // Legacy compatibility commands (not all implemented yet)
     new("/doctor", "Run diagnostics for environment and tooling", "/doctor"),
     new("/logs [daemon|unity] [-f]", "Tail or follow daemon/unity logs", "/logs"),
     new("/scan [--root <dir>] [--depth n]", "Find Unity projects under a directory", "/scan"),
@@ -283,8 +283,8 @@ while (true)
         continue;
     }
 
-    AppendLog(streamLog, $"[deepskyblue1]stub[/]: {Markup.Escape(matched.Signature)}");
-    WriteMockCommandStream(input, streamLog);
+    AppendLog(streamLog, $"[yellow]command[/]: not implemented yet -> {Markup.Escape(matched.Signature)}");
+    AppendLog(streamLog, "[grey]hint[/]: run /help for implemented commands and mode-specific workflows");
 }
 
 static string? ReadInput(
@@ -996,24 +996,6 @@ static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
         .OrderByDescending(c => c.Trigger.Length)
         .FirstOrDefault(c => normalized == c.Trigger
                              || normalized.StartsWith(c.Trigger + " ", StringComparison.OrdinalIgnoreCase));
-}
-
-static void WriteMockCommandStream(string input, List<string> streamLog)
-{
-    var lines = new[]
-    {
-        "[grey]stream[/]: validating command payload",
-        "[grey]stream[/]: checking daemon reachability",
-        "[grey]stream[/]: loading mock capability graph",
-        "[grey]stream[/]: command stub executed",
-        "[green]stream[/]: done"
-    };
-
-    foreach (var line in lines)
-    {
-        AppendLog(streamLog, $"{line} [dim]({Markup.Escape(input)})[/]");
-        Thread.Sleep(110);
-    }
 }
 
 static void AppendLog(List<string> streamLog, string line)

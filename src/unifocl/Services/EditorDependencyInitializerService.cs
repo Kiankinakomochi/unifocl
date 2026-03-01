@@ -13,6 +13,7 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonAssetIndexServiceResource = "Payload/EditorScripts/Services/DaemonAssetIndexService.cs";
     private const string DaemonHierarchyServiceResource = "Payload/EditorScripts/Services/DaemonHierarchyService.cs";
     private const string DaemonInspectorServiceResource = "Payload/EditorScripts/Services/DaemonInspectorService.cs";
+    private const string DaemonProjectServiceResource = "Payload/EditorScripts/Services/DaemonProjectService.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
 
     public OperationResult InitializeProject(string projectPath, Action<string> log)
@@ -110,7 +111,8 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Models", "DaemonBridgeModels.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonAssetIndexService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonHierarchyService.cs"),
-            Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs")
+            Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.cs")
         };
         foreach (var requiredFile in requiredFiles)
         {
@@ -198,7 +200,8 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonRuntimeModelsResource, Path.Combine("Editor", "Models", "DaemonBridgeModels.cs")),
                 (DaemonAssetIndexServiceResource, Path.Combine("Editor", "Services", "DaemonAssetIndexService.cs")),
                 (DaemonHierarchyServiceResource, Path.Combine("Editor", "Services", "DaemonHierarchyService.cs")),
-                (DaemonInspectorServiceResource, Path.Combine("Editor", "Services", "DaemonInspectorService.cs"))
+                (DaemonInspectorServiceResource, Path.Combine("Editor", "Services", "DaemonInspectorService.cs")),
+                (DaemonProjectServiceResource, Path.Combine("Editor", "Services", "DaemonProjectService.cs"))
             };
 
             foreach (var item in resourceToTarget)
