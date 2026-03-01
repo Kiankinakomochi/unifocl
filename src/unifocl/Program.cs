@@ -364,16 +364,20 @@ static string? ReadInteractiveInput(
         switch (key.Key)
         {
             case ConsoleKey.Enter:
-                Console.WriteLine();
                 if (intellisenseSelectionArmed
                     && candidates.Count > 0
                     && selectedIntellisenseCandidateIndex >= 0
                     && selectedIntellisenseCandidateIndex < candidates.Count
                     && !string.IsNullOrWhiteSpace(candidates[selectedIntellisenseCandidateIndex].CommitCommand))
                 {
-                    return candidates[selectedIntellisenseCandidateIndex].CommitCommand!;
+                    input.Clear();
+                    input.Append(candidates[selectedIntellisenseCandidateIndex].CommitCommand!);
+                    intellisenseDismissed = false;
+                    intellisenseSelectionArmed = false;
+                    break;
                 }
 
+                Console.WriteLine();
                 return input.ToString();
             case ConsoleKey.Backspace:
                 if (input.Length > 0)
@@ -717,7 +721,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] enter/exit inspector focus mode (inspector context)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] dismiss intellisense (or clear input if already dismissed)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] fuzzy candidate selection in composer");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] commit command/input");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] insert selected intellisense suggestion, or commit input when none selected");
 
     AppendLog(streamLog, "[grey]keybinds[/]: hierarchy focus");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted GameObject");
@@ -800,7 +804,7 @@ static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> co
     {
         return new[]
         {
-            "[grey]intellisense[/]: command suggestions [dim](up/down + enter)[/]",
+            "[grey]intellisense[/]: command suggestions [dim](up/down + enter to insert)[/]",
             $"[dim]no matches for {Markup.Escape(query)}[/]"
         };
     }
@@ -808,7 +812,7 @@ static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> co
     var selected = Math.Clamp(selectedSuggestionIndex, 0, matches.Count - 1);
     var lines = new List<string>
     {
-        "[grey]intellisense[/]: command suggestions [dim](up/down + enter)[/]"
+        "[grey]intellisense[/]: command suggestions [dim](up/down + enter to insert)[/]"
     };
     for (var i = 0; i < matches.Count; i++)
     {
@@ -848,7 +852,7 @@ static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState sess
         return false;
     }
 
-    lines.Add($"[grey]fuzzy[/]: {Markup.Escape(modeLabel)} [dim](up/down + enter)[/]");
+    lines.Add($"[grey]fuzzy[/]: {Markup.Escape(modeLabel)} [dim](up/down + enter to insert)[/]");
     if (candidates.Count == 0)
     {
         lines.Add($"[dim]{Markup.Escape(emptyLabel)}[/]");
