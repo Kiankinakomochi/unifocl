@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -8,6 +9,7 @@ using System.Threading.Tasks;
 using UniFocl.SharedModels;
 using UnityEditor;
 using UnityEngine;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace UniFocl.EditorBridge
 {
@@ -37,7 +39,10 @@ namespace UniFocl.EditorBridge
         private static DateTime _lastActivityUtc;
         private static bool _running;
         private static bool _autoExitEditor;
+        private static bool _isBatchMode;
         private static int _inactivityTtlSeconds;
+        private static int _mainThreadManagedThreadId;
+        private static readonly ConcurrentQueue<MainThreadWorkItem> _mainThreadWorkQueue = new();
 
         public static bool HasDaemonServiceArg()
         {
@@ -52,6 +57,7 @@ namespace UniFocl.EditorBridge
 
             while (_running)
             {
+                DrainMainThreadWorkQueue();
                 Thread.Sleep(200);
             }
         }
@@ -75,8 +81,10 @@ namespace UniFocl.EditorBridge
             }
 
             _autoExitEditor = autoExitEditorOnInactivity;
+            _isBatchMode = Application.isBatchMode;
             _inactivityTtlSeconds = Math.Max(1, options.ttlSeconds);
             _lastActivityUtc = DateTime.UtcNow;
+            _mainThreadManagedThreadId = Environment.CurrentManagedThreadId;
 
             _cts = new CancellationTokenSource();
             _listener = new HttpListener();
@@ -89,7 +97,8 @@ namespace UniFocl.EditorBridge
 
             _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
 
-            Debug.Log($"[unifocl] CLIDaemon started on http://127.0.0.1:{options.port}/ (batch={Application.isBatchMode}, autoExit={_autoExitEditor})");
+            var dispatcherMode = _isBatchMode ? "batch-queue" : "delay-call";
+            Debug.Log($"[unifocl] CLIDaemon started on http://127.0.0.1:{options.port}/ (batch={_isBatchMode}, autoExit={_autoExitEditor}, dispatcher={dispatcherMode})");
         }
 
         private static async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -157,7 +166,7 @@ namespace UniFocl.EditorBridge
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
                 {
                     await WriteTextResponseAsync(context.Response, "STOPPING");
-                    StopInternal(quitEditor: Application.isBatchMode);
+                    StopInternal(quitEditor: _isBatchMode);
                     return;
                 }
 
@@ -214,7 +223,12 @@ namespace UniFocl.EditorBridge
                 {
                     var payload = await ReadRequestBodyAsync(request);
                     MarkActivity();
+                    var action = TryExtractProjectAction(payload);
+                    var stopwatch = Stopwatch.StartNew();
+                    Debug.Log($"[unifocl] project command received: action={action}");
                     var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.Execute(payload));
+                    stopwatch.Stop();
+                    Debug.Log($"[unifocl] project command completed: action={action}, elapsedMs={stopwatch.ElapsedMilliseconds}");
                     await WriteJsonResponseAsync(context.Response, response);
                     return;
                 }
@@ -222,16 +236,53 @@ namespace UniFocl.EditorBridge
                 MarkActivity();
                 await WriteTextResponseAsync(context.Response, "ERR", 404);
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.LogError($"[unifocl] request failed: {request.HttpMethod} {path} -> {ex}");
                 try
                 {
-                    await WriteTextResponseAsync(context.Response, "ERR", 500);
+                    var detail = $"ERR: {ex.GetType().Name}: {ex.Message}";
+                    await WriteTextResponseAsync(context.Response, detail, 500);
                 }
                 catch
                 {
                 }
             }
+        }
+
+        private static string TryExtractProjectAction(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return "<empty>";
+            }
+
+            const string marker = "\"action\"";
+            var actionIndex = payload.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (actionIndex < 0)
+            {
+                return "<missing>";
+            }
+
+            var colonIndex = payload.IndexOf(':', actionIndex + marker.Length);
+            if (colonIndex < 0)
+            {
+                return "<invalid>";
+            }
+
+            var valueStart = payload.IndexOf('"', colonIndex + 1);
+            if (valueStart < 0)
+            {
+                return "<invalid>";
+            }
+
+            var valueEnd = payload.IndexOf('"', valueStart + 1);
+            if (valueEnd <= valueStart)
+            {
+                return "<invalid>";
+            }
+
+            return payload[(valueStart + 1)..valueEnd];
         }
 
         private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
@@ -272,6 +323,8 @@ namespace UniFocl.EditorBridge
                 return;
             }
 
+            DrainMainThreadWorkQueue();
+
             if (DateTime.UtcNow - _lastActivityUtc < TimeSpan.FromSeconds(_inactivityTtlSeconds))
             {
                 return;
@@ -308,8 +361,12 @@ namespace UniFocl.EditorBridge
             _cts?.Dispose();
             _cts = null;
             _listener = null;
+            _isBatchMode = false;
+            _mainThreadManagedThreadId = 0;
 
             EditorApplication.update -= OnEditorUpdate;
+
+            FailPendingMainThreadWork();
 
             if (quitEditor)
             {
@@ -319,7 +376,27 @@ namespace UniFocl.EditorBridge
 
         private static Task<string> ExecuteOnMainThreadAsync(Func<string> work)
         {
+            if (_mainThreadManagedThreadId != 0
+                && Environment.CurrentManagedThreadId == _mainThreadManagedThreadId)
+            {
+                try
+                {
+                    return Task.FromResult(work());
+                }
+                catch (Exception ex)
+                {
+                    return Task.FromException<string>(ex);
+                }
+            }
+
             var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            if (_isBatchMode)
+            {
+                _mainThreadWorkQueue.Enqueue(new MainThreadWorkItem(work, completion));
+                return completion.Task;
+            }
+
             EditorApplication.delayCall += Execute;
             return completion.Task;
 
@@ -333,6 +410,30 @@ namespace UniFocl.EditorBridge
                 {
                     completion.TrySetException(ex);
                 }
+            }
+        }
+
+        private static void DrainMainThreadWorkQueue()
+        {
+            while (_mainThreadWorkQueue.TryDequeue(out var item))
+            {
+                try
+                {
+                    item.Completion.TrySetResult(item.Work());
+                }
+                catch (Exception ex)
+                {
+                    item.Completion.TrySetException(ex);
+                }
+            }
+        }
+
+        private static void FailPendingMainThreadWork()
+        {
+            var ex = new InvalidOperationException("CLI daemon stopped before main-thread work could execute");
+            while (_mainThreadWorkQueue.TryDequeue(out var item))
+            {
+                item.Completion.TrySetException(ex);
             }
         }
 
@@ -410,6 +511,18 @@ namespace UniFocl.EditorBridge
             }
 
             return parsed;
+        }
+
+        private readonly struct MainThreadWorkItem
+        {
+            public MainThreadWorkItem(Func<string> work, TaskCompletionSource<string> completion)
+            {
+                Work = work;
+                Completion = completion;
+            }
+
+            public Func<string> Work { get; }
+            public TaskCompletionSource<string> Completion { get; }
         }
     }
 

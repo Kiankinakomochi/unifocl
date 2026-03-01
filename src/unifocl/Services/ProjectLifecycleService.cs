@@ -742,26 +742,23 @@ internal sealed class ProjectLifecycleService
                 }
             }
 
-            if (editorDependencyInitializerService.NeedsInitialization(projectPath, out var initReason))
+            var needsInitialization = editorDependencyInitializerService.NeedsInitialization(projectPath, out var initReason);
+            if (needsInitialization)
             {
                 log($"[yellow]init[/]: editor bridge dependency is missing or invalid ({Markup.Escape(initReason)}).");
-                if (editorDependencyInitializerService.PromptForInitialization(log))
-                {
-                    var initResult = editorDependencyInitializerService.InitializeProject(projectPath, log);
-                    if (!initResult.Ok)
-                    {
-                        log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
-                        return false;
-                    }
-                }
-                else
-                {
-                    log("[yellow]init[/]: skipped; run /init to enable editor-side bridge package");
-                }
             }
             else
             {
                 log("[grey]init[/]: editor bridge dependency already installed");
+            }
+
+            // Always refresh embedded package on open to keep project-side bridge in sync with current CLI payload.
+            log("[grey]init[/]: syncing embedded editor bridge package");
+            var syncResult = editorDependencyInitializerService.InitializeProject(projectPath, log);
+            if (!syncResult.Ok)
+            {
+                log($"[red]error[/]: {Markup.Escape(syncResult.Error)}");
+                return false;
             }
         }
 
@@ -779,58 +776,42 @@ internal sealed class ProjectLifecycleService
         Environment.SetEnvironmentVariable("UNITY_PATH", resolvedEditorPath);
         log($"[grey]open[/]: step 3/5 resolved Unity editor [white]{Markup.Escape(resolvedEditorVersion)}[/] -> [white]{Markup.Escape(resolvedEditorPath)}[/]");
 
-        log("[grey]open[/]: step 4/5 route runtime by active Unity client lock");
+        log("[grey]open[/]: step 4/5 ensure managed daemon bridge");
         var daemonPort = DaemonControlService.ResolveProjectDaemonPort(projectPath);
-        if (DaemonControlService.IsUnityClientActiveForProject(projectPath))
+        if (allowUnsafe)
         {
-            log($"[grey]daemon[/]: Unity editor lock detected; waiting for bridge endpoint [white]127.0.0.1:{daemonPort}[/]");
-            var attached = await daemonControlService.TryAttachProjectDaemonAsync(
-                projectPath,
-                session,
-                log: null,
-                attemptCount: 120,
-                attemptDelayMs: 500);
-            if (attached && session.AttachedPort == daemonPort)
-            {
-                SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, false));
-                log($"[grey]daemon[/]: Unity editor lock detected; attached bridge on [white]127.0.0.1:{daemonPort}[/]");
-            }
-            else
-            {
-                log($"[red]daemon[/]: Unity editor lock detected, but bridge endpoint [white]127.0.0.1:{daemonPort}[/] is not responding");
-                log("[yellow]daemon[/]: wait for Unity editor script compilation/domain reload, then retry /open");
-                return false;
-            }
+            log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster headless boot)");
+        }
+
+        var started = await daemonControlService.EnsureProjectDaemonAsync(
+            projectPath,
+            daemonRuntime,
+            session,
+            log,
+            requireUnityBridge: true,
+            preferHeadless: true,
+            allowUnsafe: allowUnsafe);
+        if (!started)
+        {
+            HandleDaemonStartupFailure(projectPath, session, daemonControlService, log);
+            log("[red]open[/]: daemon is not stable; open aborted before entering project UI");
+            return false;
         }
         else
         {
-            if (allowUnsafe)
+            var stableReservation = await daemonControlService.HasStableManagedProjectDaemonAsync(projectPath, daemonRuntime, session);
+            if (!stableReservation)
             {
-                log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster headless boot)");
+                session.AttachedPort = null;
+                log("[red]daemon[/]: managed daemon reservation check failed (missing pid metadata, attachment, or project endpoint responsiveness)");
+                log("[red]open[/]: open aborted before entering project UI");
+                return false;
             }
 
-            var started = await daemonControlService.EnsureProjectDaemonAsync(
-                projectPath,
-                daemonRuntime,
-                session,
-                log,
-                requireUnityBridge: true,
-                preferHeadless: true,
-                allowUnsafe: allowUnsafe);
-            if (!started)
-            {
-                if (!HandleDaemonStartupFailure(projectPath, session, daemonControlService, log))
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
-                log($"[grey]daemon[/]: started headless daemon on [white]127.0.0.1:{daemonPort}[/]");
-                session.SafeModeEnabled = false;
-                session.LastCompileError = null;
-            }
+            SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
+            log($"[grey]daemon[/]: managed daemon ready on [white]127.0.0.1:{daemonPort}[/]");
+            session.SafeModeEnabled = false;
+            session.LastCompileError = null;
         }
 
         session.CurrentProjectPath = projectPath;
@@ -880,55 +861,9 @@ internal sealed class ProjectLifecycleService
         {
             log($"[yellow]daemon[/]: {Markup.Escape(failure.Summary)}");
         }
-
-        var canEnterSafeMode = CanEnterSafeMode(projectPath);
-        if (Console.IsInputRedirected)
-        {
-            log("[red]daemon[/]: redirected input cannot answer compile-error prompt; aborting open");
-            return false;
-        }
-
-        var options = new List<string>
-        {
-            "Ignore and continue",
-            "Quit open"
-        };
-        if (canEnterSafeMode)
-        {
-            options.Insert(0, "Enter Safe mode");
-        }
-
-        var selected = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title("Daemon startup failed due to compile errors. Choose action:")
-                .PageSize(ResolvePromptPageSize(options.Count, 10))
-                .AddChoices(options));
-
-        if (selected.Equals("Quit open", StringComparison.Ordinal))
-        {
-            log("[yellow]open[/]: cancelled due to compile errors");
-            return false;
-        }
-
-        if (selected.Equals("Enter Safe mode", StringComparison.Ordinal))
-        {
-            session.SafeModeEnabled = true;
-            session.AttachedPort = null;
-            log("[yellow]open[/]: entered safe mode (daemon unavailable; Unity bridge commands are limited)");
-            return true;
-        }
-
-        session.SafeModeEnabled = false;
         session.AttachedPort = null;
-        log("[yellow]open[/]: continuing without daemon attachment; Unity bridge commands may fail until compile errors are fixed");
-        return true;
-    }
-
-    private static bool CanEnterSafeMode(string projectPath)
-    {
-        return Directory.Exists(projectPath)
-               && Directory.Exists(Path.Combine(projectPath, "Assets"))
-               && Directory.Exists(Path.Combine(projectPath, "ProjectSettings"));
+        log("[yellow]open[/]: compile errors blocked daemon startup; fix errors and retry /open");
+        return false;
     }
 
     private static void SaveDaemonSession(string projectPath, DaemonSessionInfo session)
