@@ -7,6 +7,12 @@ internal sealed class ProjectViewService
     private const int MaxTranscriptEntries = 80;
     private readonly ProjectViewRenderer _renderer = new();
     private readonly HierarchyDaemonClient _daemonClient = new();
+    private enum ProjectFocusTabResult
+    {
+        ExpandedDirectory,
+        NestedDirectory,
+        OpenedAsset
+    }
 
     public void OpenInitialView(CliSessionState session)
     {
@@ -130,11 +136,22 @@ internal sealed class ProjectViewService
             var entries = session.ProjectView.VisibleEntries;
             if (entries.Count == 0)
             {
+                session.ProjectView.FocusHighlightedEntryIndex = null;
                 RenderFrame(session.ProjectView, null, focusModeEnabled: true);
             }
             else
             {
+                if (session.ProjectView.FocusHighlightedEntryIndex is int highlightedIndex)
+                {
+                    var highlightedPosition = entries.FindIndex(entry => entry.Index == highlightedIndex);
+                    if (highlightedPosition >= 0)
+                    {
+                        selectedEntryPosition = highlightedPosition;
+                    }
+                }
+
                 selectedEntryPosition = Math.Clamp(selectedEntryPosition, 0, entries.Count - 1);
+                session.ProjectView.FocusHighlightedEntryIndex = entries[selectedEntryPosition].Index;
                 RenderFrame(session.ProjectView, entries[selectedEntryPosition].Index, focusModeEnabled: true);
             }
 
@@ -147,6 +164,7 @@ internal sealed class ProjectViewService
                         selectedEntryPosition = selectedEntryPosition <= 0
                             ? entries.Count - 1
                             : selectedEntryPosition - 1;
+                        session.ProjectView.FocusHighlightedEntryIndex = entries[selectedEntryPosition].Index;
                     }
                     break;
                 case KeyboardIntent.Down:
@@ -155,6 +173,7 @@ internal sealed class ProjectViewService
                         selectedEntryPosition = selectedEntryPosition >= entries.Count - 1
                             ? 0
                             : selectedEntryPosition + 1;
+                        session.ProjectView.FocusHighlightedEntryIndex = entries[selectedEntryPosition].Index;
                     }
                     break;
                 case KeyboardIntent.Tab:
@@ -163,7 +182,8 @@ internal sealed class ProjectViewService
                         break;
                     }
 
-                    await HandleProjectFocusTabAsync(entries[selectedEntryPosition], session, daemonControlService, daemonRuntime, outputs);
+                    var selectedEntry = entries[selectedEntryPosition];
+                    var tabResult = await HandleProjectFocusTabAsync(selectedEntry, session, daemonControlService, daemonRuntime, outputs);
                     if (session.ContextMode != CliContextMode.Project)
                     {
                         AppendTranscript(session.ProjectView, outputs);
@@ -171,15 +191,28 @@ internal sealed class ProjectViewService
                         return;
                     }
 
-                    selectedEntryPosition = 0;
+                    if (tabResult == ProjectFocusTabResult.ExpandedDirectory)
+                    {
+                        session.ProjectView.FocusHighlightedEntryIndex = ResolveExpandedSelectionIndex(
+                            session.CurrentProjectPath,
+                            session.ProjectView,
+                            selectedEntry.RelativePath);
+                    }
+                    else
+                    {
+                        selectedEntryPosition = 0;
+                        session.ProjectView.FocusHighlightedEntryIndex = null;
+                    }
                     break;
                 case KeyboardIntent.ShiftTab:
                     HandleUp(session.ProjectView, outputs);
                     selectedEntryPosition = 0;
+                    session.ProjectView.FocusHighlightedEntryIndex = null;
                     break;
                 case KeyboardIntent.Escape:
                 case KeyboardIntent.FocusProject:
                     outputs.Add("[i] project focus mode disabled");
+                    session.ProjectView.FocusHighlightedEntryIndex = null;
                     AppendTranscript(session.ProjectView, outputs);
                     RenderFrame(session.ProjectView);
                     return;
@@ -222,6 +255,7 @@ internal sealed class ProjectViewService
         state.CommandTranscript.Add("[i] project view ready");
         state.DbState = ProjectDbState.IdleSafe;
         state.Initialized = true;
+        state.FocusHighlightedEntryIndex = null;
         state.AssetIndexRevision = 0;
         state.AssetPathByInstanceId.Clear();
         state.LastFuzzyMatches.Clear();
@@ -336,7 +370,7 @@ internal sealed class ProjectViewService
         return state.ExpandedDirectories.Contains(entry.RelativePath);
     }
 
-    private async Task HandleProjectFocusTabAsync(
+    private async Task<ProjectFocusTabResult> HandleProjectFocusTabAsync(
         ProjectTreeEntry entry,
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -348,14 +382,46 @@ internal sealed class ProjectViewService
             if (!IsExpandedDirectory(session.ProjectView, entry))
             {
                 HandleExpand(entry.Index, session.ProjectView, outputs);
-                return;
+                return ProjectFocusTabResult.ExpandedDirectory;
             }
 
             HandleNest(entry.Index, session.ProjectView, outputs);
-            return;
+            return ProjectFocusTabResult.NestedDirectory;
         }
 
         await HandleLoadViaBridgeAsync(entry.Index.ToString(), session, outputs, daemonControlService, daemonRuntime);
+        return ProjectFocusTabResult.OpenedAsset;
+    }
+
+    private static int? ResolveExpandedSelectionIndex(string projectPath, ProjectViewState state, string expandedRelativePath)
+    {
+        RefreshTree(projectPath, state);
+        var entries = state.VisibleEntries;
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        var expandedIndex = entries.FindIndex(entry =>
+            entry.RelativePath.Equals(expandedRelativePath, StringComparison.OrdinalIgnoreCase));
+        if (expandedIndex < 0)
+        {
+            return null;
+        }
+
+        var expandedEntry = entries[expandedIndex];
+        var firstChildIndex = expandedIndex + 1;
+        if (firstChildIndex < entries.Count)
+        {
+            var firstChild = entries[firstChildIndex];
+            if (firstChild.Depth == expandedEntry.Depth + 1
+                && firstChild.RelativePath.StartsWith(expandedEntry.RelativePath + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return firstChild.Index;
+            }
+        }
+
+        return expandedEntry.Index;
     }
 
     private async Task<bool> HandleMakeScriptViaBridgeAsync(

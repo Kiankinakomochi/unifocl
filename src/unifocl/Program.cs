@@ -750,7 +750,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
 {
     AppendLog(streamLog, "[bold deepskyblue1]unifocl[/] [grey]>[/] [white]/keybinds[/]");
     AppendLog(streamLog, "[grey]keybinds[/]: global");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]F6[/] enter/exit hierarchy focus mode (inside /hierarchy)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit hierarchy focus mode (inside /hierarchy)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context), or recent selection mode after /recent");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] enter/exit inspector focus mode (inspector context)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] dismiss intellisense (or clear input if already dismissed)");
@@ -761,7 +761,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted GameObject");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] expand selected node");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] collapse selected node");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F6[/] exit focus mode");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F7[/] exit focus mode");
 
     AppendLog(streamLog, "[grey]keybinds[/]: project focus");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted file/folder");
@@ -785,7 +785,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     }
     else if (session.ContextMode == CliContextMode.Hierarchy)
     {
-        AppendLog(streamLog, "[grey]keybinds[/]: current context -> hierarchy (F6 available now)");
+        AppendLog(streamLog, "[grey]keybinds[/]: current context -> hierarchy (F7 available now)");
     }
     else
     {

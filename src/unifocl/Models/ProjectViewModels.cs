@@ -8,6 +8,7 @@ internal sealed class ProjectViewState
 {
     public bool Initialized { get; set; }
     public string RelativeCwd { get; set; } = string.Empty;
+    public int? FocusHighlightedEntryIndex { get; set; }
     public List<ProjectTreeEntry> VisibleEntries { get; } = [];
     public HashSet<string> ExpandedDirectories { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> CommandTranscript { get; } = [];

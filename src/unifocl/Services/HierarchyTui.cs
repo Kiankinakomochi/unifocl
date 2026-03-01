@@ -9,7 +9,7 @@ internal sealed class HierarchyTui
     private const int MinCommandRows = 4;
     private const int ReservedPromptRows = 4;
     private const int FrameOverheadRows = 5;
-    private const ConsoleKey FocusModeKey = ConsoleKey.F6;
+    private const ConsoleKey FocusModeKey = ConsoleKey.F7;
 
     private readonly HierarchyDaemonClient _daemonClient = new();
     private int _treeScrollOffset;
@@ -17,7 +17,7 @@ internal sealed class HierarchyTui
     private bool _followCommandScroll = true;
 
     private sealed record HierarchyTreeLine(int? EntryIndex, int? NodeId, bool HasChildren, string Text);
-    private sealed record FocusTreeEntry(int EntryIndex, int NodeId, bool HasChildren);
+    private sealed record FocusTreeEntry(int EntryIndex, int NodeId, int Depth, bool HasChildren);
 
     public async Task RunAsync(
         CliSessionState session,
@@ -65,9 +65,10 @@ internal sealed class HierarchyTui
             Console.Write($"UnityCLI:{cwdPath} > ");
             var firstKey = Console.ReadKey(intercept: true);
             var firstIntent = KeyboardIntentReader.FromConsoleKey(firstKey);
-            if (firstIntent == KeyboardIntent.FocusHierarchy || firstKey.Key == FocusModeKey)
+            if (firstIntent == KeyboardIntent.FocusProject
+                || firstKey.Key == FocusModeKey)
             {
-                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, tab expand, shift+tab collapse, esc exit)");
+                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, tab expand, shift+tab collapse, esc/F7 exit)");
                 await RunKeyboardFocusModeAsync(port, snapshot, cwdId, commandLog, updatedSnapshot =>
                 {
                     snapshot = updatedSnapshot;
@@ -80,27 +81,7 @@ internal sealed class HierarchyTui
                 continue;
             }
 
-            string input;
-            if (firstKey.Key == ConsoleKey.Enter)
-            {
-                Console.WriteLine();
-                input = string.Empty;
-            }
-            else
-            {
-                var firstChar = firstKey.KeyChar;
-                if (!char.IsControl(firstChar))
-                {
-                    Console.Write(firstChar);
-                    var tail = Console.ReadLine() ?? string.Empty;
-                    input = (firstChar + tail).Trim();
-                }
-                else
-                {
-                    Console.WriteLine();
-                    input = string.Empty;
-                }
-            }
+            var input = ReadPromptInputFromFirstKey(firstKey);
 
             if (string.IsNullOrWhiteSpace(input))
             {
@@ -233,7 +214,7 @@ internal sealed class HierarchyTui
 
             if (!response.Ok)
             {
-                commandLog.Add($"[!] {response.Message}");
+                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
                 return true;
             }
 
@@ -255,7 +236,7 @@ internal sealed class HierarchyTui
                 new HierarchyCommandRequestDto("toggle", null, targetId, null, false));
             if (!response.Ok)
             {
-                commandLog.Add($"[!] {response.Message}");
+                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
                 return true;
             }
 
@@ -271,7 +252,7 @@ internal sealed class HierarchyTui
             var response = await _daemonClient.SearchAsync(port, new HierarchySearchRequestDto(query, 20, cwdId));
             if (response?.Ok != true)
             {
-                commandLog.Add($"[!] {(response?.Message ?? "hierarchy fuzzy search failed")}");
+                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response?.Message, "hierarchy fuzzy search failed")}");
                 return true;
             }
 
@@ -366,6 +347,8 @@ internal sealed class HierarchyTui
     {
         var collapsedNodeIds = BuildDefaultCollapsedNodeSet(snapshot.Root, cwdId);
         var selectedEntryPosition = 0;
+        int? highlightedNodeId = null;
+        int? pendingExpandedNodeId = null;
 
         while (true)
         {
@@ -383,8 +366,24 @@ internal sealed class HierarchyTui
                 return;
             }
 
+            if (pendingExpandedNodeId is int expandedNodeId)
+            {
+                highlightedNodeId = ResolveExpandedSelectionNodeId(visibleEntries, expandedNodeId);
+                pendingExpandedNodeId = null;
+            }
+
+            if (highlightedNodeId is int selectedNodeId)
+            {
+                var highlightedPosition = visibleEntries.FindIndex(entry => entry.NodeId == selectedNodeId);
+                if (highlightedPosition >= 0)
+                {
+                    selectedEntryPosition = highlightedPosition;
+                }
+            }
+
             selectedEntryPosition = Math.Clamp(selectedEntryPosition, 0, visibleEntries.Count - 1);
             var selectedEntry = visibleEntries[selectedEntryPosition];
+            highlightedNodeId = selectedEntry.NodeId;
             var highlightedTree = treeLines
                 .Select(line =>
                 {
@@ -408,11 +407,13 @@ internal sealed class HierarchyTui
                     selectedEntryPosition = selectedEntryPosition <= 0
                         ? visibleEntries.Count - 1
                         : selectedEntryPosition - 1;
+                    highlightedNodeId = visibleEntries[selectedEntryPosition].NodeId;
                     break;
                 case KeyboardIntent.Down:
                     selectedEntryPosition = selectedEntryPosition >= visibleEntries.Count - 1
                         ? 0
                         : selectedEntryPosition + 1;
+                    highlightedNodeId = visibleEntries[selectedEntryPosition].NodeId;
                     break;
                 case KeyboardIntent.Tab:
                     selectedEntry = visibleEntries[selectedEntryPosition];
@@ -424,6 +425,7 @@ internal sealed class HierarchyTui
 
                     if (collapsedNodeIds.Remove(selectedEntry.NodeId))
                     {
+                        pendingExpandedNodeId = selectedEntry.NodeId;
                         commandLog.Add($"[*] expanded [{selectedEntry.EntryIndex}]");
                         break;
                     }
@@ -447,7 +449,7 @@ internal sealed class HierarchyTui
                     commandLog.Add($"[i] already collapsed [{selectedEntry.EntryIndex}]");
                     break;
                 case KeyboardIntent.Escape:
-                case KeyboardIntent.FocusHierarchy:
+                case KeyboardIntent.FocusProject:
                     commandLog.Add("[i] hierarchy focus mode disabled");
                     return;
                 default:
@@ -543,7 +545,7 @@ internal sealed class HierarchyTui
         {
             var child = cwdNode.Children[i];
             var isLast = i == cwdNode.Children.Count - 1;
-            Traverse(child, string.Empty, isLast, lines, indexMap, visibleEntries, ref index, collapsedNodeIds);
+            Traverse(child, string.Empty, isLast, depth: 0, lines, indexMap, visibleEntries, ref index, collapsedNodeIds);
         }
 
         return lines;
@@ -553,6 +555,7 @@ internal sealed class HierarchyTui
         HierarchyNodeDto node,
         string prefix,
         bool isLast,
+        int depth,
         List<HierarchyTreeLine> lines,
         Dictionary<int, int> indexMap,
         List<FocusTreeEntry> visibleEntries,
@@ -565,7 +568,7 @@ internal sealed class HierarchyTui
         var collapsedMarker = hasChildren && collapsedNodeIds?.Contains(node.Id) == true ? " [+]" : string.Empty;
         lines.Add(new HierarchyTreeLine(index, node.Id, hasChildren, $"{prefix}{branch} [{index}] {label}{collapsedMarker}"));
         indexMap[index] = node.Id;
-        visibleEntries.Add(new FocusTreeEntry(index, node.Id, hasChildren));
+        visibleEntries.Add(new FocusTreeEntry(index, node.Id, depth, hasChildren));
         index++;
 
         if (hasChildren && collapsedNodeIds?.Contains(node.Id) == true)
@@ -578,8 +581,30 @@ internal sealed class HierarchyTui
         {
             var child = node.Children[i];
             var childLast = i == node.Children.Count - 1;
-            Traverse(child, nextPrefix, childLast, lines, indexMap, visibleEntries, ref index, collapsedNodeIds);
+            Traverse(child, nextPrefix, childLast, depth + 1, lines, indexMap, visibleEntries, ref index, collapsedNodeIds);
         }
+    }
+
+    private static int ResolveExpandedSelectionNodeId(List<FocusTreeEntry> visibleEntries, int expandedNodeId)
+    {
+        var expandedPosition = visibleEntries.FindIndex(entry => entry.NodeId == expandedNodeId);
+        if (expandedPosition < 0)
+        {
+            return expandedNodeId;
+        }
+
+        var expandedEntry = visibleEntries[expandedPosition];
+        var firstChildPosition = expandedPosition + 1;
+        if (firstChildPosition < visibleEntries.Count)
+        {
+            var firstChild = visibleEntries[firstChildPosition];
+            if (firstChild.Depth == expandedEntry.Depth + 1)
+            {
+                return firstChild.NodeId;
+            }
+        }
+
+        return expandedNodeId;
     }
 
     private static HashSet<int> BuildDefaultCollapsedNodeSet(HierarchyNodeDto root, int cwdId)
@@ -715,6 +740,88 @@ internal sealed class HierarchyTui
         }
 
         return null;
+    }
+
+    private static string ReadPromptInputFromFirstKey(ConsoleKeyInfo firstKey)
+    {
+        if (firstKey.Key == ConsoleKey.Enter)
+        {
+            Console.WriteLine();
+            return string.Empty;
+        }
+
+        if (firstKey.Key == ConsoleKey.Escape)
+        {
+            Console.WriteLine();
+            return string.Empty;
+        }
+
+        var input = new StringBuilder();
+        if (!TryAppendInputCharacter(firstKey, input))
+        {
+            Console.WriteLine();
+            return string.Empty;
+        }
+
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return input.ToString().Trim();
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (input.Length == 0)
+                {
+                    continue;
+                }
+
+                input.Length--;
+                Console.Write("\b \b");
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.Escape)
+            {
+                Console.WriteLine();
+                return string.Empty;
+            }
+
+            TryAppendInputCharacter(key, input);
+        }
+    }
+
+    private static bool TryAppendInputCharacter(ConsoleKeyInfo key, StringBuilder input)
+    {
+        if (char.IsControl(key.KeyChar))
+        {
+            return false;
+        }
+
+        input.Append(key.KeyChar);
+        Console.Write(key.KeyChar);
+        return true;
+    }
+
+    private static string FormatHierarchyCommandFailure(string? message, string fallback = "hierarchy command failed")
+    {
+        var normalized = string.IsNullOrWhiteSpace(message) ? fallback : message!;
+        if (IsHierarchyStubbedMessage(normalized))
+        {
+            return $"hierarchy command is stubbed without Unity editor bridge: {normalized}";
+        }
+
+        return normalized;
+    }
+
+    private static bool IsHierarchyStubbedMessage(string message)
+    {
+        return message.Contains("require Unity editor bridge", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("stubbed bridge", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("stubbed", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<string> Tokenize(string input)
