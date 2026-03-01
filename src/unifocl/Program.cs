@@ -44,7 +44,7 @@ var commands = new List<CommandSpec>
     // Extended lifecycle (kept for compatibility)
     new("/new <project-name> [unity-version] [--allow-unsafe]", "Bootstrap a new Unity project", "/new"),
     new("/clone <git-url> [--allow-unsafe]", "Clone repo and set local CLI bridge config", "/clone"),
-    new("/recent [idx] [--allow-unsafe]", "Open recent projects (interactive or by index)", "/recent"),
+    new("/recent [idx] [--allow-unsafe]", "List recent projects (or open by index)", "/recent"),
     new("/daemon start [--port 8080] [--unity <path>] [--project <path>] [--headless] [--allow-unsafe]", "Start always-warm daemon", "/daemon start"),
     new("/daemon stop", "Stop daemon", "/daemon stop"),
     new("/daemon restart", "Restart daemon", "/daemon restart"),
@@ -143,6 +143,16 @@ while (true)
         var input = rawInput.Trim();
         if (string.IsNullOrWhiteSpace(input))
         {
+            continue;
+        }
+
+        if (input.Equals(":focus-recent", StringComparison.OrdinalIgnoreCase))
+        {
+            await projectLifecycleService.TryHandleRecentSelectionToggleAsync(
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
             continue;
         }
 
@@ -454,6 +464,14 @@ static string? ReadInteractiveInput(
                     Console.WriteLine();
                     return ":focus-project";
                 }
+
+                if (input.Length == 0
+                    && (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+                    && session.RecentProjectEntries.Count > 0)
+                {
+                    Console.WriteLine();
+                    return ":focus-recent";
+                }
                 break;
             case ConsoleKey.F8:
                 if (input.Length == 0
@@ -733,7 +751,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[bold deepskyblue1]unifocl[/] [grey]>[/] [white]/keybinds[/]");
     AppendLog(streamLog, "[grey]keybinds[/]: global");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F6[/] enter/exit hierarchy focus mode (inside /hierarchy)");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context), or recent selection mode after /recent");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] enter/exit inspector focus mode (inspector context)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] dismiss intellisense (or clear input if already dismissed)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] fuzzy candidate selection in composer");
