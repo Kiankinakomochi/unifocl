@@ -24,6 +24,8 @@ internal sealed class CliSessionState
     public bool AutoEnterHierarchyRequested { get; set; }
     public ProjectViewState ProjectView { get; } = new();
     public List<string> UnityLogPane { get; } = [];
+    public List<RecentProjectEntry> RecentProjectEntries { get; } = [];
+    public bool RecentSelectionAllowUnsafe { get; set; }
     public bool SafeModeEnabled { get; set; }
     public CompileErrorState? LastCompileError { get; set; }
 
@@ -48,6 +50,8 @@ internal sealed class CliSessionState
         ProjectView.AssetPathByInstanceId.Clear();
         ProjectView.LastFuzzyMatches.Clear();
         UnityLogPane.Clear();
+        RecentProjectEntries.Clear();
+        RecentSelectionAllowUnsafe = false;
         SafeModeEnabled = false;
         LastCompileError = null;
     }
