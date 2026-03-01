@@ -449,11 +449,13 @@ static int RenderComposerFrame(
     int selectedFuzzyCandidateIndex,
     bool suppressIntellisense)
 {
-    var lines = new List<string>
+    var lines = new List<string>();
+    lines.AddRange(BuildComposerUnityLogPane(session));
+    lines.AddRange(new[]
     {
         "[grey]Input[/]",
         $"[bold deepskyblue1]{Markup.Escape(BuildPromptLabel(session))}[/] [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
-    };
+    });
 
     if (suppressIntellisense)
     {
@@ -493,6 +495,55 @@ static int RenderComposerFrame(
     }
 
     return lines.Count;
+}
+
+static IEnumerable<string> BuildComposerUnityLogPane(CliSessionState session)
+{
+    const int maxLogRows = 6;
+    const int fallbackPaneWidth = 78;
+    var paneWidth = Math.Max(30, (Console.IsOutputRedirected ? fallbackPaneWidth : Console.WindowWidth) - 2);
+    var border = new string('─', paneWidth);
+    var lines = new List<string>
+    {
+        $"┌{border}┐",
+        $"│{FitForPane(" UNITY LOG ", paneWidth)}│"
+    };
+
+    var visible = session.UnityLogPane.Skip(Math.Max(0, session.UnityLogPane.Count - maxLogRows)).ToList();
+    if (visible.Count == 0)
+    {
+        visible.Add("[no Unity logs]");
+    }
+
+    for (var i = 0; i < maxLogRows; i++)
+    {
+        var content = i < visible.Count ? visible[i] : string.Empty;
+        lines.Add($"│{FitForPane(content, paneWidth)}│");
+    }
+
+    lines.Add($"└{border}┘");
+    return lines;
+}
+
+static string FitForPane(string text, int width)
+{
+    if (string.IsNullOrEmpty(text))
+    {
+        return new string(' ', width);
+    }
+
+    var normalized = text.Replace(Environment.NewLine, " ").Replace("\n", " ").Replace("\r", " ");
+    if (normalized.Length > width)
+    {
+        normalized = normalized[..Math.Max(0, width - 1)] + "…";
+    }
+
+    if (normalized.Length < width)
+    {
+        normalized = normalized.PadRight(width);
+    }
+
+    return Markup.Escape(normalized);
 }
 
 static string BuildPromptLabel(CliSessionState session)
