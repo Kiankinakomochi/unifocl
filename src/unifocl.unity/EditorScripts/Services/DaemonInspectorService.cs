@@ -689,7 +689,11 @@ namespace UniFocl.EditorBridge
                 normalized = normalized[1..^1];
             }
 
-            var parts = normalized.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var parts = normalized
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Trim())
+                .Where(part => part.Length > 0)
+                .ToArray();
             if (parts.Length != size)
             {
                 return false;

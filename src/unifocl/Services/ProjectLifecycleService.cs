@@ -613,6 +613,11 @@ internal sealed class ProjectLifecycleService
         session.Mode = CliMode.Project;
         session.ContextMode = CliContextMode.Project;
         session.LastOpenedUtc = DateTimeOffset.UtcNow;
+        Environment.SetEnvironmentVariable("UNIFOCL_UNITY_PROJECT_PATH", projectPath);
+        if (!TrySaveLastUnityProjectPath(projectPath, out var configError))
+        {
+            log($"[yellow]config[/]: unable to persist unity project path ({Markup.Escape(configError ?? "unknown error")})");
+        }
         if (!_recentProjectHistoryService.TryRecordProjectOpen(projectPath, session.LastOpenedUtc.Value, out var historyError))
         {
             log($"[yellow]recent[/]: unable to update history ({Markup.Escape(historyError ?? "unknown error")})");
@@ -879,6 +884,16 @@ internal sealed class ProjectLifecycleService
                 config.Theme = themeProperty.GetString();
             }
 
+            if (document.RootElement.TryGetProperty("unityProjectPath", out var unityProjectPathProperty)
+                && unityProjectPathProperty.ValueKind == JsonValueKind.String)
+            {
+                var configuredPath = unityProjectPathProperty.GetString();
+                if (!string.IsNullOrWhiteSpace(configuredPath))
+                {
+                    config.UnityProjectPath = Path.GetFullPath(configuredPath);
+                }
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -903,7 +918,11 @@ internal sealed class ProjectLifecycleService
 
             Directory.CreateDirectory(directory);
             var payload = JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["theme"] = NormalizeTheme(config.Theme) },
+                new Dictionary<string, string?>
+                {
+                    ["theme"] = NormalizeTheme(config.Theme),
+                    ["unityProjectPath"] = NormalizeProjectPath(config.UnityProjectPath)
+                },
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(path, payload + Environment.NewLine);
             return true;
@@ -947,6 +966,35 @@ internal sealed class ProjectLifecycleService
         return null;
     }
 
+    private static string? NormalizeProjectPath(string? projectPath)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return null;
+        }
+
+        return Path.GetFullPath(projectPath);
+    }
+
+    private static bool TrySaveLastUnityProjectPath(string projectPath, out string? error)
+    {
+        error = null;
+        if (!TryLoadCliConfig(out var config, out var loadError))
+        {
+            error = loadError ?? "failed to read config";
+            return false;
+        }
+
+        config.UnityProjectPath = NormalizeProjectPath(projectPath);
+        if (!TrySaveCliConfig(config, out var saveError))
+        {
+            error = saveError ?? "failed to write config";
+            return false;
+        }
+
+        return true;
+    }
+
     private static string GetCliConfigPath()
     {
         var explicitPath = Environment.GetEnvironmentVariable("UNIFOCL_CONFIG_PATH");
@@ -968,5 +1016,6 @@ internal sealed class ProjectLifecycleService
     private sealed class CliConfig
     {
         public string? Theme { get; set; }
+        public string? UnityProjectPath { get; set; }
     }
 }

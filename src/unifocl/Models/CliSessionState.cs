@@ -23,6 +23,7 @@ internal sealed class CliSessionState
     public InspectorContext? Inspector { get; set; }
     public bool AutoEnterHierarchyRequested { get; set; }
     public ProjectViewState ProjectView { get; } = new();
+    public List<string> UnityLogPane { get; } = [];
 
     public void ResetToBoot()
     {
@@ -44,5 +45,6 @@ internal sealed class CliSessionState
         ProjectView.AssetIndexRevision = 0;
         ProjectView.AssetPathByInstanceId.Clear();
         ProjectView.LastFuzzyMatches.Clear();
+        UnityLogPane.Clear();
     }
 }

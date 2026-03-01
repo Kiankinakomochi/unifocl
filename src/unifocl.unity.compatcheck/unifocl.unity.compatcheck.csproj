@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);UNITY_EDITOR</DefineConstants>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CS0649;CS1701;CS1702</NoWarn>
+    <UnityEditorManagedDir Condition="'$(UnityEditorManagedDir)' == ''">$(UNIFOCL_UNITY_EDITOR_MANAGED_DIR)</UnityEditorManagedDir>
+    <UnityProjectPath Condition="'$(UnityProjectPath)' == ''">$(UNIFOCL_UNITY_PROJECT_PATH)</UnityProjectPath>
+    <UnityScriptAssembliesDir Condition="'$(UnityScriptAssembliesDir)' == '' and '$(UnityProjectPath)' != ''">$(UnityProjectPath)/Library/ScriptAssemblies</UnityScriptAssembliesDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../unifocl.unity/SharedModels/*.cs" />
+    <Compile Include="../unifocl.unity/EditorScripts/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UnityEditorManagedDir)' != '' and Exists('$(UnityEditorManagedDir)')">
+    <UnityManagedAssembly Include="$(UnityEditorManagedDir)/*.dll" />
+    <Reference Include="@(UnityManagedAssembly)">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UnityScriptAssembliesDir)' != '' and Exists('$(UnityScriptAssembliesDir)')">
+    <UnityProjectAssembly Include="$(UnityScriptAssembliesDir)/*.dll" />
+    <Reference Include="@(UnityProjectAssembly)">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateUnityCompatibilityInputs" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(UnityEditorManagedDir)' == ''"
+           Text="UnityEditorManagedDir is required. Set -p:UnityEditorManagedDir=&lt;Unity Managed folder&gt; or env UNIFOCL_UNITY_EDITOR_MANAGED_DIR." />
+    <Error Condition="!Exists('$(UnityEditorManagedDir)')"
+           Text="UnityEditorManagedDir does not exist: '$(UnityEditorManagedDir)'." />
+    <Error Condition="!Exists('$(UnityEditorManagedDir)/UnityEditor.dll')"
+           Text="UnityEditor.dll was not found under UnityEditorManagedDir: '$(UnityEditorManagedDir)'." />
+    <Warning Condition="'$(UnityProjectPath)' == ''"
+             Text="UnityProjectPath is not set. Project-specific assemblies (Assembly-CSharp and asmdefs) will not be referenced." />
+    <Warning Condition="'$(UnityProjectPath)' != '' and !Exists('$(UnityScriptAssembliesDir)')"
+             Text="Unity script assemblies were not found at '$(UnityScriptAssembliesDir)'. Open the project in Unity once to generate all asmdef DLLs." />
+  </Target>
+</Project>
