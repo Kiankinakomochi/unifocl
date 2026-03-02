@@ -36,19 +36,21 @@ unifocl is currently distributed as source code and requires a modern .NET runti
 
 ### Clone & Build (Debug)
 
-'''bash
+```bash
 git clone https://github.com/Kiankinakomochi/unifocl.git
 cd unifocl
 dotnet build
 dotnet run --project src/unifocl
-'''
-*Debug build output is located in:* `src/unifocl/bin/Debug/`
+```
+
+`Debug build output is located in:` `src/unifocl/bin/Debug/`
 
 ### Release Build
 
-'''bash
+```bash
 dotnet build -c Release
-'''
+```
+
 *Release output is located in:* `src/unifocl/bin/Release/`. You can run the generated binary directly from this directory.
 
 ---
