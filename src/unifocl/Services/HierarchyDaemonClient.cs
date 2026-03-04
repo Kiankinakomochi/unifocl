@@ -125,7 +125,7 @@ internal sealed class HierarchyDaemonClient
                     continue;
                 }
 
-                return new ProjectCommandResponseDto(false, result.Error, null);
+                return new ProjectCommandResponseDto(false, result.Error, null, null);
             }
 
             var payload = result.Payload;
@@ -138,21 +138,21 @@ internal sealed class HierarchyDaemonClient
                     continue;
                 }
 
-                return new ProjectCommandResponseDto(false, "daemon returned an empty project response payload", null);
+                return new ProjectCommandResponseDto(false, "daemon returned an empty project response payload", null, null);
             }
 
             try
             {
                 var parsed = JsonSerializer.Deserialize<ProjectCommandResponseDto>(payload, JsonOptions);
-                return parsed ?? new ProjectCommandResponseDto(false, "daemon returned empty project response", null);
+                return parsed ?? new ProjectCommandResponseDto(false, "daemon returned empty project response", null, null);
             }
             catch
             {
-                return new ProjectCommandResponseDto(false, "daemon returned invalid project response", null);
+                return new ProjectCommandResponseDto(false, "daemon returned invalid project response", null, null);
             }
         }
 
-        return new ProjectCommandResponseDto(false, "daemon did not return a project response", null);
+        return new ProjectCommandResponseDto(false, "daemon did not return a project response", null, null);
     }
 
     private static async Task<string?> SendGetAsync(string uri)

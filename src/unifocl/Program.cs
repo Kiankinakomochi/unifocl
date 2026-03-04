@@ -67,7 +67,10 @@ var commands = new List<CommandSpec>
     new("/shortcuts", "Alias for keybinds", "/shortcuts"),
     new("/update", "Check for CLI updates", "/update"),
     new("/version", "Show CLI and protocol version", "/version"),
-    new("/protocol", "Show supported JSON schema capabilities", "/protocol")
+    new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
+    new("/upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "/upm list"),
+    new("/upm ls [--outdated] [--builtin] [--git]", "Alias for /upm list", "/upm ls"),
+    new("/upm", "Unity Package Manager commands", "/upm")
 };
 
 var projectCommands = new List<CommandSpec>
@@ -92,7 +95,9 @@ var projectCommands = new List<CommandSpec>
     new("f <query>", "Fuzzy find in active mode", "f"),
     new("ff <query>", "Alias for fuzzy find", "ff"),
     new("move <...>", "Move/reorder item in active mode", "move"),
-    new("mv <...>", "Alias for move", "mv")
+    new("mv <...>", "Alias for move", "mv"),
+    new("upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "upm list"),
+    new("upm ls [--outdated] [--builtin] [--git]", "Alias for upm list", "upm ls")
 };
 
 var streamLog = new List<string>();
@@ -270,6 +275,31 @@ while (true)
             {
                 session.ContextMode = CliContextMode.Inspector;
             }
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/upm", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                continue;
+            }
+
+            var upmInput = input.Length > "/upm".Length
+                ? $"upm {input["/upm".Length..].Trim()}"
+                : "upm";
+            var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                upmInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+            if (!handled)
+            {
+                AppendLog(streamLog, "[yellow]upm[/]: unsupported /upm command");
+            }
+
             continue;
         }
 
@@ -812,6 +842,12 @@ static bool TryGetComposerIntellisenseCandidates(
         return true;
     }
 
+    if (TryGetUpmComposerCandidates(input, session, out var upmCandidates))
+    {
+        candidates = upmCandidates;
+        return true;
+    }
+
     if (input.StartsWith('/'))
     {
         candidates = GetSuggestionMatches(input, commands)
@@ -829,6 +865,74 @@ static bool TryGetComposerIntellisenseCandidates(
     }
 
     return false;
+}
+
+static bool TryGetUpmComposerCandidates(
+    string input,
+    CliSessionState session,
+    out List<(string Label, string? CommitCommand)> candidates)
+{
+    candidates = [];
+    var trimmed = input.TrimStart();
+    var isSlash = trimmed.StartsWith("/upm", StringComparison.OrdinalIgnoreCase);
+    var isProjectCommand = trimmed.StartsWith("upm", StringComparison.OrdinalIgnoreCase);
+    if (!isSlash && !isProjectCommand)
+    {
+        return false;
+    }
+
+    var prefix = isSlash ? "/upm" : "upm";
+    var suffix = trimmed.Length > prefix.Length
+        ? trimmed[prefix.Length..].TrimStart()
+        : string.Empty;
+
+    if (string.IsNullOrWhiteSpace(suffix))
+    {
+        candidates.Add((isSlash
+            ? "/upm list [--outdated] [--builtin] [--git]"
+            : "upm list [--outdated] [--builtin] [--git]", isSlash ? "/upm list" : "upm list"));
+        candidates.Add((isSlash ? "/upm ls" : "upm ls", isSlash ? "/upm ls" : "upm ls"));
+        return true;
+    }
+
+    var upmSuggestions = new List<(string Label, string? CommitCommand)>
+    {
+        (isSlash ? "/upm list [--outdated] [--builtin] [--git]" : "upm list [--outdated] [--builtin] [--git]", isSlash ? "/upm list" : "upm list"),
+        (isSlash ? "/upm ls [--outdated] [--builtin] [--git]" : "upm ls [--outdated] [--builtin] [--git]", isSlash ? "/upm ls" : "upm ls")
+    };
+
+    var suffixLower = suffix.ToLowerInvariant();
+    candidates = upmSuggestions
+        .Where(candidate => candidate.Label.Contains(suffixLower, StringComparison.OrdinalIgnoreCase)
+                            || candidate.CommitCommand?.Contains(suffixLower, StringComparison.OrdinalIgnoreCase) == true)
+        .Take(10)
+        .ToList();
+
+    if (suffixLower.StartsWith("list", StringComparison.OrdinalIgnoreCase)
+        || suffixLower.StartsWith("ls", StringComparison.OrdinalIgnoreCase))
+    {
+        var commandHead = isSlash
+            ? (suffixLower.StartsWith("ls", StringComparison.OrdinalIgnoreCase) ? "/upm ls" : "/upm list")
+            : (suffixLower.StartsWith("ls", StringComparison.OrdinalIgnoreCase) ? "upm ls" : "upm list");
+        var flags = new[] { "--outdated", "--builtin", "--git" };
+        foreach (var flag in flags)
+        {
+            candidates.Add(($"{commandHead} {flag}", $"{commandHead} {flag}"));
+        }
+    }
+
+    var packageRefs = session.ProjectView.LastUpmPackages.Take(5).ToList();
+    if (packageRefs.Count > 0)
+    {
+        foreach (var package in packageRefs)
+        {
+            var label = $"[{package.Index}] {package.DisplayName} ({package.PackageId})";
+            candidates.Add((label, null));
+        }
+    }
+
+    candidates = candidates.DistinctBy(x => x.Label).Take(10).ToList();
+    return true;
 }
 
 static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> commands, int selectedSuggestionIndex)

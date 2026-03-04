@@ -151,6 +151,15 @@ internal sealed class ProjectCommandRouterService
             _ => tokens[0]
         };
 
+        if (tokens[0].Equals("upm", StringComparison.OrdinalIgnoreCase) && tokens.Count >= 2)
+        {
+            tokens[1] = tokens[1].ToLowerInvariant() switch
+            {
+                "list" => "ls",
+                _ => tokens[1]
+            };
+        }
+
         if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
         {
             tokens[0] = mode == CliContextMode.Inspector ? ":i" : "up";

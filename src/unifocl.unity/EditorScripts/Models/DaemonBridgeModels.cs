@@ -177,6 +177,34 @@ namespace UniFocl.EditorBridge
         public bool ok;
         public string message = string.Empty;
         public string kind = string.Empty;
+        public string content = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class UpmListRequestOptions
+    {
+        public bool includeOutdated;
+        public bool includeBuiltin;
+        public bool includeGit;
+    }
+
+    [Serializable]
+    internal sealed class UpmPackageEntry
+    {
+        public string packageId = string.Empty;
+        public string displayName = string.Empty;
+        public string version = string.Empty;
+        public string source = string.Empty;
+        public string latestCompatibleVersion = string.Empty;
+        public bool isOutdated;
+        public bool isDeprecated;
+        public bool isPreview;
+    }
+
+    [Serializable]
+    internal sealed class UpmListResponse
+    {
+        public UpmPackageEntry[] packages = Array.Empty<UpmPackageEntry>();
     }
 }
 #endif
