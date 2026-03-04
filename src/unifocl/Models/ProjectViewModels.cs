@@ -16,6 +16,7 @@ internal sealed class ProjectViewState
     public int AssetIndexRevision { get; set; }
     public Dictionary<int, string> AssetPathByInstanceId { get; } = [];
     public List<ProjectFuzzyMatch> LastFuzzyMatches { get; } = [];
+    public List<UpmPackageEntry> LastUpmPackages { get; } = [];
 }
 
 internal sealed record ProjectTreeEntry(
@@ -24,3 +25,14 @@ internal sealed record ProjectTreeEntry(
     string Name,
     string RelativePath,
     bool IsDirectory);
+
+internal sealed record UpmPackageEntry(
+    int Index,
+    string PackageId,
+    string DisplayName,
+    string Version,
+    string Source,
+    string? LatestCompatibleVersion,
+    bool IsOutdated,
+    bool IsDeprecated,
+    bool IsPreview);

@@ -7,4 +7,5 @@ internal sealed record ProjectCommandRequestDto(
 internal sealed record ProjectCommandResponseDto(
     bool Ok,
     string Message,
-    string? Kind);
+    string? Kind,
+    string? Content);

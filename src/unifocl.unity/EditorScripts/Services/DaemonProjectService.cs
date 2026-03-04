@@ -220,6 +220,9 @@ namespace UniFocl.EditorBridge
                 var isOutdated = !string.IsNullOrWhiteSpace(latestCompatible)
                                  && !string.IsNullOrWhiteSpace(installedVersion)
                                  && !installedVersion.Equals(latestCompatible, StringComparison.OrdinalIgnoreCase);
+                var isDeprecated = package.isDeprecated;
+                var isPreview = installedVersion.Contains("preview", StringComparison.OrdinalIgnoreCase)
+                                || latestCompatible.Contains("preview", StringComparison.OrdinalIgnoreCase);
 
                 if (!options.includeBuiltin && isBuiltIn)
                 {
@@ -243,7 +246,9 @@ namespace UniFocl.EditorBridge
                     version = installedVersion,
                     source = source,
                     latestCompatibleVersion = latestCompatible,
-                    isOutdated = isOutdated
+                    isOutdated = isOutdated,
+                    isDeprecated = isDeprecated,
+                    isPreview = isPreview
                 });
             }
 

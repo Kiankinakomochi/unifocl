@@ -46,7 +46,7 @@ internal sealed class ProjectDaemonBridge
             "rename-asset" => HandleRenameAsset(request),
             "remove-asset" => HandleRemoveAsset(request),
             "load-asset" => HandleLoadAsset(request),
-            _ => new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} unsupported action: {request.Action}", null)
+            _ => new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} unsupported action: {request.Action}", null, null)
         };
         response = JsonSerializer.Serialize(result, _jsonOptions);
         return true;
@@ -56,13 +56,13 @@ internal sealed class ProjectDaemonBridge
     {
         if (!IsValidAssetPath(request.AssetPath) || string.IsNullOrWhiteSpace(request.Content))
         {
-            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} mk-script requires assetPath and content", null);
+            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} mk-script requires assetPath and content", null, null);
         }
 
         var absolutePath = ResolveAssetPath(request.AssetPath!);
         if (File.Exists(absolutePath))
         {
-            return new ProjectCommandResponseDto(false, $"asset already exists: {request.AssetPath}", null);
+            return new ProjectCommandResponseDto(false, $"asset already exists: {request.AssetPath}", null, null);
         }
 
         try
@@ -74,11 +74,11 @@ internal sealed class ProjectDaemonBridge
             }
 
             File.WriteAllText(absolutePath, request.Content);
-            return new ProjectCommandResponseDto(true, "script created (stubbed bridge fallback)", "script");
+            return new ProjectCommandResponseDto(true, "script created (stubbed bridge fallback)", "script", null);
         }
         catch (Exception ex)
         {
-            return new ProjectCommandResponseDto(false, $"failed to create script: {ex.Message}", null);
+            return new ProjectCommandResponseDto(false, $"failed to create script: {ex.Message}", null, null);
         }
     }
 
@@ -86,19 +86,19 @@ internal sealed class ProjectDaemonBridge
     {
         if (!IsValidAssetPath(request.AssetPath) || !IsValidAssetPath(request.NewAssetPath))
         {
-            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} rename-asset requires assetPath and newAssetPath", null);
+            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} rename-asset requires assetPath and newAssetPath", null, null);
         }
 
         var sourcePath = ResolveAssetPath(request.AssetPath!);
         var targetPath = ResolveAssetPath(request.NewAssetPath!);
         if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
         {
-            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null);
+            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null, null);
         }
 
         if (File.Exists(targetPath) || Directory.Exists(targetPath))
         {
-            return new ProjectCommandResponseDto(false, $"target already exists: {request.NewAssetPath}", null);
+            return new ProjectCommandResponseDto(false, $"target already exists: {request.NewAssetPath}", null, null);
         }
 
         try
@@ -119,11 +119,11 @@ internal sealed class ProjectDaemonBridge
             }
 
             MoveMetaIfPresent(sourcePath, targetPath);
-            return new ProjectCommandResponseDto(true, "asset renamed (stubbed bridge fallback)", null);
+            return new ProjectCommandResponseDto(true, "asset renamed (stubbed bridge fallback)", null, null);
         }
         catch (Exception ex)
         {
-            return new ProjectCommandResponseDto(false, $"failed to rename asset: {ex.Message}", null);
+            return new ProjectCommandResponseDto(false, $"failed to rename asset: {ex.Message}", null, null);
         }
     }
 
@@ -131,13 +131,13 @@ internal sealed class ProjectDaemonBridge
     {
         if (!IsValidAssetPath(request.AssetPath))
         {
-            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} remove-asset requires assetPath", null);
+            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} remove-asset requires assetPath", null, null);
         }
 
         var absolutePath = ResolveAssetPath(request.AssetPath!);
         if (!File.Exists(absolutePath) && !Directory.Exists(absolutePath))
         {
-            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null);
+            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null, null);
         }
 
         try
@@ -152,11 +152,11 @@ internal sealed class ProjectDaemonBridge
             }
 
             DeleteMetaIfPresent(absolutePath);
-            return new ProjectCommandResponseDto(true, "asset removed (stubbed bridge fallback)", null);
+            return new ProjectCommandResponseDto(true, "asset removed (stubbed bridge fallback)", null, null);
         }
         catch (Exception ex)
         {
-            return new ProjectCommandResponseDto(false, $"failed to remove asset: {ex.Message}", null);
+            return new ProjectCommandResponseDto(false, $"failed to remove asset: {ex.Message}", null, null);
         }
     }
 
@@ -164,14 +164,14 @@ internal sealed class ProjectDaemonBridge
     {
         if (!IsValidAssetPath(request.AssetPath))
         {
-            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} load-asset requires assetPath", null);
+            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} load-asset requires assetPath", null, null);
         }
 
         var assetPath = request.AssetPath!;
         var absolutePath = ResolveAssetPath(assetPath);
         if (!File.Exists(absolutePath))
         {
-            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null);
+            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null, null);
         }
 
         var extension = Path.GetExtension(assetPath);
@@ -180,6 +180,7 @@ internal sealed class ProjectDaemonBridge
             return new ProjectCommandResponseDto(
                 false,
                 $"{StubbedBridgePrefix} scene load is unavailable without Unity editor bridge: {assetPath}",
+                null,
                 null);
         }
 
@@ -188,12 +189,14 @@ internal sealed class ProjectDaemonBridge
             return new ProjectCommandResponseDto(
                 true,
                 "script path resolved (stubbed bridge fallback; Unity script open unavailable)",
-                "script");
+                "script",
+                null);
         }
 
         return new ProjectCommandResponseDto(
             false,
             $"unsupported asset type: {extension} (supported: .unity, .cs)",
+            null,
             null);
     }
 
@@ -237,6 +240,6 @@ internal sealed class ProjectDaemonBridge
 
     private string SerializeError(string message)
     {
-        return JsonSerializer.Serialize(new ProjectCommandResponseDto(false, message, null), _jsonOptions);
+        return JsonSerializer.Serialize(new ProjectCommandResponseDto(false, message, null, null), _jsonOptions);
     }
 }

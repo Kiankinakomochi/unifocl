@@ -100,6 +100,10 @@ internal sealed class ProjectViewService
         {
             handled = await HandleFuzzyFindAsync(session, tokens, outputs);
         }
+        else if (tokens[0].Equals("upm", StringComparison.OrdinalIgnoreCase))
+        {
+            handled = await HandleUpmCommandAsync(session, tokens, outputs, daemonControlService, daemonRuntime);
+        }
 
         if (!handled)
         {
@@ -259,6 +263,7 @@ internal sealed class ProjectViewService
         state.AssetIndexRevision = 0;
         state.AssetPathByInstanceId.Clear();
         state.LastFuzzyMatches.Clear();
+        state.LastUpmPackages.Clear();
         RefreshTree(projectPath, state);
     }
 
@@ -686,7 +691,7 @@ internal sealed class ProjectViewService
     {
         if (session.AttachedPort is not int port)
         {
-            return new ProjectCommandResponseDto(false, "daemon is not attached", null);
+            return new ProjectCommandResponseDto(false, "daemon is not attached", null, null);
         }
 
         return await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus);
@@ -827,6 +832,61 @@ internal sealed class ProjectViewService
                && message.Contains("asset not found", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string ResolvePackageDisplayName(string? displayName, string packageId)
+    {
+        if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            return displayName.Trim();
+        }
+
+        var tail = packageId.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? packageId;
+        return string.Join(' ', tail
+            .Split('-', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Length == 0
+                ? token
+                : char.ToUpperInvariant(token[0]) + token[1..]));
+    }
+
+    private static string ResolveUpmStatusColor(UpmPackageEntry package)
+    {
+        if (package.IsDeprecated)
+        {
+            return CliTheme.Error;
+        }
+
+        if (package.IsOutdated)
+        {
+            return CliTheme.Warning;
+        }
+
+        if (package.IsPreview)
+        {
+            return CliTheme.Info;
+        }
+
+        return CliTheme.Success;
+    }
+
+    private static string ResolveUpmStatusLabel(UpmPackageEntry package)
+    {
+        if (package.IsDeprecated)
+        {
+            return "deprecated";
+        }
+
+        if (package.IsOutdated)
+        {
+            return "update available";
+        }
+
+        if (package.IsPreview)
+        {
+            return "preview";
+        }
+
+        return "stable";
+    }
+
     private async Task<bool> HandleFuzzyFindAsync(CliSessionState session, IReadOnlyList<string> tokens, List<string> outputs)
     {
         if (tokens.Count < 2)
@@ -886,6 +946,138 @@ internal sealed class ProjectViewService
             outputs.Add($"[{match.Index}] {match.Path}");
         }
 
+        return true;
+    }
+
+    private async Task<bool> HandleUpmCommandAsync(
+        CliSessionState session,
+        IReadOnlyList<string> tokens,
+        List<string> outputs,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime)
+    {
+        if (tokens.Count < 2)
+        {
+            outputs.Add("[x] usage: upm <list|ls> [--outdated] [--builtin] [--git]");
+            return true;
+        }
+
+        var subcommand = tokens[1];
+        if (!subcommand.Equals("list", StringComparison.OrdinalIgnoreCase)
+            && !subcommand.Equals("ls", StringComparison.OrdinalIgnoreCase))
+        {
+            outputs.Add($"[x] unsupported upm subcommand: {subcommand}");
+            outputs.Add("supported: upm list (alias: upm ls)");
+            return true;
+        }
+
+        var includeOutdatedOnly = false;
+        var includeBuiltin = false;
+        var includeGitOnly = false;
+        for (var i = 2; i < tokens.Count; i++)
+        {
+            var option = tokens[i];
+            if (option.Equals("--outdated", StringComparison.OrdinalIgnoreCase))
+            {
+                includeOutdatedOnly = true;
+                continue;
+            }
+
+            if (option.Equals("--builtin", StringComparison.OrdinalIgnoreCase))
+            {
+                includeBuiltin = true;
+                continue;
+            }
+
+            if (option.Equals("--git", StringComparison.OrdinalIgnoreCase))
+            {
+                includeGitOnly = true;
+                continue;
+            }
+
+            outputs.Add($"[x] unsupported flag: {option}");
+            outputs.Add("supported flags: --outdated --builtin --git");
+            return true;
+        }
+
+        AppendTranscript(session.ProjectView, [$"[{CliTheme.Info}]loading package information...[/]"]);
+        RenderFrame(session.ProjectView);
+
+        var unityReady = await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime, requireUnityBridge: true);
+        if (!unityReady)
+        {
+            outputs.Add("[x] upm list failed: Unity editor bridge is unavailable; set UNITY_PATH or open Unity editor for this project");
+            return true;
+        }
+
+        var payload = JsonSerializer.Serialize(
+            new UpmListRequestPayload(includeOutdatedOnly, includeBuiltin, includeGitOnly),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var response = await ExecuteProjectCommandAsync(
+            session,
+            new ProjectCommandRequestDto("upm-list", null, null, payload));
+
+        if (!response.Ok)
+        {
+            outputs.Add(FormatProjectCommandFailure("upm list", response.Message));
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            outputs.Add("[x] upm list failed: daemon returned empty package payload");
+            return true;
+        }
+
+        UpmListResponsePayload? parsed;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<UpmListResponsePayload>(
+                response.Content,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception ex)
+        {
+            outputs.Add($"[x] upm list failed: invalid package payload ({ex.Message})");
+            return true;
+        }
+
+        var indexedPackages = (parsed?.Packages ?? [])
+            .Where(p => !string.IsNullOrWhiteSpace(p.PackageId))
+            .OrderBy(p => ResolvePackageDisplayName(p.DisplayName, p.PackageId!), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => p.PackageId, StringComparer.OrdinalIgnoreCase)
+            .Select((package, index) => new UpmPackageEntry(
+                index,
+                package.PackageId!,
+                ResolvePackageDisplayName(package.DisplayName, package.PackageId!),
+                string.IsNullOrWhiteSpace(package.Version) ? "-" : package.Version!,
+                string.IsNullOrWhiteSpace(package.Source) ? "unknown" : package.Source!,
+                string.IsNullOrWhiteSpace(package.LatestCompatibleVersion) ? null : package.LatestCompatibleVersion,
+                package.IsOutdated,
+                package.IsDeprecated,
+                package.IsPreview))
+            .ToList();
+
+        session.ProjectView.LastUpmPackages.Clear();
+        session.ProjectView.LastUpmPackages.AddRange(indexedPackages);
+
+        outputs.Add($"{indexedPackages.Count} package(s)");
+        if (indexedPackages.Count == 0)
+        {
+            outputs.Add("no packages matched the selected filters");
+            return true;
+        }
+
+        foreach (var package in indexedPackages)
+        {
+            var statusColor = ResolveUpmStatusColor(package);
+            var statusLabel = ResolveUpmStatusLabel(package);
+            var updateSuffix = package.IsOutdated && !string.IsNullOrWhiteSpace(package.LatestCompatibleVersion)
+                ? $" -> {package.LatestCompatibleVersion}"
+                : string.Empty;
+            outputs.Add(
+                $"[{package.Index}] {Markup.Escape(package.DisplayName)} ({Markup.Escape(package.PackageId)}) v{Markup.Escape(package.Version)}{Markup.Escape(updateSuffix)} [{CliTheme.TextSecondary}]{Markup.Escape(package.Source)}[/] [{statusColor}]{Markup.Escape(statusLabel)}[/]");
+        }
         return true;
     }
 
@@ -1174,4 +1366,22 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
 
         return tokens;
     }
+
+    private sealed record UpmListRequestPayload(
+        bool IncludeOutdated,
+        bool IncludeBuiltin,
+        bool IncludeGit);
+
+    private sealed record UpmListResponsePayload(
+        List<UpmListPackagePayload>? Packages);
+
+    private sealed record UpmListPackagePayload(
+        string? PackageId,
+        string? DisplayName,
+        string? Version,
+        string? Source,
+        string? LatestCompatibleVersion,
+        bool IsOutdated,
+        bool IsDeprecated,
+        bool IsPreview);
 }

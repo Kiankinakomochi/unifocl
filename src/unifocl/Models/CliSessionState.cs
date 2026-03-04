@@ -50,6 +50,7 @@ internal sealed class CliSessionState
         ProjectView.AssetIndexRevision = 0;
         ProjectView.AssetPathByInstanceId.Clear();
         ProjectView.LastFuzzyMatches.Clear();
+        ProjectView.LastUpmPackages.Clear();
         UnityLogPane.Clear();
         RecentProjectEntries.Clear();
         RecentSelectionAllowUnsafe = false;
