@@ -1,4 +1,5 @@
 using Spectre.Console;
+using System.Text;
 
 internal sealed class ProjectViewRenderer
 {
@@ -30,7 +31,7 @@ internal sealed class ProjectViewRenderer
         lines.Add(BorderSeparator(frameWidth));
         var contentWidth = Math.Max(1, frameWidth - 1);
         var wrappedTranscript = state.CommandTranscript
-            .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
+            .SelectMany(line => WrapTranscriptLine(line, contentWidth))
             .ToList();
         var recent = wrappedTranscript
             .Skip(Math.Max(0, wrappedTranscript.Count - CommandRows))
@@ -119,6 +120,144 @@ internal sealed class ProjectViewRenderer
         {
             return Markup.Escape(Fit(markup, width));
         }
+    }
+
+    private static IReadOnlyList<string> WrapTranscriptLine(string line, int width)
+    {
+        if (string.IsNullOrEmpty(line))
+        {
+            return [string.Empty];
+        }
+
+        var safeWidth = Math.Max(1, width);
+        var normalized = line
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var logicalLines = normalized.Split('\n');
+        var wrapped = new List<string>();
+        foreach (var logicalLine in logicalLines)
+        {
+            wrapped.AddRange(WrapMarkupLine(logicalLine, safeWidth));
+        }
+
+        return wrapped.Count == 0 ? [string.Empty] : wrapped;
+    }
+
+    private static IReadOnlyList<string> WrapMarkupLine(string markup, int width)
+    {
+        if (string.IsNullOrEmpty(markup))
+        {
+            return [string.Empty];
+        }
+
+        var lines = new List<string>();
+        var current = new StringBuilder();
+        var activeTags = new List<string>();
+        var currentPlainLength = 0;
+
+        void StartNewLine()
+        {
+            var next = new StringBuilder();
+            foreach (var tag in activeTags)
+            {
+                next.Append('[').Append(tag).Append(']');
+            }
+
+            current = next;
+            currentPlainLength = 0;
+        }
+
+        void FlushLineAndContinue()
+        {
+            for (var i = activeTags.Count - 1; i >= 0; i--)
+            {
+                current.Append("[/]");
+            }
+
+            lines.Add(current.ToString());
+            StartNewLine();
+        }
+
+        void AppendLiteral(char ch)
+        {
+            if (currentPlainLength >= width)
+            {
+                FlushLineAndContinue();
+            }
+
+            if (ch == '[')
+            {
+                current.Append("[[");
+            }
+            else if (ch == ']')
+            {
+                current.Append("]]");
+            }
+            else
+            {
+                current.Append(ch);
+            }
+
+            currentPlainLength++;
+        }
+
+        for (var i = 0; i < markup.Length; i++)
+        {
+            var ch = markup[i];
+            if (ch != '[')
+            {
+                AppendLiteral(ch);
+                continue;
+            }
+
+            if (i + 1 < markup.Length && markup[i + 1] == '[')
+            {
+                AppendLiteral('[');
+                i++;
+                continue;
+            }
+
+            var close = markup.IndexOf(']', i + 1);
+            if (close < 0)
+            {
+                AppendLiteral('[');
+                continue;
+            }
+
+            var token = markup.Substring(i + 1, close - i - 1);
+            if (token == "/")
+            {
+                if (activeTags.Count > 0)
+                {
+                    activeTags.RemoveAt(activeTags.Count - 1);
+                }
+
+                current.Append("[/]");
+                i = close;
+                continue;
+            }
+
+            if (token.Length == 0)
+            {
+                AppendLiteral('[');
+                continue;
+            }
+
+            activeTags.Add(token);
+            current.Append('[').Append(token).Append(']');
+            i = close;
+        }
+
+        if (current.Length == 0)
+        {
+            lines.Add(string.Empty);
+        }
+        else
+        {
+            lines.Add(current.ToString());
+        }
+
+        return lines;
     }
 
     private static int ResolveFrameWidth()
