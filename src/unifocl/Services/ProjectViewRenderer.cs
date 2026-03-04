@@ -40,7 +40,7 @@ internal sealed class ProjectViewRenderer
             var line = i < recent.Count
                 ? recent[i]
                 : (i == recent.Count ? $"UnityCLI:{cwd} > _" : string.Empty);
-            lines.Add(BorderBody($" {line}", frameWidth));
+            lines.Add(BorderBody($" {line}", frameWidth, allowMarkup: true));
         }
 
         lines.Add(BorderBottom(frameWidth));
@@ -72,10 +72,12 @@ internal sealed class ProjectViewRenderer
     private static string BorderSeparator(int frameWidth) => "├" + new string('─', frameWidth) + "┤";
     private static string BorderBottom(int frameWidth) => "└" + new string('─', frameWidth) + "┘";
 
-    private static string BorderBody(string content, int frameWidth, bool highlight = false)
+    private static string BorderBody(string content, int frameWidth, bool highlight = false, bool allowMarkup = false)
     {
         var normalized = content.Replace(Environment.NewLine, " ").Replace("\n", " ");
-        var adjusted = Markup.Escape(Fit(normalized, frameWidth));
+        var adjusted = allowMarkup
+            ? FitMarkup(normalized, frameWidth)
+            : Markup.Escape(Fit(normalized, frameWidth));
         var line = $"│{adjusted}│";
         return highlight ? CliTheme.CursorWrapEscaped(line) : line;
     }
@@ -93,6 +95,30 @@ internal sealed class ProjectViewRenderer
         }
 
         return text;
+    }
+
+    private static string FitMarkup(string markup, int width)
+    {
+        try
+        {
+            var plain = Markup.Remove(markup);
+            if (plain.Length > width)
+            {
+                var truncated = plain[..Math.Max(0, width - 1)] + "…";
+                return Markup.Escape(truncated);
+            }
+
+            if (plain.Length < width)
+            {
+                return markup + new string(' ', width - plain.Length);
+            }
+
+            return markup;
+        }
+        catch
+        {
+            return Markup.Escape(Fit(markup, width));
+        }
     }
 
     private static int ResolveFrameWidth()
