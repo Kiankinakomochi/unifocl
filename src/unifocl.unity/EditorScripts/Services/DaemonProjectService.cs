@@ -1,10 +1,14 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
+using UnityEditor.PackageManager;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UpmPackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace UniFocl.EditorBridge
 {
@@ -36,6 +40,7 @@ namespace UniFocl.EditorBridge
                     "rename-asset" => ExecuteRenameAsset(request),
                     "remove-asset" => ExecuteRemoveAsset(request),
                     "load-asset" => ExecuteLoadAsset(request),
+                    "upm-list" => ExecuteUpmList(request),
                     _ => JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" })
                 };
             }
@@ -192,6 +197,89 @@ namespace UniFocl.EditorBridge
                 ok = false,
                 message = $"unsupported asset type: {extension} (supported: .unity, .cs)"
             });
+        }
+
+        private static string ExecuteUpmList(ProjectCommandRequest request)
+        {
+            var options = ParseUpmListOptions(request.content);
+            var allPackages = UpmPackageInfo.GetAllRegisteredPackages() ?? Array.Empty<UpmPackageInfo>();
+            var filtered = new List<UpmPackageEntry>(allPackages.Length);
+
+            foreach (var package in allPackages)
+            {
+                if (package is null || string.IsNullOrWhiteSpace(package.name))
+                {
+                    continue;
+                }
+
+                var source = package.source.ToString();
+                var isBuiltIn = package.source == PackageSource.BuiltIn;
+                var isGit = package.source == PackageSource.Git;
+                var latestCompatible = package.versions?.latestCompatible ?? string.Empty;
+                var installedVersion = package.version ?? string.Empty;
+                var isOutdated = !string.IsNullOrWhiteSpace(latestCompatible)
+                                 && !string.IsNullOrWhiteSpace(installedVersion)
+                                 && !installedVersion.Equals(latestCompatible, StringComparison.OrdinalIgnoreCase);
+
+                if (!options.includeBuiltin && isBuiltIn)
+                {
+                    continue;
+                }
+
+                if (options.includeGit && !isGit)
+                {
+                    continue;
+                }
+
+                if (options.includeOutdated && !isOutdated)
+                {
+                    continue;
+                }
+
+                filtered.Add(new UpmPackageEntry
+                {
+                    packageId = package.name,
+                    displayName = string.IsNullOrWhiteSpace(package.displayName) ? package.name : package.displayName,
+                    version = installedVersion,
+                    source = source,
+                    latestCompatibleVersion = latestCompatible,
+                    isOutdated = isOutdated
+                });
+            }
+
+            var sorted = filtered
+                .OrderBy(p => p.displayName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(p => p.packageId, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var payload = JsonUtility.ToJson(new UpmListResponse
+            {
+                packages = sorted
+            });
+
+            return JsonUtility.ToJson(new ProjectCommandResponse
+            {
+                ok = true,
+                message = "upm list completed",
+                kind = "upm-list",
+                content = payload
+            });
+        }
+
+        private static UpmListRequestOptions ParseUpmListOptions(string rawContent)
+        {
+            if (string.IsNullOrWhiteSpace(rawContent))
+            {
+                return new UpmListRequestOptions();
+            }
+
+            try
+            {
+                return JsonUtility.FromJson<UpmListRequestOptions>(rawContent) ?? new UpmListRequestOptions();
+            }
+            catch
+            {
+                return new UpmListRequestOptions();
+            }
         }
 
         private static bool IsValidAssetPath(string? assetPath)
