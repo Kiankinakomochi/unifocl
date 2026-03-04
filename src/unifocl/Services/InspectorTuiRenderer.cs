@@ -47,7 +47,7 @@ internal sealed class InspectorTuiRenderer
         if (hasStreamPane)
         {
             frame.Add(Border('├', '┤', innerWidth));
-            frame.AddRange(visibleStream.Select(streamLine => Line(streamLine, innerWidth)));
+            frame.AddRange(visibleStream.Select(streamLine => Line(streamLine, innerWidth, allowMarkup: true)));
         }
         frame.Add(Border('└', '┘', innerWidth));
 
@@ -112,9 +112,10 @@ internal sealed class InspectorTuiRenderer
 
     private static IEnumerable<string> BuildStreamRows(InspectorContext context, int contentWidth)
     {
+        _ = contentWidth;
+
         var rows = context.CommandStream
             .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
             .ToList();
         if (rows.Count == 0)
         {
@@ -140,12 +141,40 @@ internal sealed class InspectorTuiRenderer
         return $"{left}{new string('─', innerWidth)}{right}";
     }
 
-    private static string Line(string content, int innerWidth, bool highlight = false)
+    private static string Line(string content, int innerWidth, bool highlight = false, bool allowMarkup = false)
     {
-        var trimmed = content.Length > innerWidth ? content[..innerWidth] : content;
-        var escaped = Markup.Escape(trimmed.PadRight(innerWidth));
-        var line = $"│{escaped}│";
+        var payload = allowMarkup ? FitMarkup(content, innerWidth) : Markup.Escape(Fit(content, innerWidth));
+        var line = $"│{payload}│";
         return highlight ? CliTheme.CursorWrapEscaped(line) : line;
+    }
+
+    private static string Fit(string text, int width)
+    {
+        var trimmed = text.Length > width ? text[..width] : text;
+        return trimmed.PadRight(width);
+    }
+
+    private static string FitMarkup(string markup, int width)
+    {
+        try
+        {
+            var plain = Markup.Remove(markup);
+            if (plain.Length > width)
+            {
+                return Markup.Escape(plain[..Math.Max(0, width - 1)] + "…");
+            }
+
+            if (plain.Length < width)
+            {
+                return markup + new string(' ', width - plain.Length);
+            }
+
+            return markup;
+        }
+        catch
+        {
+            return Markup.Escape(Fit(markup, width));
+        }
     }
 
     private static (int BodyRows, int StreamRows) AllocateViewportRows(int dynamicRows, int bodyCount, int streamCount)

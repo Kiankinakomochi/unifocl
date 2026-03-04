@@ -1,5 +1,6 @@
 using Spectre.Console;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 internal static class CliTheme
 {
@@ -31,17 +32,18 @@ internal static class CliTheme
             return markup;
         }
 
-        return markup
-            .Replace("[bold deepskyblue1]", $"[bold {Brand}]")
-            .Replace("[deepskyblue1]", $"[{Brand}]")
-            .Replace("[bold white]", $"[bold {TextPrimary}]")
-            .Replace("[white]", $"[{TextPrimary}]")
-            .Replace("[bold green]", $"[bold {Success}]")
-            .Replace("[green]", $"[{Success}]")
-            .Replace("[yellow]", $"[{Warning}]")
-            .Replace("[red]", $"[{Error}]")
-            .Replace("[grey]", $"[{TextSecondary}]")
-            .Replace("[dim]", $"[{TextMuted}]");
+        var themed = markup;
+        themed = ReplaceStyleToken(themed, "[bold deepskyblue1]", $"[bold {Brand}]");
+        themed = ReplaceStyleToken(themed, "[deepskyblue1]", $"[{Brand}]");
+        themed = ReplaceStyleToken(themed, "[bold white]", $"[bold {TextPrimary}]");
+        themed = ReplaceStyleToken(themed, "[white]", $"[{TextPrimary}]");
+        themed = ReplaceStyleToken(themed, "[bold green]", $"[bold {Success}]");
+        themed = ReplaceStyleToken(themed, "[green]", $"[{Success}]");
+        themed = ReplaceStyleToken(themed, "[yellow]", $"[{Warning}]");
+        themed = ReplaceStyleToken(themed, "[red]", $"[{Error}]");
+        themed = ReplaceStyleToken(themed, "[grey]", $"[{TextSecondary}]");
+        themed = ReplaceStyleToken(themed, "[dim]", $"[{TextMuted}]");
+        return themed;
     }
 
     public static void MarkupLine(string markupLine)
@@ -164,5 +166,11 @@ internal static class CliTheme
         }
 
         return Path.Combine(home, ".unifocl", "config.json");
+    }
+
+    private static string ReplaceStyleToken(string input, string token, string replacement)
+    {
+        var pattern = $"(?<!\\[){Regex.Escape(token)}(?!\\])";
+        return Regex.Replace(input, pattern, replacement);
     }
 }

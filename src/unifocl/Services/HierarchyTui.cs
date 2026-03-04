@@ -518,7 +518,7 @@ internal sealed class HierarchyTui
             for (var i = 0; i < visibleCommandLog.Count; i++)
             {
                 var line = visibleCommandLog[i];
-                WriteFrameLine(ToFrameLine($" {line}", frameWidth));
+                WriteFrameLine(ToFrameLine($" {line}", frameWidth, allowMarkup: true));
             }
         }
 
@@ -871,17 +871,18 @@ internal sealed class HierarchyTui
         commandLog.RemoveRange(0, commandLog.Count - maxLines);
     }
 
-    private static string ToFrameLine(string raw, int frameWidth)
+    private static string ToFrameLine(string raw, int frameWidth, bool allowMarkup = false)
     {
         var sanitized = raw.Replace('\t', ' ');
-        var content = sanitized.Length > frameWidth ? sanitized[..frameWidth] : sanitized.PadRight(frameWidth, ' ');
+        var content = allowMarkup
+            ? FitMarkup(sanitized, frameWidth)
+            : Markup.Escape(FitPlain(sanitized, frameWidth));
         return $"│{content}│";
     }
 
     private static void WriteFrameLine(string line, bool highlight = false)
     {
-        var escaped = Markup.Escape(line);
-        CliTheme.MarkupLine(highlight ? CliTheme.CursorWrapEscaped(escaped) : escaped);
+        CliTheme.MarkupLine(highlight ? CliTheme.CursorWrapEscaped(line) : line);
     }
 
     private static (int TreeRows, int CommandRows) AllocateViewportRows(int dynamicRows, int treeCount, int commandCount)
@@ -939,10 +940,39 @@ internal sealed class HierarchyTui
 
     private static List<string> BuildWrappedStreamRows(IReadOnlyList<string> commandLog, int contentWidth)
     {
+        _ = contentWidth;
         return commandLog
             .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
             .ToList();
+    }
+
+    private static string FitPlain(string text, int width)
+    {
+        var content = text.Length > width ? text[..width] : text;
+        return content.PadRight(width, ' ');
+    }
+
+    private static string FitMarkup(string markup, int width)
+    {
+        try
+        {
+            var plain = Markup.Remove(markup);
+            if (plain.Length > width)
+            {
+                return Markup.Escape(plain[..Math.Max(0, width - 1)] + "…");
+            }
+
+            if (plain.Length < width)
+            {
+                return markup + new string(' ', width - plain.Length);
+            }
+
+            return markup;
+        }
+        catch
+        {
+            return Markup.Escape(FitPlain(markup, width));
+        }
     }
 
     private static int ResolveFrameWidth()
