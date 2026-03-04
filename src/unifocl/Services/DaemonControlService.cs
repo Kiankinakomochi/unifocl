@@ -534,6 +534,17 @@ internal sealed class DaemonControlService
         var target = runtime.GetByPort(port);
         if (target is null)
         {
+            var pingOk = await TrySendControlAsync(port, "PING", "PONG");
+            if (pingOk)
+            {
+                var stopAttachedOnly = await TrySendControlAsync(port, "STOP", "STOPPING");
+                if (!stopAttachedOnly)
+                {
+                    log($"[red]daemon[/]: failed to stop live endpoint on port {port}");
+                    return false;
+                }
+            }
+
             runtime.Remove(port);
             if (session.AttachedPort == port)
             {
@@ -554,6 +565,24 @@ internal sealed class DaemonControlService
         while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(target.Pid))
         {
             await Task.Delay(120);
+        }
+
+        if (ProcessUtil.IsAlive(target.Pid))
+        {
+            if (target.Headless)
+            {
+                TryTerminateHeadlessByPid(target.Pid, log);
+            }
+            else
+            {
+                log($"[yellow]daemon[/]: process pid={target.Pid} is still alive after stop request; skipped force-kill because daemon is not headless");
+            }
+        }
+
+        if (ProcessUtil.IsAlive(target.Pid))
+        {
+            log($"[red]daemon[/]: daemon process pid={target.Pid} is still alive after shutdown");
+            return false;
         }
 
         runtime.Remove(target.Port);
@@ -1296,6 +1325,23 @@ internal sealed class DaemonControlService
         catch (Exception ex)
         {
             log($"[yellow]daemon[/]: unable to terminate stalled Unity process pid={process.Id} ({Markup.Escape(ex.Message)})");
+        }
+    }
+
+    private static void TryTerminateHeadlessByPid(int pid, Action<string> log)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            TryTerminateSpawnedProcess(process, log);
+        }
+        catch (ArgumentException)
+        {
+            // Process already exited.
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]daemon[/]: unable to terminate headless Unity process pid={pid} ({Markup.Escape(ex.Message)})");
         }
     }
 
