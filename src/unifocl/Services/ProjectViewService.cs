@@ -1072,11 +1072,8 @@ internal sealed class ProjectViewService
         {
             var statusColor = ResolveUpmStatusColor(package);
             var statusLabel = ResolveUpmStatusLabel(package);
-            var updateSuffix = package.IsOutdated && !string.IsNullOrWhiteSpace(package.LatestCompatibleVersion)
-                ? $" -> {package.LatestCompatibleVersion}"
-                : string.Empty;
             outputs.Add(
-                $"[{package.Index}] {Markup.Escape(package.DisplayName)} ({Markup.Escape(package.PackageId)}) v{Markup.Escape(package.Version)}{Markup.Escape(updateSuffix)} [{CliTheme.TextSecondary}]{Markup.Escape(package.Source)}[/] [{statusColor}]{Markup.Escape(statusLabel)}[/]");
+                $"[{CliTheme.TextSecondary}]{package.Index}.[/] {Markup.Escape(package.DisplayName)} ({Markup.Escape(package.PackageId)}) v{Markup.Escape(package.Version)} [{CliTheme.TextSecondary}]{Markup.Escape(package.Source)}[/] [{statusColor}]{Markup.Escape(statusLabel)}[/]");
         }
         return true;
     }
