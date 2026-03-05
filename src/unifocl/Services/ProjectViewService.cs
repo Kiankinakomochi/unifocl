@@ -65,7 +65,7 @@ internal sealed class ProjectViewService
                  && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase)
                  && tokens[1].Equals("script", StringComparison.OrdinalIgnoreCase))
         {
-            await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleMakeScriptViaBridgeAsync(tokens[2], session.CurrentProjectPath, session, outputs);
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("load", StringComparison.OrdinalIgnoreCase))
@@ -75,12 +75,12 @@ internal sealed class ProjectViewService
         }
         else if (tokens.Count >= 3 && tokens[0].Equals("rename", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
-            await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleRenameViaBridgeAsync(index, tokens[2], session, outputs);
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
-            await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime);
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleRemoveViaBridgeAsync(index, session, outputs);
         }
         else if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
@@ -562,20 +562,20 @@ internal sealed class ProjectViewService
         var isSceneLoad = Path.GetExtension(target.Name).Equals(".unity", StringComparison.OrdinalIgnoreCase);
         EmitImmediateLoadFeedback(state, target.Name, isSceneLoad);
         EmitLoadDiagnostic(state, $"selector '{selector}' resolved to '{target.RelativePath}'");
-        EmitLoadDiagnostic(state, "ensuring Unity bridge context");
-        var unityReady = await EnsureUnityContextAsync(
+        EmitLoadDiagnostic(state, "ensuring Bridge mode context");
+        var bridgeModeReady = await EnsureModeContextAsync(
             session,
             daemonControlService,
             daemonRuntime,
-            requireUnityBridge: isSceneLoad);
-        if (!unityReady && isSceneLoad)
+            requireBridgeMode: isSceneLoad);
+        if (!bridgeModeReady && isSceneLoad)
         {
-            outputs.Add("[x] scene load failed: Unity editor bridge is unavailable; set UNITY_PATH or start Unity editor for this project");
+            outputs.Add("[x] scene load failed: Bridge mode is unavailable; set UNITY_PATH or start Unity editor for this project");
             return true;
         }
         if (isSceneLoad)
         {
-            EmitLoadDiagnostic(state, "Unity bridge context ready");
+            EmitLoadDiagnostic(state, "Bridge mode context ready");
         }
 
         var response = await ExecuteProjectCommandAsync(
@@ -1003,10 +1003,10 @@ internal sealed class ProjectViewService
         AppendTranscript(session.ProjectView, [$"[{CliTheme.Info}]loading package information...[/]"]);
         RenderFrame(session.ProjectView);
 
-        var unityReady = await EnsureUnityContextAsync(session, daemonControlService, daemonRuntime, requireUnityBridge: true);
-        if (!unityReady)
+        var bridgeModeReady = await EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true);
+        if (!bridgeModeReady)
         {
-            outputs.Add("[x] upm list failed: Unity editor bridge is unavailable; set UNITY_PATH or open Unity editor for this project");
+            outputs.Add("[x] upm list failed: Bridge mode is unavailable; set UNITY_PATH or open Unity editor for this project");
             return true;
         }
 
@@ -1121,15 +1121,15 @@ internal sealed class ProjectViewService
         RenderFrame(state);
     }
 
-    private static async Task<bool> EnsureUnityContextAsync(
+    private static async Task<bool> EnsureModeContextAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
         DaemonRuntime daemonRuntime,
-        bool requireUnityBridge = false)
+        bool requireBridgeMode = false)
     {
         if (await daemonControlService.TouchAttachedDaemonAsync(session))
         {
-            if (!requireUnityBridge)
+            if (!requireBridgeMode)
             {
                 return true;
             }
@@ -1140,7 +1140,7 @@ internal sealed class ProjectViewService
             return false;
         }
 
-        if (!requireUnityBridge
+        if (!requireBridgeMode
             && DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
         {
             await daemonControlService.TryAttachProjectDaemonAsync(session.CurrentProjectPath, session);
@@ -1152,7 +1152,7 @@ internal sealed class ProjectViewService
             daemonRuntime,
             session,
             _ => { },
-            requireUnityBridge);
+            requireBridgeMode);
     }
 
     private static (string TemplateName, string TemplateSource, string Content) ResolveTemplate(string projectPath)
@@ -1318,7 +1318,7 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
 
         if (message.StartsWith(ProjectDaemonBridge.StubbedBridgePrefix, StringComparison.Ordinal))
         {
-            return ("stubbed bridge", "This daemon path is not implemented; run with Unity editor bridge attached.");
+            return ("stubbed bridge", "This daemon path is not implemented; run with Bridge mode attached.");
         }
 
         if (message.Contains("daemon did not return", StringComparison.OrdinalIgnoreCase)

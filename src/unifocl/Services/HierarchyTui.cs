@@ -811,7 +811,7 @@ internal sealed class HierarchyTui
         var normalized = string.IsNullOrWhiteSpace(message) ? fallback : message!;
         if (IsHierarchyStubbedMessage(normalized))
         {
-            return $"hierarchy command is stubbed without Unity editor bridge: {normalized}";
+            return $"hierarchy command is stubbed without Bridge mode: {normalized}";
         }
 
         return normalized;
@@ -819,7 +819,7 @@ internal sealed class HierarchyTui
 
     private static bool IsHierarchyStubbedMessage(string message)
     {
-        return message.Contains("require Unity editor bridge", StringComparison.OrdinalIgnoreCase)
+        return message.Contains("require Bridge mode", StringComparison.OrdinalIgnoreCase)
                || message.Contains("stubbed bridge", StringComparison.OrdinalIgnoreCase)
                || message.Contains("stubbed", StringComparison.OrdinalIgnoreCase);
     }

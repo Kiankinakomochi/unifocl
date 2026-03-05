@@ -9,7 +9,7 @@
 - Keep hierarchy navigation stateful with stable index snapshots.
 - Preserve Unity metadata integrity by routing project file operations through Unity APIs.
 - Provide inspector-level component and field editing with type-aware value parsing.
-- Maintain fast response time via a persistent Unity headless daemon.
+- Maintain fast response time via a persistent Unity Host mode daemon.
 
 ### Non-Goals (Initial Milestone)
 - Replacing full Unity Editor UI capabilities.
@@ -20,7 +20,7 @@
 - CLI App (`unifocl`): command parsing, local state, mode transitions, rendering.
 - Transport Layer: JSON request/response over localhost (HTTP or WebSocket).
 - Unity Editor Bridge: C# server script that executes requested operations using UnityEditor/Unity APIs.
-- Background Daemon Manager: startup/probe logic for always-warm Unity headless process.
+- Background Daemon Manager: startup/probe logic for always-warm Unity Host mode process.
 
 ## 4. Mode Design
 ### 4.1 Hierarchy Mode (Scene Architect)
@@ -57,7 +57,7 @@
   1. Resolve template path by search order.
   2. Read template content.
   3. Replace placeholders (minimum: `#NAME#`).
-  4. Save via Unity bridge to ensure metadata consistency.
+  4. Save via Bridge mode to ensure metadata consistency.
 
 ### 4.3 Inspector Mode (Component Surgeon)
 #### Functional Requirements
@@ -83,7 +83,7 @@
 ### Lifecycle
 - On CLI startup:
   1. Probe localhost endpoint (default port `8080`).
-  2. If unavailable, launch Unity in batch/headless mode with project path.
+  2. If unavailable, launch Unity in Host mode (batch/no-graphics) with project path.
   3. Poll readiness endpoint until timeout.
 - Keep daemon alive across command invocations.
 
@@ -157,7 +157,7 @@
 - Integration Tests:
   - CLI <-> daemon packet contract.
   - Hierarchy snapshot refresh and stale index behavior.
-  - Asset operations preserving metadata via Unity bridge.
+- Asset operations preserving metadata via Bridge mode.
 - Manual Smoke Tests:
   - Cold start to warm daemon reuse.
   - Destructive command confirmation flow.
@@ -167,7 +167,7 @@
 - `DEVELOPMENT_PLAN.md` (this document).
 - Next phase will add:
   - CLI project scaffold.
-  - Unity bridge scaffold.
+- Bridge mode scaffold.
   - Shared JSON contract definitions.
   - Initial automated tests.
 

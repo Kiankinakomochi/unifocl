@@ -883,7 +883,7 @@ internal sealed class ProjectLifecycleService
         var daemonPort = DaemonControlService.ResolveProjectDaemonPort(projectPath);
         if (allowUnsafe)
         {
-            log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster headless boot)");
+            log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster Host mode boot)");
         }
 
         var started = await daemonControlService.EnsureProjectDaemonAsync(
@@ -891,8 +891,8 @@ internal sealed class ProjectLifecycleService
             daemonRuntime,
             session,
             log,
-            requireUnityBridge: true,
-            preferHeadless: true,
+            requireBridgeMode: true,
+            preferHostMode: true,
             allowUnsafe: allowUnsafe);
         if (!started)
         {
@@ -944,7 +944,7 @@ internal sealed class ProjectLifecycleService
     {
         if (!daemonControlService.TryGetLastStartupFailure(out var failure) || failure is null)
         {
-            log("[red]daemon[/]: failed to start or attach headless daemon");
+            log("[red]daemon[/]: failed to start or attach Host mode daemon");
             return false;
         }
 

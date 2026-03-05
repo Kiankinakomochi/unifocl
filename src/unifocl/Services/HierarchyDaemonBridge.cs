@@ -29,7 +29,7 @@ internal sealed class HierarchyDaemonBridge
         if (command.StartsWith("HIERARCHY_FIND ", StringComparison.Ordinal))
         {
             response = JsonSerializer.Serialize(
-                new HierarchySearchResponseDto(false, [], "hierarchy operations require Unity editor bridge"),
+                new HierarchySearchResponseDto(false, [], "hierarchy operations require Bridge mode"),
                 _jsonOptions);
             return true;
         }
@@ -37,7 +37,7 @@ internal sealed class HierarchyDaemonBridge
         if (command.StartsWith("HIERARCHY_CMD ", StringComparison.Ordinal))
         {
             response = JsonSerializer.Serialize(
-                new HierarchyCommandResponseDto(false, "hierarchy operations require Unity editor bridge", null, null),
+                new HierarchyCommandResponseDto(false, "hierarchy operations require Bridge mode", null, null),
                 _jsonOptions);
             return true;
         }
