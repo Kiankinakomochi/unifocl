@@ -9,6 +9,7 @@ internal sealed class ProjectLifecycleService
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
     private readonly RecentProjectHistoryService _recentProjectHistoryService = new();
+    private readonly HierarchyDaemonClient _daemonClient = new();
 
     public async Task<bool> TryHandleLifecycleCommandAsync(
         string input,
@@ -752,6 +753,18 @@ internal sealed class ProjectLifecycleService
         DaemonRuntime daemonRuntime,
         Action<string> log)
     {
+        if (session.AttachedPort is int attachedBuildPort)
+        {
+            var status = await _daemonClient.GetBuildStatusAsync(attachedBuildPort);
+            if (status?.Running == true)
+            {
+                var label = string.IsNullOrWhiteSpace(status.Kind) ? "build" : status.Kind;
+                session.ResetToBoot();
+                log($"[yellow]close[/]: detached only; active {Markup.Escape(label)} build continues on daemon port {attachedBuildPort}");
+                return true;
+            }
+        }
+
         var candidatePorts = new HashSet<int>();
         if (session.AttachedPort is int attachedPort)
         {

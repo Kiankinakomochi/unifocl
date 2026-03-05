@@ -2,6 +2,11 @@ using Spectre.Console;
 using System.Text;
 
 var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+if (BuildLogTailService.TryRunFromArgs(launchArgs))
+{
+    return;
+}
+
 if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOptions, out var daemonParseError))
 {
     if (daemonParseError is not null)
@@ -70,7 +75,18 @@ var commands = new List<CommandSpec>
     new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
     new("/upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "/upm list"),
     new("/upm ls [--outdated] [--builtin] [--git]", "Alias for /upm list", "/upm ls"),
-    new("/upm", "Unity Package Manager commands", "/upm")
+    new("/upm", "Unity Package Manager commands", "/upm"),
+    new("/build <run|exec|scenes|addressables|cancel|targets>", "Build pipeline commands", "/build"),
+    new("/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target (prompts when omitted)", "/build run"),
+    new("/build exec <Method>", "Execute static build method (e.g., CI.Builder.BuildAndroidProd)", "/build exec"),
+    new("/build scenes", "Open interactive scene build-settings TUI", "/build scenes"),
+    new("/build addressables [--clean] [--update]", "Build Addressables content", "/build addressables"),
+    new("/build cancel", "Request cancellation of an ongoing build", "/build cancel"),
+    new("/build targets", "List installed Unity build support targets", "/build targets"),
+    new("/build logs", "Open restartable build log tail viewer", "/build logs"),
+    new("/b [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Alias for /build run", "/b"),
+    new("/bx <Method>", "Alias for /build exec", "/bx"),
+    new("/ba [--clean] [--update]", "Alias for /build addressables", "/ba")
 };
 
 var projectCommands = new List<CommandSpec>
@@ -97,7 +113,17 @@ var projectCommands = new List<CommandSpec>
     new("move <...>", "Move/reorder item in active mode", "move"),
     new("mv <...>", "Alias for move", "mv"),
     new("upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "upm list"),
-    new("upm ls [--outdated] [--builtin] [--git]", "Alias for upm list", "upm ls")
+    new("upm ls [--outdated] [--builtin] [--git]", "Alias for upm list", "upm ls"),
+    new("build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target", "build run"),
+    new("build exec <Method>", "Execute static build method", "build exec"),
+    new("build scenes", "Open interactive scene build-settings TUI", "build scenes"),
+    new("build addressables [--clean] [--update]", "Build Addressables content", "build addressables"),
+    new("build cancel", "Request cancellation of an ongoing build", "build cancel"),
+    new("build targets", "List installed Unity build support targets", "build targets"),
+    new("build logs", "Open restartable build log tail viewer", "build logs"),
+    new("b [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Alias for build run", "b"),
+    new("bx <Method>", "Alias for build exec", "bx"),
+    new("ba [--clean] [--update]", "Alias for build addressables", "ba")
 };
 
 var streamLog = new List<string>();
@@ -108,6 +134,7 @@ var daemonControlService = new DaemonControlService();
 var projectLifecycleService = new ProjectLifecycleService();
 var projectCommandRouterService = new ProjectCommandRouterService();
 var hierarchyTui = new HierarchyTui();
+var buildCommandService = new BuildCommandService();
 SeedBootLog(streamLog);
 RenderInitialLog(streamLog);
 
@@ -163,6 +190,17 @@ while (true)
 
         if (!input.StartsWith('/'))
         {
+            if (TryNormalizeProjectBuildCommand(input, out var normalizedBuildInput))
+            {
+                await buildCommandService.HandleBuildCommandAsync(
+                    normalizedBuildInput,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => AppendLog(streamLog, line));
+                continue;
+            }
+
             var handledProjectCommand = await projectCommandRouterService.TryHandleProjectCommandAsync(
                 input,
                 session,
@@ -303,6 +341,17 @@ while (true)
             continue;
         }
 
+        if (matched.Trigger.StartsWith("/build", StringComparison.Ordinal))
+        {
+            await buildCommandService.HandleBuildCommandAsync(
+                input,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+            continue;
+        }
+
         if (matched.Trigger is "/keybinds" or "/shortcuts")
         {
             WriteKeybindsHelp(streamLog, session);
@@ -333,6 +382,12 @@ while (true)
                 session,
                 line => AppendLog(streamLog, line),
                 streamLog);
+            if (matched.Trigger == "/daemon attach")
+            {
+                await buildCommandService.NotifyAttachedBuildIfAnyAsync(
+                    session,
+                    line => AppendLog(streamLog, line));
+            }
             continue;
         }
         if (await projectLifecycleService.TryHandleLifecycleCommandAsync(
@@ -1211,6 +1266,9 @@ static string NormalizeSlashCommand(string input)
         "/p" => "/project",
         "/h" => "/hierarchy",
         "/i" => "/inspect",
+        "/b" => "/build run",
+        "/bx" => "/build exec",
+        "/ba" => "/build addressables",
         "/exit" => "/quit",
         _ => commandToken
     };
@@ -1226,6 +1284,36 @@ static CommandSpec? MatchCommand(string input, List<CommandSpec> commands)
         .OrderByDescending(c => c.Trigger.Length)
         .FirstOrDefault(c => normalized == c.Trigger
                              || normalized.StartsWith(c.Trigger + " ", StringComparison.OrdinalIgnoreCase));
+}
+
+static bool TryNormalizeProjectBuildCommand(string input, out string normalizedBuildInput)
+{
+    normalizedBuildInput = string.Empty;
+    var trimmed = input.Trim();
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        return false;
+    }
+
+    var commandEnd = trimmed.IndexOf(' ');
+    var head = commandEnd >= 0 ? trimmed[..commandEnd] : trimmed;
+    var tail = commandEnd >= 0 ? trimmed[commandEnd..] : string.Empty;
+    var normalizedHead = head.ToLowerInvariant() switch
+    {
+        "build" => "/build",
+        "b" => "/build run",
+        "bx" => "/build exec",
+        "ba" => "/build addressables",
+        _ => string.Empty
+    };
+
+    if (string.IsNullOrWhiteSpace(normalizedHead))
+    {
+        return false;
+    }
+
+    normalizedBuildInput = normalizedHead + tail;
+    return true;
 }
 
 static void AppendLog(List<string> streamLog, string line)

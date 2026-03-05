@@ -8,6 +8,7 @@ internal sealed class HierarchyDaemonClient
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ProjectCommandTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan BuildStatusTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan SceneLoadTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan SceneLoadStatusInterval = TimeSpan.FromSeconds(5);
     private const int SceneLoadRetryCount = 1;
@@ -91,7 +92,10 @@ internal sealed class HierarchyDaemonClient
     public async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(int port, ProjectCommandRequestDto request, Action<string>? onStatus = null)
     {
         var isSceneLoad = request.Action.Equals("load-asset", StringComparison.OrdinalIgnoreCase);
-        var timeout = isSceneLoad ? SceneLoadTimeout : ProjectCommandTimeout;
+        var isBuildDispatch = request.Action.StartsWith("build-", StringComparison.OrdinalIgnoreCase);
+        var timeout = isSceneLoad
+            ? SceneLoadTimeout
+            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : ProjectCommandTimeout);
         var maxAttempts = isSceneLoad ? SceneLoadRetryCount + 1 : 1;
         if (isSceneLoad)
         {
@@ -155,11 +159,48 @@ internal sealed class HierarchyDaemonClient
         return new ProjectCommandResponseDto(false, "daemon did not return a project response", null, null);
     }
 
-    private static async Task<string?> SendGetAsync(string uri)
+    public async Task<BuildStatusDto?> GetBuildStatusAsync(int port)
+    {
+        var payload = await SendGetAsync($"http://127.0.0.1:{port}/build/status", BuildStatusTimeout);
+        if (payload is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<BuildStatusDto>(payload, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<BuildLogChunkDto?> GetBuildLogChunkAsync(int port, long offset, int limit, bool errorsOnly)
+    {
+        var query = $"offset={Math.Max(0, offset)}&limit={Math.Clamp(limit, 1, 400)}&errorsOnly={errorsOnly.ToString().ToLowerInvariant()}";
+        var payload = await SendGetAsync($"http://127.0.0.1:{port}/build/log?{query}", BuildStatusTimeout);
+        if (payload is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<BuildLogChunkDto>(payload, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<string?> SendGetAsync(string uri, TimeSpan? timeout = null)
     {
         try
         {
-            using var cts = new CancellationTokenSource(DefaultRequestTimeout);
+            using var cts = new CancellationTokenSource(timeout ?? DefaultRequestTimeout);
             var response = await Http.GetAsync(uri, cts.Token);
             if (!response.IsSuccessStatusCode)
             {

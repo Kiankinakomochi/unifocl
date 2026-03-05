@@ -43,6 +43,7 @@ namespace UniFocl.EditorBridge
         private static int _inactivityTtlSeconds;
         private static int _mainThreadManagedThreadId;
         private static readonly ConcurrentQueue<MainThreadWorkItem> _mainThreadWorkQueue = new();
+        private static readonly ConcurrentQueue<Action> _mainThreadActionQueue = new();
 
         public static bool HasDaemonServiceArg()
         {
@@ -166,7 +167,19 @@ namespace UniFocl.EditorBridge
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
                 {
                     await WriteTextResponseAsync(context.Response, "STOPPING");
-                    StopInternal(quitEditor: _isBatchMode);
+                    if (_isBatchMode
+                        && (_mainThreadManagedThreadId == 0 || Environment.CurrentManagedThreadId != _mainThreadManagedThreadId))
+                    {
+                        _ = await ExecuteOnMainThreadAsync(() =>
+                        {
+                            StopInternal(quitEditor: true);
+                            return "OK";
+                        });
+                    }
+                    else
+                    {
+                        StopInternal(quitEditor: _isBatchMode);
+                    }
                     return;
                 }
 
@@ -230,6 +243,24 @@ namespace UniFocl.EditorBridge
                     stopwatch.Stop();
                     Debug.Log($"[unifocl] project command completed: action={action}, elapsedMs={stopwatch.ElapsedMilliseconds}");
                     await WriteJsonResponseAsync(context.Response, response);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/build/status", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.GetBuildStatusPayload());
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/build/log", StringComparison.OrdinalIgnoreCase))
+                {
+                    var offsetRaw = request.QueryString["offset"];
+                    var limitRaw = request.QueryString["limit"];
+                    var errorsOnlyRaw = request.QueryString["errorsOnly"];
+                    _ = long.TryParse(offsetRaw, out var offset);
+                    _ = int.TryParse(limitRaw, out var limit);
+                    _ = bool.TryParse(errorsOnlyRaw, out var errorsOnly);
+                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.ReadBuildLogPayload(offset, limit, errorsOnly));
                     return;
                 }
 
@@ -341,6 +372,10 @@ namespace UniFocl.EditorBridge
                 return;
             }
 
+            var wasBatchMode = _isBatchMode;
+            var isMainThread = _mainThreadManagedThreadId != 0
+                && Environment.CurrentManagedThreadId == _mainThreadManagedThreadId;
+
             _running = false;
             try
             {
@@ -361,8 +396,6 @@ namespace UniFocl.EditorBridge
             _cts?.Dispose();
             _cts = null;
             _listener = null;
-            _isBatchMode = false;
-            _mainThreadManagedThreadId = 0;
 
             EditorApplication.update -= OnEditorUpdate;
 
@@ -370,8 +403,28 @@ namespace UniFocl.EditorBridge
 
             if (quitEditor)
             {
-                EditorApplication.Exit(0);
+                RequestEditorExit(wasBatchMode, isMainThread);
             }
+
+            _isBatchMode = false;
+            _mainThreadManagedThreadId = 0;
+        }
+
+        private static void RequestEditorExit(bool wasBatchMode, bool isMainThread)
+        {
+            if (isMainThread)
+            {
+                EditorApplication.Exit(0);
+                return;
+            }
+
+            if (wasBatchMode)
+            {
+                Environment.Exit(0);
+                return;
+            }
+
+            EditorApplication.delayCall += () => EditorApplication.Exit(0);
         }
 
         private static Task<string> ExecuteOnMainThreadAsync(Func<string> work)
@@ -415,6 +468,18 @@ namespace UniFocl.EditorBridge
 
         private static void DrainMainThreadWorkQueue()
         {
+            while (_mainThreadActionQueue.TryDequeue(out var action))
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[unifocl] main-thread action failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
             while (_mainThreadWorkQueue.TryDequeue(out var item))
             {
                 try
@@ -431,10 +496,48 @@ namespace UniFocl.EditorBridge
         private static void FailPendingMainThreadWork()
         {
             var ex = new InvalidOperationException("CLI daemon stopped before main-thread work could execute");
+            while (_mainThreadActionQueue.TryDequeue(out _))
+            {
+            }
+
             while (_mainThreadWorkQueue.TryDequeue(out var item))
             {
                 item.Completion.TrySetException(ex);
             }
+        }
+
+        internal static void DispatchOnMainThread(Action action)
+        {
+            if (action is null)
+            {
+                return;
+            }
+
+            var isMainThread = _mainThreadManagedThreadId != 0
+                && Environment.CurrentManagedThreadId == _mainThreadManagedThreadId;
+            if (isMainThread)
+            {
+                action();
+                return;
+            }
+
+            if (_isBatchMode)
+            {
+                _mainThreadActionQueue.Enqueue(action);
+                return;
+            }
+
+            EditorApplication.delayCall += () =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[unifocl] delayed main-thread action failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            };
         }
 
         internal static void MarkAssetIndexDirty() => DaemonAssetIndexService.MarkDirty();
