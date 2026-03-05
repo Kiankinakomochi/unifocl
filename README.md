@@ -83,6 +83,13 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/recent [idx]` | | List recent projects or open one by index. |
 | `/config <get/set/list/reset>`| `/cfg` | Manage CLI preferences (e.g., themes). |
 | `/status` | `/st` | Show daemon, mode, editor, project, and session status summary. |
+| `/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]` | `/b` | Trigger a Unity player build. If target is omitted, choose from an interactive target selector. |
+| `/build exec <Method>` | `/bx` | Execute a static build method (e.g., `CI.Builder.BuildAndroidProd`). |
+| `/build scenes` | | Open an interactive TUI to view, toggle, and reorder build scenes. |
+| `/build addressables [--clean] [--update]` | `/ba` | Trigger an Addressables content build (full or update mode). |
+| `/build cancel` | | Request cancellation for the active build process via daemon. |
+| `/build targets` | | List platform build support currently available in this Unity Editor. |
+| `/build logs` | | Reopen live build log tail (restartable, with error filtering). |
 | `/init [path]` | | Generate bridge-mode config and install editor-side dependencies. |
 | `/clear` | | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic. |
