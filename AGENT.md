@@ -1,6 +1,6 @@
 ## name: unifocl-cli-backend-best-practices
 description: >
-  Use this when working in the unifocl .NET CLI project. Enforces strict coding standards, stateless daemon-safe architecture rules, Unity bridge integration safety, and .NET 10 console app conventions.
+  Use this when working in the unifocl .NET CLI project. Enforces strict coding standards, stateless daemon-safe architecture rules, Host/Bridge mode integration safety, and .NET 10 console app conventions.
 
 # unifocl CLI Skill (Strict Team Conventions)
 
@@ -11,7 +11,7 @@ Maintain this repository with **scalability, security, statelessness, and mainta
 The agent must treat the following as **non-negotiable principles**:
 
 - **Runtime:** .NET 10 console app (`src/unifocl/unifocl.csproj`)
-- **Architecture:** CLI + daemon control + Unity editor bridge payload
+- **Architecture:** CLI + daemon control + Bridge mode payload
 - **Security:** Never commit secrets or machine-local credentials/tokens
 - **Build Command:** Run builds or tests on `src/unifocl/unifocl.csproj` with `--disable-build-servers -v minimal`
 - **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in English

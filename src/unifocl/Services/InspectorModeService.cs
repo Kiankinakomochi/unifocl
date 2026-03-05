@@ -406,7 +406,7 @@ internal sealed class InspectorModeService
             }
             else
             {
-                AddStream(context, "[!] failed to toggle component in Unity bridge");
+                AddStream(context, "[!] failed to toggle component in Bridge mode");
             }
 
             _renderer.Render(context);
@@ -450,7 +450,7 @@ internal sealed class InspectorModeService
         }
         else
         {
-            AddStream(context, "[!] failed to toggle field in Unity bridge");
+            AddStream(context, "[!] failed to toggle field in Bridge mode");
         }
 
         _renderer.Render(context);
@@ -507,7 +507,7 @@ internal sealed class InspectorModeService
             if (fetchedFields is null)
             {
                 AddStream(context, $"{context.PromptLabel} > {input}");
-                AddStream(context, "[!] unable to fetch inspector fields from Unity bridge");
+                AddStream(context, "[!] unable to fetch inspector fields from Bridge mode");
                 _renderer.Render(context);
                 return;
             }
@@ -540,7 +540,7 @@ internal sealed class InspectorModeService
             }
             else
             {
-                AddStream(context, "[!] failed to set field in Unity bridge");
+                AddStream(context, "[!] failed to set field in Bridge mode");
             }
 
             _renderer.Render(context);
@@ -575,7 +575,7 @@ internal sealed class InspectorModeService
         }
         else
         {
-            AddStream(context, "[!] failed to set field in Unity bridge");
+            AddStream(context, "[!] failed to set field in Bridge mode");
         }
 
         _renderer.Render(context);
@@ -632,7 +632,7 @@ internal sealed class InspectorModeService
             }
         }
 
-        AddStream(context, "[!] failed to query fuzzy results from Unity bridge");
+        AddStream(context, "[!] failed to query fuzzy results from Bridge mode");
         _renderer.Render(context);
     }
 
@@ -773,7 +773,7 @@ internal sealed class InspectorModeService
         AddStream(context, $"[i] entering inspector for: {context.TargetPath.TrimStart('/')}");
         if (context.Components.Count == 0)
         {
-            AddStream(context, "[!] no inspector components returned (check Unity bridge attachment/target path)");
+            AddStream(context, "[!] no inspector components returned (check Bridge mode attachment/target path)");
         }
 
         _renderer.Render(context);

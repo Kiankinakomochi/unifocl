@@ -342,14 +342,14 @@ internal sealed class DaemonControlService
         DaemonRuntime runtime,
         CliSessionState session,
         Action<string> log,
-        bool requireUnityBridge = false,
-        bool preferHeadless = false,
+        bool requireBridgeMode = false,
+        bool preferHostMode = false,
         bool allowUnsafe = false)
     {
         var port = ResolveProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
 
-        // Unity's InitializeOnLoad bridge can already be serving this port even when it's not in runtime registry.
+        // Unity's InitializeOnLoad Bridge mode endpoint can already be serving this port even when it's not in runtime registry.
         if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
         {
             var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(port, TimeSpan.FromSeconds(3));
@@ -362,21 +362,21 @@ internal sealed class DaemonControlService
             }
             else
             {
-                var bridgeSatisfied = !requireUnityBridge || IsUnityBridgeCapable(existing);
-                var headlessSatisfied = !preferHeadless || (existing?.Headless ?? false);
+                var bridgeSatisfied = !requireBridgeMode || SupportsBridgeMode(existing);
+                var hostModeSatisfied = !preferHostMode || (existing?.Headless ?? false);
                 var managedRuntimePresent = existing is not null;
 
-                if (managedRuntimePresent && bridgeSatisfied && headlessSatisfied)
+                if (managedRuntimePresent && bridgeSatisfied && hostModeSatisfied)
                 {
                     return true;
                 }
 
-                if (!preferHeadless && bridgeSatisfied)
+                if (!preferHostMode && bridgeSatisfied)
                 {
                     return true;
                 }
 
-                log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} is attachable but unmanaged; restarting as managed headless bridge");
+                log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} is attachable but unmanaged; restarting in managed Host mode");
                 await TrySendControlAsync(port, "STOP", "STOPPING");
                 session.AttachedPort = null;
                 await Task.Delay(200);
@@ -399,9 +399,9 @@ internal sealed class DaemonControlService
         }
 
         var unityPath = ResolveDefaultUnityPath(projectPath);
-        if (requireUnityBridge && string.IsNullOrWhiteSpace(unityPath))
+        if (requireBridgeMode && string.IsNullOrWhiteSpace(unityPath))
         {
-            log("[red]daemon[/]: scene load requires Unity editor bridge, but no Unity editor path is configured");
+            log("[red]daemon[/]: scene load requires Bridge mode, but no Unity editor path is configured");
             return false;
         }
 
@@ -473,11 +473,11 @@ internal sealed class DaemonControlService
         return await WaitForProjectCommandReadyAsync(port, TimeSpan.FromSeconds(8));
     }
 
-    private static bool IsUnityBridgeCapable(DaemonInstance? instance)
+    private static bool SupportsBridgeMode(DaemonInstance? instance)
     {
         if (instance is null)
         {
-            // Port is serving but not from runtime registry (likely InitializeOnLoad Unity bridge).
+            // Port is serving but not from runtime registry (likely InitializeOnLoad Bridge mode).
             return true;
         }
 
@@ -571,11 +571,11 @@ internal sealed class DaemonControlService
         {
             if (target.Headless)
             {
-                TryTerminateHeadlessByPid(target.Pid, log);
+                TryTerminateHostModeByPid(target.Pid, log);
             }
             else
             {
-                log($"[yellow]daemon[/]: process pid={target.Pid} is still alive after stop request; skipped force-kill because daemon is not headless");
+                log($"[yellow]daemon[/]: process pid={target.Pid} is still alive after stop request; skipped force-kill because daemon is not running in Host mode");
             }
         }
 
@@ -665,7 +665,7 @@ internal sealed class DaemonControlService
             return;
         }
 
-        startOptions = PromoteToHeadlessProjectStart(startOptions, session, log);
+        startOptions = PromoteToHostModeProjectStart(startOptions, session, log);
 
         if (startOptions.Headless && !string.IsNullOrWhiteSpace(startOptions.ProjectPath))
         {
@@ -678,18 +678,18 @@ internal sealed class DaemonControlService
                     var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(projectPort, TimeSpan.FromSeconds(3));
                     if (projectCommandReady)
                     {
-                        log($"[green]daemon[/]: Unity editor is already running for project; attached bridge on [white]127.0.0.1:{projectPort}[/]");
+                        log($"[green]daemon[/]: Unity editor is already running for project; attached in Bridge mode on [white]127.0.0.1:{projectPort}[/]");
                         return;
                     }
 
-                    log($"[yellow]daemon[/]: existing bridge on port {projectPort} responds to ping but project commands are unresponsive; restarting bridge");
+                    log($"[yellow]daemon[/]: existing Bridge mode endpoint on port {projectPort} responds to ping but project commands are unresponsive; restarting");
                     await TrySendControlAsync(projectPort, "STOP", "STOPPING");
                     session.AttachedPort = null;
                     await Task.Delay(200);
                 }
                 else
                 {
-                    log("[yellow]daemon[/]: Unity lock detected, but bridge endpoint is not attachable; starting a new headless bridge");
+                    log("[yellow]daemon[/]: Unity lock detected, but Bridge mode endpoint is not attachable; starting a new Host mode daemon");
                 }
             }
         }
@@ -725,7 +725,7 @@ internal sealed class DaemonControlService
         if (startOptions.Headless)
         {
             var mode = startOptions.AllowUnsafe ? "unsafe (UPM disabled, ignore compile errors)" : "safe (UPM enabled)";
-            log($"[grey]daemon[/]: starting Unity headless bridge on port {startOptions.Port} ({mode})");
+            log($"[grey]daemon[/]: starting Unity in Host mode on port {startOptions.Port} ({mode})");
         }
         StartBackgroundOutputDrain(
             process,
@@ -738,7 +738,7 @@ internal sealed class DaemonControlService
 
         var startupTimeout = TimeSpan.FromSeconds(25);
         var ready = startOptions.Headless
-            ? await WaitForHeadlessDaemonReadyAsync(
+            ? await WaitForHostModeDaemonReadyAsync(
                 startOptions.Port,
                 process,
                 outputLines,
@@ -780,7 +780,7 @@ internal sealed class DaemonControlService
             return false;
         }
 
-        // Headless Unity bridge launch does not self-register in daemon runtime metadata.
+        // Host mode Unity launch does not self-register in daemon runtime metadata.
         if (startOptions.Headless)
         {
             runtime.Upsert(new DaemonInstance(
@@ -794,7 +794,7 @@ internal sealed class DaemonControlService
         }
 
         _lastStartupFailure = null;
-        log($"[green]daemon[/]: started [white]pid={process.Id}[/] [white]port={startOptions.Port}[/] [white]headless={startOptions.Headless}[/]");
+        log($"[green]daemon[/]: started [white]pid={process.Id}[/] [white]port={startOptions.Port}[/] [white]mode={(startOptions.Headless ? "host" : "bridge")}[/]");
         return true;
     }
 
@@ -862,7 +862,7 @@ internal sealed class DaemonControlService
         await HandleDaemonStartAsync(synthesized, runtime, session, log);
     }
 
-    private static DaemonStartOptions PromoteToHeadlessProjectStart(DaemonStartOptions options, CliSessionState session, Action<string> log)
+    private static DaemonStartOptions PromoteToHostModeProjectStart(DaemonStartOptions options, CliSessionState session, Action<string> log)
     {
         if (options.Headless)
         {
@@ -888,12 +888,12 @@ internal sealed class DaemonControlService
 
         if (string.IsNullOrWhiteSpace(unityPath))
         {
-            log("[yellow]daemon[/]: project context found but Unity path is unresolved; starting non-headless daemon");
+            log("[yellow]daemon[/]: project context found but Unity path is unresolved; starting daemon without Host mode");
             return options with { ProjectPath = projectPath };
         }
 
         var promotedPort = options.Port == 8080 ? ResolveProjectDaemonPort(projectPath) : options.Port;
-        log($"[grey]daemon[/]: defaulting to headless Unity bridge for project [white]{Markup.Escape(projectPath)}[/]");
+        log($"[grey]daemon[/]: defaulting to Host mode for project [white]{Markup.Escape(projectPath)}[/]");
         return options with
         {
             Port = promotedPort,
@@ -944,7 +944,7 @@ internal sealed class DaemonControlService
         table.AddColumn("PID");
         table.AddColumn("Uptime");
         table.AddColumn("Unity");
-        table.AddColumn("Headless");
+        table.AddColumn("Mode");
         table.AddColumn("Attached");
 
         foreach (var instance in instances)
@@ -955,7 +955,7 @@ internal sealed class DaemonControlService
                 instance.Pid.ToString(),
                 uptime,
                 instance.UnityPath ?? "-",
-                instance.Headless ? "yes" : "no",
+                instance.Headless ? "host" : "bridge",
                 session.AttachedPort == instance.Port ? "yes" : "no");
         }
 
@@ -1328,7 +1328,7 @@ internal sealed class DaemonControlService
         }
     }
 
-    private static void TryTerminateHeadlessByPid(int pid, Action<string> log)
+    private static void TryTerminateHostModeByPid(int pid, Action<string> log)
     {
         try
         {
@@ -1341,7 +1341,7 @@ internal sealed class DaemonControlService
         }
         catch (Exception ex)
         {
-            log($"[yellow]daemon[/]: unable to terminate headless Unity process pid={pid} ({Markup.Escape(ex.Message)})");
+            log($"[yellow]daemon[/]: unable to terminate Host mode Unity process pid={pid} ({Markup.Escape(ex.Message)})");
         }
     }
 
@@ -1370,7 +1370,7 @@ internal sealed class DaemonControlService
         return false;
     }
 
-    private static async Task<bool> WaitForHeadlessDaemonReadyAsync(
+    private static async Task<bool> WaitForHostModeDaemonReadyAsync(
         int port,
         Process process,
         ConcurrentQueue<string> outputLines,

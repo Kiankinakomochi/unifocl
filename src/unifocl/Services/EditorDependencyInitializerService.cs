@@ -55,7 +55,7 @@ internal sealed class EditorDependencyInitializerService
 
     public bool PromptForInitialization(Action<string> log)
     {
-        log("[grey]init[/]: initialization installs a local Unity editor bridge package so CLI commands can talk to the editor without modifying manifest.json.");
+        log("[grey]init[/]: initialization installs a local Bridge mode package so CLI commands can talk to the editor without modifying manifest.json.");
         if (Console.IsInputRedirected)
         {
             log("[yellow]init[/]: prompt skipped in redirected input mode; run /init to install editor dependencies");

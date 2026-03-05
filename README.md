@@ -19,16 +19,27 @@ unifocl is a .NET console application built for cross-platform compatibility (Wi
 1.  **CLI Layer:** Handles commands and structured user interaction.
 2.  **Mode System:** Manages the context-aware environments (Hierarchy, Project, Inspector).
 3.  **Daemon Layer:** A persistent background coordinator that tracks project state.
-4.  **Unity Bridge:** The communication interface between the daemon and the Unity Editor/runtime.
+4.  **Bridge Mode Channel:** The communication interface between the daemon and an active Unity Editor/runtime.
 
 ## The unifocl Daemon
 
-The daemon is a foundational part of the architecture. Rather than tying structural project operations directly to the Editor process, unifocl uses a persistent background daemon to separate project manipulation from the GUI state. 
+The daemon is a localhost control process, not a kernel/OS-level file mutation service.
 
-This enables two operational modes:
+Current implementation summary:
 
-* **Headless Project Mode:** When Unity is closed, the daemon operates directly on project files. It maintains structural consistency and handles deterministic filesystem-level edits. This is primarily useful for CI/CD, remote manipulation, and script-driven workflows. Unity will detect and reimport these changes upon its next launch.
-* **Live Editor Mode:** When Unity is open, the daemon establishes a bridge connection to synchronize with the Editor's state. It executes hierarchy and component operations safely through Unity's APIs to respect the runtime context.
+* The CLI talks to a daemon endpoint over local HTTP (`127.0.0.1:<port>`) for lifecycle and project commands.
+* The daemon keeps a project-scoped session warm so commands do not need to cold-start Unity every time.
+* Mode selection is runtime-based:
+  * **Host mode:** If no suitable GUI editor bridge is attached, unifocl starts Unity in batch/no-graphics mode (`--headless`) and serves commands through that Unity process.
+  * **Bridge mode:** If a GUI Unity editor for the same project is already active and attachable, unifocl routes commands to that live editor bridge endpoint.
+* Project operations are executed by Unity-side services/contracts, then reported back to the CLI as typed responses.
+* If an endpoint is reachable but unhealthy (for example ping works but project commands do not), unifocl restarts and re-attaches the managed daemon path.
+* Daemon state is tracked per project (deterministic port + local `.unifocl` config/session metadata).
+
+What this means in practice:
+
+* unifocl does not bypass Unity with privileged OS hooks.
+* It either executes through a Host-mode Unity runtime or through a Bridge-mode attached editor runtime, depending on what is available.
 
 ## Installation
 
@@ -68,11 +79,11 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/close` | `/c` | Detach from the current project and stop the attached daemon. |
 | `/quit` | `/q`, `/exit` | Exit the CLI client (leaves the daemon running). |
 | `/new <name> [version]` | | Bootstrap a new Unity project. |
-| `/clone <git-url>` | | Clone a repository and setup local CLI bridge config. |
+| `/clone <git-url>` | | Clone a repository and set up local CLI bridge-mode config. |
 | `/recent [idx]` | | List recent projects or open one by index. |
 | `/config <get/set/list/reset>`| `/cfg` | Manage CLI preferences (e.g., themes). |
-| `/status` | `/st` | Show daemon, editor, project, and session status summary. |
-| `/init [path]` | | Generate bridge config and install editor-side dependencies. |
+| `/status` | `/st` | Show daemon, mode, editor, project, and session status summary. |
+| `/init [path]` | | Generate bridge-mode config and install editor-side dependencies. |
 | `/clear` | | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic. |
 
@@ -83,7 +94,7 @@ The daemon maintains a persistent connection to the project. Manage it using the
 
 | Subcommand | Description |
 | :--- | :--- |
-| `start` | Start a daemon. Accepts flags: `--port`, `--unity <path>`, `--project <path>`, `--headless`, `--allow-unsafe`. |
+| `start` | Start a daemon. Accepts flags: `--port`, `--unity <path>`, `--project <path>`, `--headless` (Host mode), `--allow-unsafe`. |
 | `stop` | Stop the daemon instance controlled by this CLI. |
 | `restart` | Restart the currently attached daemon. |
 | `ps` | List running daemon instances, ports, uptimes, and associated projects. |
@@ -100,7 +111,7 @@ Once a project is opened, use these commands to switch your active context.
 | `/inspect <idx/path>`| `/i` | Switch to Inspector mode and focus a target. |
 
 ### 4. Contextual Operations (Non-Slash Commands)
-When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash to interact directly with the active environment. Mutating operations are safely routed through the Unity Editor bridge via the daemon.
+When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash to interact directly with the active environment. Mutating operations are safely routed through Bridge mode when available, or Host mode fallback when applicable.
 
 | Command | Alias | Description |
 | :--- | :--- | :--- |
@@ -151,7 +162,7 @@ Once focused (`F7` or `F8`), the arrow keys and tab behave contextually:
 ## Roadmap
 
 Current development priorities include:
-* Daemon stabilization and Unity bridge hardening.
+* Daemon stabilization and Host/Bridge mode hardening.
 * Command syntax stabilization.
 * Packaging and distribution (Global Tool, Homebrew).
 * Implementation of a script execution layer.

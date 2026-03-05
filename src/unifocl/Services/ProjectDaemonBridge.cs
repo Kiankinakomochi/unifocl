@@ -179,7 +179,7 @@ internal sealed class ProjectDaemonBridge
         {
             return new ProjectCommandResponseDto(
                 false,
-                $"{StubbedBridgePrefix} scene load is unavailable without Unity editor bridge: {assetPath}",
+                $"{StubbedBridgePrefix} scene load is unavailable without Bridge mode: {assetPath}",
                 null,
                 null);
         }
