@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 - 2026-03-08
+
+### Added
+- Hierarchy mode now provides in-prompt IntelliSense with command signatures, argument usage, and descriptions.
+- Hierarchy mode prompt now supports suggestion navigation and insertion (`↑/↓` + `Enter`) plus `Esc` dismissal behavior.
+
+### Changed
+- Project composer IntelliSense now uses inspector-specific command suggestions while in inspector context.
+- Inspector command suggestions now include context-specific command usage and explanations rather than only project-wide command listings.
+
 ## 0.3.0 - 2026-03-06
 
 ### Added

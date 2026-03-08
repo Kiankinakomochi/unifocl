@@ -11,6 +11,27 @@ internal sealed class HierarchyTui
     private const int FrameOverheadRows = 5;
     private const ConsoleKey FocusModeKey = ConsoleKey.F7;
 
+    private static readonly List<CommandSpec> HierarchyCommands =
+    [
+        new("list", "Refresh hierarchy snapshot", "list"),
+        new("ls", "Alias for list", "ls"),
+        new("ref", "Alias for list", "ref"),
+        new("enter <idx>", "Enter child object by visible index", "enter"),
+        new("cd <idx>", "Alias for enter", "cd"),
+        new("up", "Move to parent object", "up"),
+        new("..", "Alias for up", ".."),
+        new(":i", "Alias for up", ":i"),
+        new("make <name>", "Create empty GameObject under current object", "make"),
+        new("mk <name>", "Alias for make", "mk"),
+        new("mk cube <name> [-p]", "Create primitive cube", "mk cube"),
+        new("toggle <idx>", "Toggle active state by index", "toggle"),
+        new("t <idx>", "Alias for toggle", "t"),
+        new("f <query>", "Fuzzy search hierarchy paths", "f"),
+        new("ff <query>", "Alias for fuzzy search", "ff"),
+        new("scroll [tree|log] <up|down> [count]", "Scroll tree or command stream", "scroll"),
+        new("quit|exit|q|:q", "Exit hierarchy mode", "quit")
+    ];
+
     private readonly HierarchyDaemonClient _daemonClient = new();
     private int _treeScrollOffset;
     private int _commandScrollOffset = int.MaxValue;
@@ -62,7 +83,6 @@ internal sealed class HierarchyTui
             var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath, out _, null);
             RenderFrame(port, snapshot.Scene, treeLines.Select(line => line.Text).ToList(), commandLog, cwdPath);
 
-            Console.Write($"UnityCLI:{cwdPath} > ");
             var firstKey = Console.ReadKey(intercept: true);
             var firstIntent = KeyboardIntentReader.FromConsoleKey(firstKey);
             if (firstIntent == KeyboardIntent.FocusProject
@@ -81,7 +101,7 @@ internal sealed class HierarchyTui
                 continue;
             }
 
-            var input = ReadPromptInputFromFirstKey(firstKey);
+            var input = ReadPromptInputWithIntellisenseFromFirstKey(cwdPath, firstKey);
 
             if (string.IsNullOrWhiteSpace(input))
             {
@@ -130,7 +150,7 @@ internal sealed class HierarchyTui
 
             if (!handled)
             {
-                commandLog.Add("[!] unknown command (supported: list, enter, up, make, toggle, f, scroll, quit)");
+                commandLog.Add("[!] unknown command (type any text to view hierarchy intellisense)");
             }
 
             var nextSnapshot = await _daemonClient.GetSnapshotAsync(port);
@@ -742,8 +762,9 @@ internal sealed class HierarchyTui
         return null;
     }
 
-    private static string ReadPromptInputFromFirstKey(ConsoleKeyInfo firstKey)
+    private static string ReadPromptInputWithIntellisenseFromFirstKey(string cwdPath, ConsoleKeyInfo firstKey)
     {
+        var input = new StringBuilder();
         if (firstKey.Key == ConsoleKey.Enter)
         {
             Console.WriteLine();
@@ -756,41 +777,112 @@ internal sealed class HierarchyTui
             return string.Empty;
         }
 
-        var input = new StringBuilder();
         if (!TryAppendInputCharacter(firstKey, input))
         {
             Console.WriteLine();
             return string.Empty;
         }
 
+        var selectedIndex = 0;
+        var dismissed = false;
+        var selectionArmed = false;
+        var renderedLines = RenderPromptIntellisense(cwdPath, input.ToString(), selectedIndex, dismissed);
+
         while (true)
         {
+            var allCandidates = GetHierarchyIntellisenseCandidates(input.ToString());
+            var candidates = dismissed ? [] : allCandidates;
+            if (candidates.Count == 0)
+            {
+                selectedIndex = 0;
+            }
+            else
+            {
+                selectedIndex = Math.Clamp(selectedIndex, 0, candidates.Count - 1);
+            }
+
             var key = Console.ReadKey(intercept: true);
             if (key.Key == ConsoleKey.Enter)
             {
-                Console.WriteLine();
-                return input.ToString().Trim();
-            }
-
-            if (key.Key == ConsoleKey.Backspace)
-            {
-                if (input.Length == 0)
+                if (selectionArmed
+                    && candidates.Count > 0
+                    && selectedIndex >= 0
+                    && selectedIndex < candidates.Count
+                    && !string.IsNullOrWhiteSpace(candidates[selectedIndex].CommitCommand))
                 {
-                    continue;
+                    input.Clear();
+                    input.Append(candidates[selectedIndex].CommitCommand);
+                    dismissed = false;
+                    selectionArmed = false;
+                }
+                else
+                {
+                    ClearPromptFrame(renderedLines);
+                    Console.WriteLine($"UnityCLI:{cwdPath} > {input}");
+                    return input.ToString().Trim();
+                }
+            }
+            else if (key.Key == ConsoleKey.Backspace)
+            {
+                if (input.Length > 0)
+                {
+                    input.Length--;
                 }
 
-                input.Length--;
-                Console.Write("\b \b");
-                continue;
+                dismissed = false;
+                selectionArmed = false;
             }
-
-            if (key.Key == ConsoleKey.Escape)
+            else if (key.Key == ConsoleKey.Escape)
             {
-                Console.WriteLine();
-                return string.Empty;
+                if (!dismissed && allCandidates.Count > 0)
+                {
+                    dismissed = true;
+                }
+                else
+                {
+                    input.Clear();
+                    dismissed = false;
+                }
+
+                selectedIndex = 0;
+                selectionArmed = false;
+            }
+            else if (key.Key == ConsoleKey.UpArrow)
+            {
+                if (dismissed && allCandidates.Count > 0)
+                {
+                    dismissed = false;
+                    candidates = allCandidates;
+                }
+
+                if (candidates.Count > 0)
+                {
+                    selectedIndex = selectedIndex <= 0 ? candidates.Count - 1 : selectedIndex - 1;
+                    selectionArmed = true;
+                }
+            }
+            else if (key.Key == ConsoleKey.DownArrow)
+            {
+                if (dismissed && allCandidates.Count > 0)
+                {
+                    dismissed = false;
+                    candidates = allCandidates;
+                }
+
+                if (candidates.Count > 0)
+                {
+                    selectedIndex = selectedIndex >= candidates.Count - 1 ? 0 : selectedIndex + 1;
+                    selectionArmed = true;
+                }
+            }
+            else if (TryAppendInputCharacter(key, input))
+            {
+                dismissed = false;
+                selectionArmed = false;
             }
 
-            TryAppendInputCharacter(key, input);
+            ClearPromptFrame(renderedLines);
+            renderedLines = RenderPromptIntellisense(cwdPath, input.ToString(), selectedIndex, dismissed);
         }
     }
 
@@ -802,8 +894,93 @@ internal sealed class HierarchyTui
         }
 
         input.Append(key.KeyChar);
-        Console.Write(key.KeyChar);
         return true;
+    }
+
+    private static int RenderPromptIntellisense(
+        string cwdPath,
+        string input,
+        int selectedSuggestionIndex,
+        bool suppressIntellisense)
+    {
+        var lines = new List<string>
+        {
+            $"UnityCLI:{Markup.Escape(cwdPath)} > [bold white]{Markup.Escape(input)}[/]"
+        };
+
+        if (suppressIntellisense)
+        {
+            lines.Add("[dim]intellisense dismissed (Esc). Type or use ↑/↓ to reopen suggestions.[/]");
+        }
+        else
+        {
+            var matches = GetHierarchySuggestionMatches(input);
+            lines.Add("[grey]intellisense[/]: hierarchy commands [dim](up/down + enter to insert)[/]");
+            if (matches.Count == 0)
+            {
+                lines.Add(string.IsNullOrWhiteSpace(input)
+                    ? "[dim]no commands available[/]"
+                    : $"[dim]no matches for {Markup.Escape(input)}[/]");
+            }
+            else
+            {
+                var selected = Math.Clamp(selectedSuggestionIndex, 0, matches.Count - 1);
+                for (var i = 0; i < matches.Count; i++)
+                {
+                    var match = matches[i];
+                    var isSelected = i == selected;
+                    var prefix = isSelected
+                        ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]>[/]"
+                        : "[grey] [/]";
+                    var signature = Markup.Escape(match.Signature);
+                    var description = Markup.Escape(match.Description);
+                    lines.Add(isSelected
+                        ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{signature}[/] [dim]- {description}[/]"
+                        : $"{prefix} [grey]{signature}[/] [dim]- {description}[/]");
+                }
+            }
+        }
+
+        foreach (var line in lines)
+        {
+            CliTheme.MarkupLine(line);
+        }
+
+        return lines.Count;
+    }
+
+    private static void ClearPromptFrame(int renderedLines)
+    {
+        for (var i = 0; i < renderedLines; i++)
+        {
+            Console.Write("\u001b[1A");
+            Console.Write("\r\u001b[2K");
+        }
+    }
+
+    private static List<CommandSpec> GetHierarchySuggestionMatches(string query)
+    {
+        var normalized = query.Trim().ToLowerInvariant();
+        IEnumerable<CommandSpec> source = HierarchyCommands
+            .Where(command => !command.Description.StartsWith("Alias for", StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            source = source.Where(command =>
+                command.Signature.Contains(normalized, StringComparison.OrdinalIgnoreCase)
+                || command.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase)
+                || command.Trigger.StartsWith(normalized, StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith(command.Trigger, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return source.Take(12).ToList();
+    }
+
+    private static List<(string Label, string CommitCommand)> GetHierarchyIntellisenseCandidates(string query)
+    {
+        return GetHierarchySuggestionMatches(query)
+            .Select(match => (match.Signature, match.Trigger))
+            .ToList();
     }
 
     private static string FormatHierarchyCommandFailure(string? message, string fallback = "hierarchy command failed")

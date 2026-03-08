@@ -126,6 +126,30 @@ var projectCommands = new List<CommandSpec>
     new("ba [--clean] [--update]", "Alias for build addressables", "ba")
 };
 
+var inspectorCommands = new List<CommandSpec>
+{
+    new("inspect [idx|path]", "Enter inspector root target (default: current focus path)", "inspect"),
+    new("list", "Refresh and list inspector items at current depth", "list"),
+    new("ls", "Alias for list", "ls"),
+    new("enter <idx>", "Inspect component by index", "enter"),
+    new("cd <idx>", "Alias for enter", "cd"),
+    new("up", "Step up (fields -> components, components -> project)", "up"),
+    new("..", "Alias for up", ".."),
+    new(":i", "Alias for up", ":i"),
+    new("set <field> <value...>", "Set selected component field in inspector", "set"),
+    new("s <field> <value...>", "Alias for set", "s"),
+    new("set <Component>.<field> <value...>", "Set a field directly from inspector root", "set"),
+    new("toggle <component-index|field>", "Toggle component enabled state or bool field", "toggle"),
+    new("t <component-index|field>", "Alias for toggle", "t"),
+    new("f <query>", "Fuzzy find in inspector context", "f"),
+    new("ff <query>", "Alias for fuzzy find", "ff"),
+    new("scroll [body|stream] <up|down> [count]", "Scroll inspector body or command stream", "scroll"),
+    new("make|mk <...>", "Not implemented in inspector mode yet", "make"),
+    new("remove|rm <...>", "Not implemented in inspector mode yet", "remove"),
+    new("rename|rn <...>", "Not implemented in inspector mode yet", "rename"),
+    new("move|mv <...>", "Not implemented in inspector mode yet", "move")
+};
+
 var streamLog = new List<string>();
 var runtimePath = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
 var daemonRuntime = new DaemonRuntime(runtimePath);
@@ -143,7 +167,7 @@ while (true)
     string? rawInput;
     try
     {
-        rawInput = ReadInput(commands, projectCommands, streamLog, session);
+        rawInput = ReadInput(commands, projectCommands, inspectorCommands, streamLog, session);
     }
     catch (Exception ex)
     {
@@ -425,6 +449,7 @@ while (true)
 static string? ReadInput(
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
+    List<CommandSpec> inspectorCommands,
     List<string> streamLog,
     CliSessionState session)
 {
@@ -434,12 +459,13 @@ static string? ReadInput(
         return Console.ReadLine();
     }
 
-    return ReadInteractiveInput(commands, projectCommands, streamLog, session);
+    return ReadInteractiveInput(commands, projectCommands, inspectorCommands, streamLog, session);
 }
 
 static string? ReadInteractiveInput(
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
+    List<CommandSpec> inspectorCommands,
     List<string> streamLog,
     CliSessionState session)
 {
@@ -451,13 +477,14 @@ static string? ReadInteractiveInput(
         input.ToString(),
         commands,
         projectCommands,
+        inspectorCommands,
         session,
         selectedIntellisenseCandidateIndex,
         intellisenseDismissed);
 
     while (true)
     {
-        _ = TryGetComposerIntellisenseCandidates(input.ToString(), commands, projectCommands, session, out var allCandidates);
+        _ = TryGetComposerIntellisenseCandidates(input.ToString(), commands, projectCommands, inspectorCommands, session, out var allCandidates);
         var candidates = intellisenseDismissed ? [] : allCandidates;
         if (candidates.Count == 0)
         {
@@ -582,6 +609,7 @@ static string? ReadInteractiveInput(
             input.ToString(),
             commands,
             projectCommands,
+            inspectorCommands,
             session,
             selectedIntellisenseCandidateIndex,
             intellisenseDismissed);
@@ -592,6 +620,7 @@ static int RenderComposerFrame(
     string input,
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
+    List<CommandSpec> inspectorCommands,
     CliSessionState session,
     int selectedFuzzyCandidateIndex,
     bool suppressIntellisense)
@@ -620,8 +649,11 @@ static int RenderComposerFrame(
     }
     else if (!string.IsNullOrWhiteSpace(input))
     {
+        var contextualCommands = session.Inspector is not null
+            ? inspectorCommands
+            : projectCommands;
         lines.Add(string.Empty);
-        lines.AddRange(GetSuggestionLines(input, projectCommands, selectedFuzzyCandidateIndex));
+        lines.AddRange(GetSuggestionLines(input, contextualCommands, selectedFuzzyCandidateIndex));
     }
     else if (session.Inspector is not null)
     {
@@ -884,6 +916,7 @@ static bool TryGetComposerIntellisenseCandidates(
     string input,
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
+    List<CommandSpec> inspectorCommands,
     CliSessionState session,
     out List<(string Label, string? CommitCommand)> candidates)
 {
@@ -913,7 +946,10 @@ static bool TryGetComposerIntellisenseCandidates(
 
     if (!string.IsNullOrWhiteSpace(input))
     {
-        candidates = GetSuggestionMatches(input, projectCommands)
+        var contextualCommands = session.Inspector is not null
+            ? inspectorCommands
+            : projectCommands;
+        candidates = GetSuggestionMatches(input, contextualCommands)
             .Select(match => (match.Signature, (string?)match.Trigger))
             .ToList();
         return true;
