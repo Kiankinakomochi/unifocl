@@ -176,6 +176,8 @@ Current development priorities include:
 
 ## Contributing & License
 
-unifocl is currently maintained solely by the creator. External contributions are not being accepted at this time. 
+External contributions are accepted for version 0.3.0 and later.
+Unless explicitly stated otherwise, any Contribution intentionally submitted for inclusion in version 0.3.0 and later is licensed under the Apache License 2.0.
 
-All rights reserved by the Maintainer. No redistribution, modification, or reuse without explicit permission.
+Apache License 2.0 applies to version 0.3.0 and all later versions.
+All content before version 0.3.0 is proprietary and all rights reserved.
