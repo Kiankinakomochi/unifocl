@@ -156,6 +156,11 @@ internal sealed class ProjectCommandRouterService
             tokens[1] = tokens[1].ToLowerInvariant() switch
             {
                 "list" => "ls",
+                "add" => "install",
+                "i" => "install",
+                "rm" => "remove",
+                "uninstall" => "remove",
+                "u" => "update",
                 _ => tokens[1]
             };
         }

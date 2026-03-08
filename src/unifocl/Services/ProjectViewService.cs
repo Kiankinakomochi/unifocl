@@ -4,7 +4,7 @@ using Spectre.Console;
 
 internal sealed class ProjectViewService
 {
-    private const int MaxTranscriptEntries = 80;
+    private const int MaxTranscriptEntries = 5000;
     private readonly ProjectViewRenderer _renderer = new();
     private readonly HierarchyDaemonClient _daemonClient = new();
     private enum ProjectFocusTabResult
@@ -47,6 +47,10 @@ internal sealed class ProjectViewService
 
         var outputs = new List<string>();
         var handled = false;
+        if (!tokens[0].Equals("upm", StringComparison.OrdinalIgnoreCase))
+        {
+            session.ProjectView.ExpandTranscriptForUpmList = false;
+        }
 
         if (tokens.Count >= 3
             && tokens[0].Equals("cd", StringComparison.OrdinalIgnoreCase)
@@ -126,6 +130,12 @@ internal sealed class ProjectViewService
         }
 
         InitializeIfNeeded(session.ProjectView, session.CurrentProjectPath);
+        if (ShouldRunUpmFocusMode(session.ProjectView))
+        {
+            await RunUpmPackageFocusModeAsync(session, daemonControlService, daemonRuntime);
+            return;
+        }
+
         var outputs = new List<string>
         {
             "[i] project focus mode enabled (up/down select, tab open/reveal, shift+tab back, esc exit)"
@@ -232,6 +242,154 @@ internal sealed class ProjectViewService
         }
     }
 
+    private static bool ShouldRunUpmFocusMode(ProjectViewState state)
+    {
+        return state.ExpandTranscriptForUpmList && state.LastUpmPackages.Count > 0;
+    }
+
+    private async Task RunUpmPackageFocusModeAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime)
+    {
+        var state = session.ProjectView;
+        state.UpmFocusModeEnabled = true;
+        state.UpmActionMenuVisible = false;
+        state.UpmActionSelectedIndex = 0;
+        state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, Math.Max(0, state.LastUpmPackages.Count - 1));
+        AppendTranscript(state, ["[i] upm selection mode enabled (up/down select, enter action menu, esc/F7 exit)"]);
+        RenderFrame(state);
+
+        while (true)
+        {
+            if (state.LastUpmPackages.Count == 0)
+            {
+                AppendTranscript(state, ["[i] upm selection mode disabled (no packages to select)"]);
+                state.UpmFocusModeEnabled = false;
+                state.UpmActionMenuVisible = false;
+                RenderFrame(state);
+                return;
+            }
+
+            state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, state.LastUpmPackages.Count - 1);
+            RenderFrame(state);
+
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key is ConsoleKey.Escape or ConsoleKey.F7)
+            {
+                if (state.UpmActionMenuVisible)
+                {
+                    state.UpmActionMenuVisible = false;
+                    continue;
+                }
+
+                AppendTranscript(state, ["[i] upm selection mode disabled"]);
+                state.UpmFocusModeEnabled = false;
+                state.UpmActionMenuVisible = false;
+                RenderFrame(state);
+                return;
+            }
+
+            if (key.Key == ConsoleKey.UpArrow)
+            {
+                if (state.UpmActionMenuVisible)
+                {
+                    state.UpmActionSelectedIndex = state.UpmActionSelectedIndex <= 0 ? 2 : state.UpmActionSelectedIndex - 1;
+                }
+                else
+                {
+                    state.UpmFocusSelectedIndex = state.UpmFocusSelectedIndex <= 0
+                        ? state.LastUpmPackages.Count - 1
+                        : state.UpmFocusSelectedIndex - 1;
+                }
+
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.DownArrow)
+            {
+                if (state.UpmActionMenuVisible)
+                {
+                    state.UpmActionSelectedIndex = state.UpmActionSelectedIndex >= 2 ? 0 : state.UpmActionSelectedIndex + 1;
+                }
+                else
+                {
+                    state.UpmFocusSelectedIndex = state.UpmFocusSelectedIndex >= state.LastUpmPackages.Count - 1
+                        ? 0
+                        : state.UpmFocusSelectedIndex + 1;
+                }
+
+                continue;
+            }
+
+            if (key.Key != ConsoleKey.Enter)
+            {
+                continue;
+            }
+
+            if (!state.UpmActionMenuVisible)
+            {
+                state.UpmActionMenuVisible = true;
+                state.UpmActionSelectedIndex = 0;
+                continue;
+            }
+
+            var selectedPackage = state.LastUpmPackages[state.UpmFocusSelectedIndex];
+            var keepSelectionMode = await ExecuteUpmFocusedActionAsync(
+                selectedPackage,
+                state.UpmActionSelectedIndex,
+                session,
+                daemonControlService,
+                daemonRuntime);
+            state.UpmActionMenuVisible = false;
+            state.UpmActionSelectedIndex = 0;
+            if (!keepSelectionMode)
+            {
+                state.UpmFocusModeEnabled = false;
+                RenderFrame(state);
+                return;
+            }
+
+            state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, Math.Max(0, state.LastUpmPackages.Count - 1));
+        }
+    }
+
+    private async Task<bool> ExecuteUpmFocusedActionAsync(
+        UpmPackageEntry selectedPackage,
+        int actionIndex,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime)
+    {
+        var packageId = selectedPackage.PackageId;
+        switch (actionIndex)
+        {
+            case 0:
+                await TryHandleProjectViewCommandAsync($"upm update {packageId}", session, daemonControlService, daemonRuntime);
+                break;
+            case 1:
+                await TryHandleProjectViewCommandAsync($"upm remove {packageId}", session, daemonControlService, daemonRuntime);
+                break;
+            default:
+                if (!selectedPackage.Source.Equals("Registry", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendTranscript(session.ProjectView, ["[x] clean install supports registry packages only"]);
+                    RenderFrame(session.ProjectView);
+                    return true;
+                }
+
+                var installTarget = string.IsNullOrWhiteSpace(selectedPackage.Version)
+                    ? selectedPackage.PackageId
+                    : $"{selectedPackage.PackageId}@{selectedPackage.Version}";
+                await TryHandleProjectViewCommandAsync($"upm remove {packageId}", session, daemonControlService, daemonRuntime);
+                await TryHandleProjectViewCommandAsync($"upm install {installTarget}", session, daemonControlService, daemonRuntime);
+                break;
+        }
+
+        await TryHandleProjectViewCommandAsync("upm ls", session, daemonControlService, daemonRuntime);
+        return session.ProjectView.LastUpmPackages.Count > 0;
+    }
+
     private static void InitializeIfNeeded(ProjectViewState state, string projectPath)
     {
         if (state.Initialized)
@@ -264,6 +422,11 @@ internal sealed class ProjectViewService
         state.AssetPathByInstanceId.Clear();
         state.LastFuzzyMatches.Clear();
         state.LastUpmPackages.Clear();
+        state.ExpandTranscriptForUpmList = false;
+        state.UpmFocusModeEnabled = false;
+        state.UpmFocusSelectedIndex = 0;
+        state.UpmActionMenuVisible = false;
+        state.UpmActionSelectedIndex = 0;
         RefreshTree(projectPath, state);
     }
 
@@ -959,15 +1122,333 @@ internal sealed class ProjectViewService
         if (tokens.Count < 2)
         {
             outputs.Add("[x] usage: upm <list|ls> [--outdated] [--builtin] [--git]");
+            outputs.Add("[x] usage: upm <install|add|i> <target>");
+            outputs.Add("[x] usage: upm <remove|rm|uninstall> <id>");
+            outputs.Add("[x] usage: upm <update|u> [id]");
             return true;
         }
 
         var subcommand = tokens[1];
+        session.ProjectView.ExpandTranscriptForUpmList =
+            subcommand.Equals("list", StringComparison.OrdinalIgnoreCase)
+            || subcommand.Equals("ls", StringComparison.OrdinalIgnoreCase);
+
+        if (subcommand.Equals("install", StringComparison.OrdinalIgnoreCase)
+            || subcommand.Equals("add", StringComparison.OrdinalIgnoreCase)
+            || subcommand.Equals("i", StringComparison.OrdinalIgnoreCase))
+        {
+            var rawTarget = tokens.Count >= 3
+                ? string.Join(' ', tokens.Skip(2))
+                : string.Empty;
+            if (!TryNormalizeUpmInstallTarget(rawTarget, out var target, out var targetType, out var validationError))
+            {
+                outputs.Add($"[x] upm install failed: {validationError}");
+                outputs.Add("accepted targets:");
+                outputs.Add("- registry ID (com.unity.addressables)");
+                outputs.Add("- git URL (https://github.com/user/repo.git?path=/subfolder#v1.0.0)");
+                outputs.Add("- local path (file:../local-pkg)");
+                return true;
+            }
+
+            var installBridgeReady = await RunUpmProgressAsync(
+                session,
+                "preparing package manager",
+                TimeSpan.FromSeconds(6),
+                () => EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true));
+            if (!installBridgeReady)
+            {
+                outputs.Add("[x] upm install failed: Bridge mode is unavailable; set UNITY_PATH or open Unity editor for this project");
+                return true;
+            }
+
+            if (targetType.Equals("registry", StringComparison.OrdinalIgnoreCase))
+            {
+                var (registryPackageId, _) = SplitRegistryTarget(target);
+                var listResponse = await RunUpmProgressAsync(
+                    session,
+                    "checking installed packages",
+                    TimeSpan.FromSeconds(8),
+                    () => ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto(
+                            "upm-list",
+                            null,
+                            null,
+                            JsonSerializer.Serialize(
+                                new UpmListRequestPayload(false, true, false),
+                                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))));
+                if (!listResponse.Ok)
+                {
+                    outputs.Add(FormatProjectCommandFailure("upm install", listResponse.Message));
+                    return true;
+                }
+
+                var existingPackage = TryFindUpmPackageById(listResponse.Content, registryPackageId);
+                if (existingPackage is not null)
+                {
+                    var existingPackageId = string.IsNullOrWhiteSpace(existingPackage.PackageId) ? registryPackageId : existingPackage.PackageId!;
+                    var existingPackageVersion = string.IsNullOrWhiteSpace(existingPackage.Version) ? "-" : existingPackage.Version!;
+                    RenderFrame(session.ProjectView);
+                    var cleanInstallRequested = Console.IsInputRedirected
+                        ? false
+                        : AnsiConsole.Confirm(
+                            $"Package [white]{Markup.Escape(existingPackageId)}[/] is already installed ([white]{Markup.Escape(existingPackageVersion)}[/]). Run clean install (remove then install)?",
+                            defaultValue: false);
+                    if (!cleanInstallRequested)
+                    {
+                        outputs.Add($"[i] install skipped: {Markup.Escape(existingPackageId)} is already installed");
+                        return true;
+                    }
+
+                    var removePayload = JsonSerializer.Serialize(
+                        new UpmRemoveRequestPayload(existingPackageId),
+                        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                    var removeResponse = await RunUpmProgressAsync(
+                        session,
+                        $"clean uninstalling {existingPackageId}",
+                        TimeSpan.FromSeconds(25),
+                        () => ExecuteProjectCommandAsync(
+                            session,
+                            new ProjectCommandRequestDto("upm-remove", null, null, removePayload)));
+                    if (!removeResponse.Ok)
+                    {
+                        outputs.Add(FormatProjectCommandFailure("upm clean remove", removeResponse.Message));
+                        return true;
+                    }
+
+                    outputs.Add($"[i] clean remove complete: {Markup.Escape(existingPackageId)}");
+                }
+            }
+
+            var installPayload = JsonSerializer.Serialize(
+                new UpmInstallRequestPayload(target),
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var installResponse = await RunUpmProgressAsync(
+                session,
+                $"installing {target}",
+                TimeSpan.FromSeconds(35),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    new ProjectCommandRequestDto("upm-install", null, null, installPayload)));
+
+            if (!installResponse.Ok)
+            {
+                outputs.Add(FormatProjectCommandFailure("upm install", installResponse.Message));
+                return true;
+            }
+
+            UpmInstallResponsePayload? installParsed = null;
+            if (!string.IsNullOrWhiteSpace(installResponse.Content))
+            {
+                try
+                {
+                    installParsed = JsonSerializer.Deserialize<UpmInstallResponsePayload>(
+                        installResponse.Content,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch
+                {
+                }
+            }
+
+            var installedId = string.IsNullOrWhiteSpace(installParsed?.PackageId) ? target : installParsed.PackageId!;
+            var installedVersion = string.IsNullOrWhiteSpace(installParsed?.Version) ? null : installParsed.Version!;
+            var source = string.IsNullOrWhiteSpace(installParsed?.Source) ? null : installParsed.Source!;
+            var resolvedTargetType = string.IsNullOrWhiteSpace(installParsed?.TargetType) ? targetType : installParsed.TargetType!;
+            outputs.Add(installedVersion is null
+                ? $"[+] installed package: {Markup.Escape(installedId)}"
+                : $"[+] installed package: {Markup.Escape(installedId)} v{Markup.Escape(installedVersion)}");
+            if (!string.IsNullOrWhiteSpace(source))
+            {
+                outputs.Add($"[i] source: {Markup.Escape(source)}");
+            }
+
+            outputs.Add($"[i] target type: {Markup.Escape(resolvedTargetType)}");
+            return true;
+        }
+
+        if (subcommand.Equals("remove", StringComparison.OrdinalIgnoreCase)
+            || subcommand.Equals("rm", StringComparison.OrdinalIgnoreCase)
+            || subcommand.Equals("uninstall", StringComparison.OrdinalIgnoreCase))
+        {
+            var rawId = tokens.Count >= 3
+                ? string.Join(' ', tokens.Skip(2))
+                : string.Empty;
+            var packageId = NormalizeLoadSelector(rawId);
+            if (!IsRegistryPackageId(packageId))
+            {
+                outputs.Add("[x] upm remove failed: package id is required (e.g., com.unity.addressables)");
+                return true;
+            }
+
+            var removeBridgeReady = await RunUpmProgressAsync(
+                session,
+                "preparing package manager",
+                TimeSpan.FromSeconds(6),
+                () => EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true));
+            if (!removeBridgeReady)
+            {
+                outputs.Add("[x] upm remove failed: Bridge mode is unavailable; set UNITY_PATH or open Unity editor for this project");
+                return true;
+            }
+
+            var removePayload = JsonSerializer.Serialize(
+                new UpmRemoveRequestPayload(packageId),
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var removeResponse = await RunUpmProgressAsync(
+                session,
+                $"removing {packageId}",
+                TimeSpan.FromSeconds(20),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    new ProjectCommandRequestDto("upm-remove", null, null, removePayload)));
+            if (!removeResponse.Ok)
+            {
+                outputs.Add(FormatProjectCommandFailure("upm remove", removeResponse.Message));
+                return true;
+            }
+
+            outputs.Add($"[+] removed package: {Markup.Escape(packageId)}");
+            return true;
+        }
+
+        if (subcommand.Equals("update", StringComparison.OrdinalIgnoreCase)
+            || subcommand.Equals("u", StringComparison.OrdinalIgnoreCase))
+        {
+            var updateBridgeReady = await RunUpmProgressAsync(
+                session,
+                "preparing package manager",
+                TimeSpan.FromSeconds(6),
+                () => EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true));
+            if (!updateBridgeReady)
+            {
+                outputs.Add("[x] upm update failed: Bridge mode is unavailable; set UNITY_PATH or open Unity editor for this project");
+                return true;
+            }
+
+            var updateListPayload = JsonSerializer.Serialize(
+                new UpmListRequestPayload(false, true, false),
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var updateListResponse = await RunUpmProgressAsync(
+                session,
+                "reading package state",
+                TimeSpan.FromSeconds(10),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    new ProjectCommandRequestDto("upm-list", null, null, updateListPayload)));
+            if (!updateListResponse.Ok)
+            {
+                outputs.Add(FormatProjectCommandFailure("upm update", updateListResponse.Message));
+                return true;
+            }
+
+            var updatePackages = TryParseUpmPackages(updateListResponse.Content);
+            if (updatePackages is null)
+            {
+                outputs.Add("[x] upm update failed: invalid package payload");
+                return true;
+            }
+
+            var requestedId = tokens.Count >= 3
+                ? NormalizeLoadSelector(string.Join(' ', tokens.Skip(2)))
+                : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(requestedId))
+            {
+                var target = updatePackages.FirstOrDefault(p =>
+                    !string.IsNullOrWhiteSpace(p.PackageId)
+                    && p.PackageId.Equals(requestedId, StringComparison.OrdinalIgnoreCase));
+                if (target is null)
+                {
+                    outputs.Add($"[x] upm update failed: package not installed: {Markup.Escape(requestedId)}");
+                    return true;
+                }
+
+                if (target.Source?.Equals("BuiltIn", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    outputs.Add($"[i] update skipped: built-in package cannot be updated: {Markup.Escape(requestedId)}");
+                    return true;
+                }
+
+                if (!target.IsOutdated)
+                {
+                    outputs.Add($"[i] already up to date: {Markup.Escape(requestedId)}");
+                    return true;
+                }
+
+                var singleUpdatePayload = JsonSerializer.Serialize(
+                    new UpmInstallRequestPayload(ComposeRegistryInstallTarget(requestedId, target.LatestCompatibleVersion)),
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                var singleUpdateResponse = await RunUpmProgressAsync(
+                    session,
+                    $"updating {requestedId}",
+                    TimeSpan.FromSeconds(30),
+                    () => ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto("upm-install", null, null, singleUpdatePayload)));
+                if (!singleUpdateResponse.Ok)
+                {
+                    outputs.Add(FormatProjectCommandFailure("upm update", singleUpdateResponse.Message));
+                    return true;
+                }
+
+                var oldVersion = string.IsNullOrWhiteSpace(target.Version) ? "-" : target.Version!;
+                var newVersion = ResolveUpmUpdatedVersion(singleUpdateResponse.Content, target.LatestCompatibleVersion);
+                outputs.Add($"[+] updated package: {Markup.Escape(requestedId)} [grey]v{Markup.Escape(oldVersion)} -> v{Markup.Escape(newVersion)}[/]");
+                return true;
+            }
+
+            var outdated = updatePackages
+                .Where(p => p.IsOutdated
+                            && !string.IsNullOrWhiteSpace(p.PackageId)
+                            && !string.Equals(p.Source, "BuiltIn", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(p => p.PackageId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (outdated.Count == 0)
+            {
+                outputs.Add("[i] all packages are already up to date");
+                return true;
+            }
+
+            outputs.Add($"[*] updating {outdated.Count} outdated package(s) safely");
+            var successCount = 0;
+            var failureCount = 0;
+            foreach (var package in outdated)
+            {
+                var packageId = package.PackageId!;
+                var bulkPayload = JsonSerializer.Serialize(
+                    new UpmInstallRequestPayload(ComposeRegistryInstallTarget(packageId, package.LatestCompatibleVersion)),
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                var bulkResponse = await RunUpmProgressAsync(
+                    session,
+                    $"updating {packageId}",
+                    TimeSpan.FromSeconds(30),
+                    () => ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto("upm-install", null, null, bulkPayload)));
+                if (bulkResponse.Ok)
+                {
+                    successCount++;
+                    var oldVersion = string.IsNullOrWhiteSpace(package.Version) ? "-" : package.Version!;
+                    var newVersion = ResolveUpmUpdatedVersion(bulkResponse.Content, package.LatestCompatibleVersion);
+                    outputs.Add($"[+] updated: {Markup.Escape(packageId)} [grey]v{Markup.Escape(oldVersion)} -> v{Markup.Escape(newVersion)}[/]");
+                }
+                else
+                {
+                    failureCount++;
+                    outputs.Add(FormatProjectCommandFailure($"upm update {packageId}", bulkResponse.Message));
+                }
+            }
+
+            outputs.Add($"[i] update summary: success={successCount}, failed={failureCount}");
+            return true;
+        }
+
         if (!subcommand.Equals("list", StringComparison.OrdinalIgnoreCase)
             && !subcommand.Equals("ls", StringComparison.OrdinalIgnoreCase))
         {
             outputs.Add($"[x] unsupported upm subcommand: {subcommand}");
-            outputs.Add("supported: upm list (alias: upm ls)");
+            outputs.Add("supported: upm list (alias: upm ls), upm install (aliases: upm add, upm i), upm remove (aliases: upm rm, upm uninstall), upm update (alias: upm u)");
             return true;
         }
 
@@ -1000,10 +1481,11 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        AppendTranscript(session.ProjectView, [$"[{CliTheme.Info}]loading package information...[/]"]);
-        RenderFrame(session.ProjectView);
-
-        var bridgeModeReady = await EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true);
+        var bridgeModeReady = await RunUpmProgressAsync(
+            session,
+            "preparing package manager",
+            TimeSpan.FromSeconds(6),
+            () => EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true));
         if (!bridgeModeReady)
         {
             outputs.Add("[x] upm list failed: Bridge mode is unavailable; set UNITY_PATH or open Unity editor for this project");
@@ -1013,9 +1495,13 @@ internal sealed class ProjectViewService
         var payload = JsonSerializer.Serialize(
             new UpmListRequestPayload(includeOutdatedOnly, includeBuiltin, includeGitOnly),
             new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-        var response = await ExecuteProjectCommandAsync(
+        var response = await RunUpmProgressAsync(
             session,
-            new ProjectCommandRequestDto("upm-list", null, null, payload));
+            "loading package information",
+            TimeSpan.FromSeconds(12),
+            () => ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto("upm-list", null, null, payload)));
 
         if (!response.Ok)
         {
@@ -1076,6 +1562,269 @@ internal sealed class ProjectViewService
                 $"[{CliTheme.TextSecondary}]{package.Index}.[/] {Markup.Escape(package.DisplayName)} ({Markup.Escape(package.PackageId)}) v{Markup.Escape(package.Version)} [{CliTheme.TextSecondary}]{Markup.Escape(package.Source)}[/] [{statusColor}]{Markup.Escape(statusLabel)}[/]");
         }
         return true;
+    }
+
+    private static bool TryNormalizeUpmInstallTarget(
+        string rawTarget,
+        out string normalizedTarget,
+        out string targetType,
+        out string error)
+    {
+        normalizedTarget = NormalizeLoadSelector(rawTarget);
+        targetType = string.Empty;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedTarget))
+        {
+            error = "missing target";
+            return false;
+        }
+
+        if (IsRegistryPackageId(normalizedTarget))
+        {
+            targetType = "registry";
+            return true;
+        }
+
+        if (IsGitPackageUrl(normalizedTarget))
+        {
+            targetType = "git";
+            return true;
+        }
+
+        if (IsLocalFilePackagePath(normalizedTarget))
+        {
+            targetType = "file";
+            return true;
+        }
+
+        error = "target must be registry ID, Git URL, or file: path";
+        return false;
+    }
+
+    private static bool IsRegistryPackageId(string value)
+    {
+        var (packageId, version) = SplitRegistryTarget(value);
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return false;
+        }
+
+        if (version is not null && string.IsNullOrWhiteSpace(version))
+        {
+            return false;
+        }
+
+        var segments = packageId.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return false;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (segment.Length == 0)
+            {
+                return false;
+            }
+
+            if (!char.IsLetterOrDigit(segment[0]))
+            {
+                return false;
+            }
+
+            foreach (var ch in segment)
+            {
+                if (!char.IsLetterOrDigit(ch) && ch != '-' && ch != '_')
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static (string PackageId, string? Version) SplitRegistryTarget(string value)
+    {
+        var at = value.IndexOf('@');
+        if (at < 0)
+        {
+            return (value, null);
+        }
+
+        var packageId = value[..at];
+        var version = at + 1 < value.Length ? value[(at + 1)..] : string.Empty;
+        return (packageId, version);
+    }
+
+    private static string ComposeRegistryInstallTarget(string packageId, string? latestCompatibleVersion)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return packageId;
+        }
+
+        if (string.IsNullOrWhiteSpace(latestCompatibleVersion))
+        {
+            return packageId;
+        }
+
+        return $"{packageId}@{latestCompatibleVersion}";
+    }
+
+    private static bool IsGitPackageUrl(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var isHttp = uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                     || uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+        if (!isHttp)
+        {
+            return false;
+        }
+
+        var withoutQuery = value.Split('?', '#')[0];
+        return withoutQuery.EndsWith(".git", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLocalFilePackagePath(string value)
+    {
+        if (!value.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var pathPart = value["file:".Length..].Trim();
+        return !string.IsNullOrWhiteSpace(pathPart);
+    }
+
+    private async Task<T> RunUpmProgressAsync<T>(
+        CliSessionState session,
+        string activity,
+        TimeSpan expectedDuration,
+        Func<Task<T>> operation)
+    {
+        var state = session.ProjectView;
+        var markerIndex = state.CommandTranscript.Count;
+        state.CommandTranscript.Add(string.Empty);
+
+        var frames = new[] { "|", "/", "-", "\\" };
+        var startedAt = DateTime.UtcNow;
+        var tick = 0;
+        var task = operation();
+
+        while (!task.IsCompleted)
+        {
+            var elapsed = DateTime.UtcNow - startedAt;
+            var progress = expectedDuration.TotalMilliseconds <= 0
+                ? 0d
+                : Math.Clamp(elapsed.TotalMilliseconds / expectedDuration.TotalMilliseconds, 0d, 0.95d);
+            state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, frames[tick % frames.Length], progress, elapsed);
+            RenderFrame(state);
+            tick++;
+            await Task.Delay(120);
+        }
+
+        try
+        {
+            var result = await task;
+            var total = DateTime.UtcNow - startedAt;
+            state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, "OK", 1d, total, done: true);
+            RenderFrame(state);
+            return result;
+        }
+        catch
+        {
+            var total = DateTime.UtcNow - startedAt;
+            state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, "ERR", 1d, total, failed: true);
+            RenderFrame(state);
+            throw;
+        }
+    }
+
+    private static string BuildUpmProgressLine(
+        string activity,
+        string frame,
+        double progress01,
+        TimeSpan elapsed,
+        bool done = false,
+        bool failed = false)
+    {
+        var clamped = Math.Clamp(progress01, 0d, 1d);
+        var filled = (int)Math.Round(clamped * 18d);
+        if (filled > 18)
+        {
+            filled = 18;
+        }
+
+        var bar = new string('#', filled) + new string('-', 18 - filled);
+        var percent = (int)Math.Round(clamped * 100d);
+        var status = failed
+            ? "[red]x[/]"
+            : done
+                ? "[green]ok[/]"
+                : $"[{CliTheme.Info}]{Markup.Escape(frame)}[/]";
+        return $"{status} {Markup.Escape(activity)} [{CliTheme.TextSecondary}][{bar}] {percent,3}% {elapsed.TotalSeconds,4:0.0}s[/]";
+    }
+
+    private static UpmListPackagePayload? TryFindUpmPackageById(string? rawContent, string packageId)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return null;
+        }
+
+        var packages = TryParseUpmPackages(rawContent);
+        return packages?.FirstOrDefault(p =>
+            !string.IsNullOrWhiteSpace(p.PackageId)
+            && p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<UpmListPackagePayload>? TryParseUpmPackages(string? rawContent)
+    {
+        if (string.IsNullOrWhiteSpace(rawContent))
+        {
+            return null;
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<UpmListResponsePayload>(
+                rawContent,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return parsed?.Packages;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string ResolveUpmUpdatedVersion(string? installResponseContent, string? fallbackLatestCompatibleVersion)
+    {
+        if (!string.IsNullOrWhiteSpace(installResponseContent))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<UpmInstallResponsePayload>(
+                    installResponseContent,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (!string.IsNullOrWhiteSpace(parsed?.Version))
+                {
+                    return parsed.Version!;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(fallbackLatestCompatibleVersion)
+            ? "unknown"
+            : fallbackLatestCompatibleVersion!;
     }
 
     private void RenderFrame(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
@@ -1369,8 +2118,20 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
         bool IncludeBuiltin,
         bool IncludeGit);
 
+    private sealed record UpmInstallRequestPayload(
+        string Target);
+
+    private sealed record UpmRemoveRequestPayload(
+        string PackageId);
+
     private sealed record UpmListResponsePayload(
         List<UpmListPackagePayload>? Packages);
+
+    private sealed record UpmInstallResponsePayload(
+        string? PackageId,
+        string? Version,
+        string? Source,
+        string? TargetType);
 
     private sealed record UpmListPackagePayload(
         string? PackageId,

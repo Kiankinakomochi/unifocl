@@ -8,6 +8,7 @@ internal sealed class HierarchyDaemonClient
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ProjectCommandTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan UpmInstallTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan BuildStatusTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan SceneLoadTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan SceneLoadStatusInterval = TimeSpan.FromSeconds(5);
@@ -93,9 +94,11 @@ internal sealed class HierarchyDaemonClient
     {
         var isSceneLoad = request.Action.Equals("load-asset", StringComparison.OrdinalIgnoreCase);
         var isBuildDispatch = request.Action.StartsWith("build-", StringComparison.OrdinalIgnoreCase);
+        var isUpmMutation = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
+                            || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase);
         var timeout = isSceneLoad
             ? SceneLoadTimeout
-            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : ProjectCommandTimeout);
+            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : (isUpmMutation ? UpmInstallTimeout : ProjectCommandTimeout));
         var maxAttempts = isSceneLoad ? SceneLoadRetryCount + 1 : 1;
         if (isSceneLoad)
         {
@@ -278,11 +281,45 @@ internal sealed class HierarchyDaemonClient
         }
         catch (OperationCanceledException)
         {
-            return new ProjectCommandTransportResult(null, $"daemon project command timed out after {(int)timeout.TotalSeconds}s", true);
+            var ping = await ProbeDaemonHealthAsync(uri);
+            return new ProjectCommandTransportResult(
+                null,
+                $"daemon project command timed out after {(int)timeout.TotalSeconds}s (endpoint={uri}, daemonPing={ping}, hint=Unity main thread may be blocked or package resolution is stuck)",
+                true);
         }
         catch (Exception ex)
         {
             return new ProjectCommandTransportResult(null, $"daemon project command request failed: {ex.Message}", false);
+        }
+    }
+
+    private static async Task<string> ProbeDaemonHealthAsync(string requestUri)
+    {
+        try
+        {
+            if (!Uri.TryCreate(requestUri, UriKind.Absolute, out var uri))
+            {
+                return "unknown";
+            }
+
+            var pingUri = $"{uri.Scheme}://{uri.Host}:{uri.Port}/ping";
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var response = await Http.GetAsync(pingUri, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return $"http-{(int)response.StatusCode}";
+            }
+
+            var body = (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
+            return body.Equals("PONG", StringComparison.OrdinalIgnoreCase) ? "ok" : $"unexpected:{body}";
+        }
+        catch (OperationCanceledException)
+        {
+            return "timeout";
+        }
+        catch (Exception ex)
+        {
+            return ex.GetType().Name;
         }
     }
 

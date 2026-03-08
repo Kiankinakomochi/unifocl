@@ -189,6 +189,18 @@ namespace UniFocl.EditorBridge
     }
 
     [Serializable]
+    internal sealed class UpmInstallRequestOptions
+    {
+        public string target = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class UpmRemoveRequestOptions
+    {
+        public string packageId = string.Empty;
+    }
+
+    [Serializable]
     internal sealed class UpmPackageEntry
     {
         public string packageId = string.Empty;
@@ -205,6 +217,15 @@ namespace UniFocl.EditorBridge
     internal sealed class UpmListResponse
     {
         public UpmPackageEntry[] packages = Array.Empty<UpmPackageEntry>();
+    }
+
+    [Serializable]
+    internal sealed class UpmInstallResponse
+    {
+        public string packageId = string.Empty;
+        public string version = string.Empty;
+        public string source = string.Empty;
+        public string targetType = string.Empty;
     }
 }
 #endif

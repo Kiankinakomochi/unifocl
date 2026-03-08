@@ -239,7 +239,7 @@ namespace UniFocl.EditorBridge
                     var action = TryExtractProjectAction(payload);
                     var stopwatch = Stopwatch.StartNew();
                     Debug.Log($"[unifocl] project command received: action={action}");
-                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.Execute(payload));
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.ExecuteAsync(payload));
                     stopwatch.Stop();
                     Debug.Log($"[unifocl] project command completed: action={action}, elapsedMs={stopwatch.ElapsedMilliseconds}");
                     await WriteJsonResponseAsync(context.Response, response);
@@ -458,6 +458,51 @@ namespace UniFocl.EditorBridge
                 try
                 {
                     completion.TrySetResult(work());
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }
+        }
+
+        private static Task<string> ExecuteOnMainThreadAsync(Func<Task<string>> workAsync)
+        {
+            if (_mainThreadManagedThreadId != 0
+                && Environment.CurrentManagedThreadId == _mainThreadManagedThreadId)
+            {
+                try
+                {
+                    return workAsync();
+                }
+                catch (Exception ex)
+                {
+                    return Task.FromException<string>(ex);
+                }
+            }
+
+            var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            if (_isBatchMode)
+            {
+                _mainThreadActionQueue.Enqueue(() =>
+                {
+                    _ = ExecuteAsyncWork();
+                });
+                return completion.Task;
+            }
+
+            EditorApplication.delayCall += () =>
+            {
+                _ = ExecuteAsyncWork();
+            };
+            return completion.Task;
+
+            async Task ExecuteAsyncWork()
+            {
+                try
+                {
+                    completion.TrySetResult(await workAsync());
                 }
                 catch (Exception ex)
                 {
