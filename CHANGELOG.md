@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.1 - 2026-03-09
+
+### Changed
+- Officialized `0.7.1` by closing the development cycle suffix.
+- Added agent worktree orchestration scripts for bash and PowerShell.
+- Consolidated lifecycle and milestone progress guidance directly into `README.md`.
+- Replaced standalone lifecycle/milestone docs with GitHub Milestone tracking guidance in `README.md`.
+
+## 0.7.1a2 - 2026-03-09
+
+### Changed
+- Merged agent lifecycle pipeline and operating-boundary documentation directly into `README.md`.
+- Replaced local milestone-tracker doc references with GitHub Milestone tracking guidance in `README.md`.
+- Removed standalone docs now superseded by README:
+  - `AGENT_WORKTREE_LIFECYCLE.md`
+  - `MILESTONE_WORKTREE_ISOLATION.md`
+
+## 0.7.1a1 - 2026-03-09
+
+### Added
+- Added agent worktree orchestration scripts for bash and PowerShell:
+  - `src/unifocl/scripts/agent-worktree.sh`
+  - `src/unifocl/scripts/agent-worktree.ps1`
+
+### Changed
+- Added README guidance for isolated worktree provisioning, Library cache seeding, and dynamic daemon port startup.
+- Started the `0.7.1` development cycle with `a1` suffix versioning.
+
 ## 0.7.0 - 2026-03-09
 
 ### Changed

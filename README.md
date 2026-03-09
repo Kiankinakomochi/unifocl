@@ -113,6 +113,71 @@ The daemon maintains a persistent connection to the project. Manage it using the
 | `attach <port>` | Attach the CLI to an existing daemon at the specified port. |
 | `detach` | Detach the CLI but keep the daemon alive in the background. |
 
+### AI Agent Worktree Orchestration
+
+For concurrent autonomous agents, provision isolated git worktrees and run daemon boot per worktree with dynamic port mapping.
+
+- Bash workflow: `src/unifocl/scripts/agent-worktree.sh`
+- PowerShell workflow: `src/unifocl/scripts/agent-worktree.ps1`
+
+Example (bash):
+
+```bash
+src/unifocl/scripts/agent-worktree.sh provision \
+  --repo-root . \
+  --worktree-path ../unifocl-agent-a \
+  --branch codex/agent-a \
+  --source-project . \
+  --seed-library
+
+src/unifocl/scripts/agent-worktree.sh start-daemon \
+  --worktree-path ../unifocl-agent-a \
+  --project-path ../unifocl-agent-a
+```
+
+Lifecycle pipeline and operating boundaries:
+
+1. Initialize
+- Provision a dedicated branch worktree with `git worktree add <path> -b <agent-branch> origin/main`.
+- Never share one mutable branch/worktree across agents.
+
+2. Seed
+- Copy warmed Unity cache before daemon boot:
+  - macOS/Linux: `cp -a <MainProject>/Library <Worktree>/Library`
+  - PowerShell: `Copy-Item <MainProject>\Library <Worktree>\Library -Recurse`
+
+3. Boot Daemon
+- Allocate an open localhost port dynamically.
+- Start from inside the provisioned worktree:
+  - `unifocl /daemon start --project <path> --port <dynamic-port> --headless`
+- Validate readiness via `http://127.0.0.1:<dynamic-port>/ping`.
+
+4. Execute
+- Run automation only after daemon health is confirmed.
+- Keep all mutations scoped to the provisioned worktree.
+
+5. Commit/Push
+- Commit only agent-branch changes and push for review.
+
+6. Teardown
+- Stop worktree daemon, then run `git worktree remove --force <path>` and `git worktree prune`.
+
+Operating boundaries:
+- No cross-worktree file edits.
+- No port reuse assumptions across concurrent agents.
+- No shared mutable daemon state across projects.
+- Teardown is mandatory after each completed run.
+
+### GitHub Milestone Tracking
+
+Track this stream in GitHub Milestones under: `Worktree Isolation and Multi-Agent Daemon Safety`.
+
+Current progress:
+- [x] Step 1: Git worktree provisioning + teardown script
+- [x] Step 2: Library cache seeding strategy
+- [x] Step 3: Dynamic daemon port assignment + readiness check
+- [x] Step 4: Agent lifecycle orchestration documentation
+
 ### 3. Mode Switching
 Once a project is opened, use these commands to switch your active context.
 
