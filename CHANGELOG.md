@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0a1 - 2026-03-09
+
+### Changed
+- Started the `0.10.0` development cycle with `a1` suffix versioning.
+- Added inspector numeric sanity clamping in bridge-side field mutation:
+  - `Integer` and `Float` assignments now respect serialized-field `[Range]` and `[Min]` attributes.
+  - `Color` channel inputs are now clamped to `[0, 1]`.
+  - Non-finite numeric inputs (NaN/Infinity) are now rejected for numeric/vector assignments.
+
 ## 0.8.0 - 2026-03-09
 
 ### Changed
