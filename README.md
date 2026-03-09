@@ -96,6 +96,11 @@ These commands manage your session, project loading, and CLI configuration. They
 
 > **Note:** Additional diagnostic commands (`/doctor`, `/logs`, `/scan`, `/info`, `/unity detect`) are available but may be in active development.
 
+### UPM Management Stability Note
+
+UPM commands in CLI mode (`upm list/install/remove/update`) are currently under active stabilization.  
+For critical package operations, the recommended workflow is still Unity Editor GUI (Package Manager window), then use unifocl for verification and follow-up automation.
+
 ### 2. Daemon Management
 The daemon maintains a persistent connection to the project. Manage it using the `/daemon` (or `/d`) command suite.
 

@@ -75,6 +75,14 @@ var commands = new List<CommandSpec>
     new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
     new("/upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "/upm list"),
     new("/upm ls [--outdated] [--builtin] [--git]", "Alias for /upm list", "/upm ls"),
+    new("/upm install <target>", "Install Unity package by registry ID, Git URL, or file: path", "/upm install"),
+    new("/upm add <target>", "Alias for /upm install", "/upm add"),
+    new("/upm i <target>", "Alias for /upm install", "/upm i"),
+    new("/upm remove <id>", "Remove Unity package by package ID", "/upm remove"),
+    new("/upm rm <id>", "Alias for /upm remove", "/upm rm"),
+    new("/upm uninstall <id>", "Alias for /upm remove", "/upm uninstall"),
+    new("/upm update [id]", "Update one package or all outdated packages", "/upm update"),
+    new("/upm u [id]", "Alias for /upm update", "/upm u"),
     new("/upm", "Unity Package Manager commands", "/upm"),
     new("/build <run|exec|scenes|addressables|cancel|targets>", "Build pipeline commands", "/build"),
     new("/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target (prompts when omitted)", "/build run"),
@@ -114,6 +122,14 @@ var projectCommands = new List<CommandSpec>
     new("mv <...>", "Alias for move", "mv"),
     new("upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "upm list"),
     new("upm ls [--outdated] [--builtin] [--git]", "Alias for upm list", "upm ls"),
+    new("upm install <target>", "Install Unity package by registry ID, Git URL, or file: path", "upm install"),
+    new("upm add <target>", "Alias for upm install", "upm add"),
+    new("upm i <target>", "Alias for upm install", "upm i"),
+    new("upm remove <id>", "Remove Unity package by package ID", "upm remove"),
+    new("upm rm <id>", "Alias for upm remove", "upm rm"),
+    new("upm uninstall <id>", "Alias for upm remove", "upm uninstall"),
+    new("upm update [id]", "Update one package or all outdated packages", "upm update"),
+    new("upm u [id]", "Alias for upm update", "upm u"),
     new("build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target", "build run"),
     new("build exec <Method>", "Execute static build method", "build exec"),
     new("build scenes", "Open interactive scene build-settings TUI", "build scenes"),
@@ -984,13 +1000,29 @@ static bool TryGetUpmComposerCandidates(
             ? "/upm list [--outdated] [--builtin] [--git]"
             : "upm list [--outdated] [--builtin] [--git]", isSlash ? "/upm list" : "upm list"));
         candidates.Add((isSlash ? "/upm ls" : "upm ls", isSlash ? "/upm ls" : "upm ls"));
+        candidates.Add((isSlash ? "/upm install <target>" : "upm install <target>", isSlash ? "/upm install " : "upm install "));
+        candidates.Add((isSlash ? "/upm add <target>" : "upm add <target>", isSlash ? "/upm add " : "upm add "));
+        candidates.Add((isSlash ? "/upm i <target>" : "upm i <target>", isSlash ? "/upm i " : "upm i "));
+        candidates.Add((isSlash ? "/upm remove <id>" : "upm remove <id>", isSlash ? "/upm remove " : "upm remove "));
+        candidates.Add((isSlash ? "/upm rm <id>" : "upm rm <id>", isSlash ? "/upm rm " : "upm rm "));
+        candidates.Add((isSlash ? "/upm uninstall <id>" : "upm uninstall <id>", isSlash ? "/upm uninstall " : "upm uninstall "));
+        candidates.Add((isSlash ? "/upm update [id]" : "upm update [id]", isSlash ? "/upm update " : "upm update "));
+        candidates.Add((isSlash ? "/upm u [id]" : "upm u [id]", isSlash ? "/upm u " : "upm u "));
         return true;
     }
 
     var upmSuggestions = new List<(string Label, string? CommitCommand)>
     {
         (isSlash ? "/upm list [--outdated] [--builtin] [--git]" : "upm list [--outdated] [--builtin] [--git]", isSlash ? "/upm list" : "upm list"),
-        (isSlash ? "/upm ls [--outdated] [--builtin] [--git]" : "upm ls [--outdated] [--builtin] [--git]", isSlash ? "/upm ls" : "upm ls")
+        (isSlash ? "/upm ls [--outdated] [--builtin] [--git]" : "upm ls [--outdated] [--builtin] [--git]", isSlash ? "/upm ls" : "upm ls"),
+        (isSlash ? "/upm install <target>" : "upm install <target>", isSlash ? "/upm install " : "upm install "),
+        (isSlash ? "/upm add <target>" : "upm add <target>", isSlash ? "/upm add " : "upm add "),
+        (isSlash ? "/upm i <target>" : "upm i <target>", isSlash ? "/upm i " : "upm i "),
+        (isSlash ? "/upm remove <id>" : "upm remove <id>", isSlash ? "/upm remove " : "upm remove "),
+        (isSlash ? "/upm rm <id>" : "upm rm <id>", isSlash ? "/upm rm " : "upm rm "),
+        (isSlash ? "/upm uninstall <id>" : "upm uninstall <id>", isSlash ? "/upm uninstall " : "upm uninstall "),
+        (isSlash ? "/upm update [id]" : "upm update [id]", isSlash ? "/upm update " : "upm update "),
+        (isSlash ? "/upm u [id]" : "upm u [id]", isSlash ? "/upm u " : "upm u ")
     };
 
     var suffixLower = suffix.ToLowerInvariant();
@@ -1011,6 +1043,50 @@ static bool TryGetUpmComposerCandidates(
         {
             candidates.Add(($"{commandHead} {flag}", $"{commandHead} {flag}"));
         }
+    }
+    else if (suffixLower.StartsWith("install", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.StartsWith("add", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.Equals("i", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.StartsWith("i ", StringComparison.OrdinalIgnoreCase))
+    {
+        var commandHead = isSlash
+            ? (suffixLower.StartsWith("add", StringComparison.OrdinalIgnoreCase)
+                ? "/upm add"
+                : (suffixLower.StartsWith("install", StringComparison.OrdinalIgnoreCase)
+                    ? "/upm install"
+                    : "/upm i"))
+            : (suffixLower.StartsWith("add", StringComparison.OrdinalIgnoreCase)
+                ? "upm add"
+                : (suffixLower.StartsWith("install", StringComparison.OrdinalIgnoreCase)
+                    ? "upm install"
+                    : "upm i"));
+
+        candidates.Add(($"{commandHead} com.unity.addressables", $"{commandHead} com.unity.addressables"));
+        candidates.Add(($"{commandHead} https://github.com/user/repo.git?path=/subfolder#v1.0.0", $"{commandHead} https://github.com/user/repo.git?path=/subfolder#v1.0.0"));
+        candidates.Add(($"{commandHead} file:../local-pkg", $"{commandHead} file:../local-pkg"));
+    }
+    else if (suffixLower.StartsWith("remove", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.StartsWith("rm", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.StartsWith("uninstall", StringComparison.OrdinalIgnoreCase))
+    {
+        var commandHead = isSlash
+            ? (suffixLower.StartsWith("rm", StringComparison.OrdinalIgnoreCase)
+                ? "/upm rm"
+                : (suffixLower.StartsWith("uninstall", StringComparison.OrdinalIgnoreCase) ? "/upm uninstall" : "/upm remove"))
+            : (suffixLower.StartsWith("rm", StringComparison.OrdinalIgnoreCase)
+                ? "upm rm"
+                : (suffixLower.StartsWith("uninstall", StringComparison.OrdinalIgnoreCase) ? "upm uninstall" : "upm remove"));
+        candidates.Add(($"{commandHead} com.unity.addressables", $"{commandHead} com.unity.addressables"));
+    }
+    else if (suffixLower.StartsWith("update", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.Equals("u", StringComparison.OrdinalIgnoreCase)
+             || suffixLower.StartsWith("u ", StringComparison.OrdinalIgnoreCase))
+    {
+        var commandHead = isSlash
+            ? (suffixLower.StartsWith("update", StringComparison.OrdinalIgnoreCase) ? "/upm update" : "/upm u")
+            : (suffixLower.StartsWith("update", StringComparison.OrdinalIgnoreCase) ? "upm update" : "upm u");
+        candidates.Add(($"{commandHead}", $"{commandHead}"));
+        candidates.Add(($"{commandHead} com.unity.addressables", $"{commandHead} com.unity.addressables"));
     }
 
     var packageRefs = session.ProjectView.LastUpmPackages.Take(5).ToList();

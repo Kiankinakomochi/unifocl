@@ -17,6 +17,11 @@ internal sealed class ProjectViewState
     public Dictionary<int, string> AssetPathByInstanceId { get; } = [];
     public List<ProjectFuzzyMatch> LastFuzzyMatches { get; } = [];
     public List<UpmPackageEntry> LastUpmPackages { get; } = [];
+    public bool ExpandTranscriptForUpmList { get; set; }
+    public bool UpmFocusModeEnabled { get; set; }
+    public int UpmFocusSelectedIndex { get; set; }
+    public bool UpmActionMenuVisible { get; set; }
+    public int UpmActionSelectedIndex { get; set; }
 }
 
 internal sealed record ProjectTreeEntry(

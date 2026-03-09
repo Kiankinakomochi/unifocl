@@ -6,9 +6,12 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
 using UnityEditor.PackageManager;
+using UnityEditor.PackageManager.Requests;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -28,6 +31,11 @@ namespace UniFocl.EditorBridge
 
         public static string Execute(string payload)
         {
+            return ExecuteAsync(payload).GetAwaiter().GetResult();
+        }
+
+        public static Task<string> ExecuteAsync(string payload)
+        {
             if (_unityMainThreadId == 0)
             {
                 _unityMainThreadId = Environment.CurrentManagedThreadId;
@@ -40,41 +48,43 @@ namespace UniFocl.EditorBridge
             }
             catch
             {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "invalid project command payload" });
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "invalid project command payload" }));
             }
 
             if (request is null || string.IsNullOrWhiteSpace(request.action))
             {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "missing project command payload" });
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "missing project command payload" }));
             }
 
             try
             {
                 return request.action switch
                 {
-                    "healthcheck" => JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "project command endpoint ready", kind = "healthcheck" }),
-                    "mk-script" => ExecuteCreateScript(request),
-                    "rename-asset" => ExecuteRenameAsset(request),
-                    "remove-asset" => ExecuteRemoveAsset(request),
-                    "load-asset" => ExecuteLoadAsset(request),
-                    "upm-list" => ExecuteUpmList(request),
-                    "build-run" => ExecuteBuildRun(request),
-                    "build-exec" => ExecuteBuildExec(request),
-                    "build-scenes-get" => ExecuteBuildScenesGet(),
-                    "build-scenes-set" => ExecuteBuildScenesSet(request),
-                    "build-addressables" => ExecuteBuildAddressables(request),
-                    "build-cancel" => ExecuteBuildCancel(),
-                    "build-targets" => ExecuteBuildTargets(),
-                    _ => JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" })
+                    "healthcheck" => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "project command endpoint ready", kind = "healthcheck" })),
+                    "mk-script" => Task.FromResult(ExecuteCreateScript(request)),
+                    "rename-asset" => Task.FromResult(ExecuteRenameAsset(request)),
+                    "remove-asset" => Task.FromResult(ExecuteRemoveAsset(request)),
+                    "load-asset" => Task.FromResult(ExecuteLoadAsset(request)),
+                    "upm-list" => Task.FromResult(ExecuteUpmList(request)),
+                    "upm-install" => ExecuteUpmInstall(request),
+                    "upm-remove" => ExecuteUpmRemove(request),
+                    "build-run" => Task.FromResult(ExecuteBuildRun(request)),
+                    "build-exec" => Task.FromResult(ExecuteBuildExec(request)),
+                    "build-scenes-get" => Task.FromResult(ExecuteBuildScenesGet()),
+                    "build-scenes-set" => Task.FromResult(ExecuteBuildScenesSet(request)),
+                    "build-addressables" => Task.FromResult(ExecuteBuildAddressables(request)),
+                    "build-cancel" => Task.FromResult(ExecuteBuildCancel()),
+                    "build-targets" => Task.FromResult(ExecuteBuildTargets()),
+                    _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
                 };
             }
             catch (Exception ex)
             {
-                return JsonUtility.ToJson(new ProjectCommandResponse
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
                 {
                     ok = false,
                     message = $"project command exception: {ex.GetType().Name}: {ex.Message}"
-                });
+                }));
             }
         }
 
@@ -373,6 +383,112 @@ namespace UniFocl.EditorBridge
                 kind = "upm-list",
                 content = payload
             });
+        }
+
+        private static Task<string> ExecuteUpmInstall(ProjectCommandRequest request)
+        {
+            var options = ParseUpmInstallOptions(request.content);
+            var target = options.target?.Trim() ?? string.Empty;
+            if (!TryClassifyUpmInstallTarget(target, out var targetType))
+            {
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = "upm install target must be registry ID, Git URL, or file: path"
+                }));
+            }
+
+            var resolvedTarget = ResolveInstallTargetVersion(target, targetType);
+            AddRequest addRequest;
+            try
+            {
+                addRequest = Client.Add(resolvedTarget);
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"failed to start UPM install: {ex.Message}"
+                }));
+            }
+
+            var packageId = TryExtractRegistryPackageId(resolvedTarget) ?? TryExtractRegistryPackageId(target) ?? target;
+            return AwaitRequestWithResolveAsync(
+                addRequest,
+                timeoutMessage: "upm install timed out after 120 seconds",
+                failurePrefix: "upm install failed",
+                onSuccess: () =>
+                {
+                    var installed = addRequest.Result;
+                    var payload = JsonUtility.ToJson(new UpmInstallResponse
+                    {
+                        packageId = installed?.name ?? packageId,
+                        version = installed?.version ?? string.Empty,
+                        source = installed?.source.ToString() ?? string.Empty,
+                        targetType = targetType
+                    });
+
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = true,
+                        message = "upm install completed",
+                        kind = "upm-install",
+                        content = payload
+                    });
+                },
+                postVerify: () =>
+                {
+                    if (!IsRegistryPackageId(packageId))
+                    {
+                        return true;
+                    }
+
+                    var installed = FindRegisteredPackage(packageId);
+                    return installed is not null;
+                },
+                postVerifyMessage: $"upm install completed but package is not loaded: {packageId}");
+        }
+
+        private static Task<string> ExecuteUpmRemove(ProjectCommandRequest request)
+        {
+            var options = ParseUpmRemoveOptions(request.content);
+            var packageId = options.packageId?.Trim() ?? string.Empty;
+            if (!IsRegistryPackageId(packageId))
+            {
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = "upm remove requires a valid package id (e.g., com.unity.addressables)"
+                }));
+            }
+
+            RemoveRequest removeRequest;
+            try
+            {
+                removeRequest = Client.Remove(packageId);
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"failed to start UPM remove: {ex.Message}"
+                }));
+            }
+
+            return AwaitRequestWithResolveAsync(
+                removeRequest,
+                timeoutMessage: "upm remove timed out after 120 seconds",
+                failurePrefix: "upm remove failed",
+                onSuccess: () => JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = "upm remove completed",
+                    kind = "upm-remove"
+                }),
+                postVerify: () => !IsPackageInManifest(packageId),
+                postVerifyMessage: $"upm remove completed but package is still present in manifest: {packageId}");
         }
 
         private static string ExecuteBuildRun(ProjectCommandRequest request)
@@ -1566,6 +1682,545 @@ namespace UniFocl.EditorBridge
             {
                 return new UpmListRequestOptions();
             }
+        }
+
+        private static UpmInstallRequestOptions ParseUpmInstallOptions(string rawContent)
+        {
+            if (string.IsNullOrWhiteSpace(rawContent))
+            {
+                return new UpmInstallRequestOptions();
+            }
+
+            try
+            {
+                return JsonUtility.FromJson<UpmInstallRequestOptions>(rawContent) ?? new UpmInstallRequestOptions();
+            }
+            catch
+            {
+                return new UpmInstallRequestOptions();
+            }
+        }
+
+        private static UpmRemoveRequestOptions ParseUpmRemoveOptions(string rawContent)
+        {
+            if (string.IsNullOrWhiteSpace(rawContent))
+            {
+                return new UpmRemoveRequestOptions();
+            }
+
+            try
+            {
+                return JsonUtility.FromJson<UpmRemoveRequestOptions>(rawContent) ?? new UpmRemoveRequestOptions();
+            }
+            catch
+            {
+                return new UpmRemoveRequestOptions();
+            }
+        }
+
+        private static bool TryClassifyUpmInstallTarget(string target, out string targetType)
+        {
+            targetType = string.Empty;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return false;
+            }
+
+            if (IsRegistryPackageId(target))
+            {
+                targetType = "registry";
+                return true;
+            }
+
+            if (IsGitPackageUrl(target))
+            {
+                targetType = "git";
+                return true;
+            }
+
+            if (IsLocalFilePackagePath(target))
+            {
+                targetType = "file";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsRegistryPackageId(string value)
+        {
+            var packageId = TryExtractRegistryPackageId(value);
+            if (string.IsNullOrWhiteSpace(packageId))
+            {
+                return false;
+            }
+
+            var segments = packageId.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length < 2)
+            {
+                return false;
+            }
+
+            foreach (var segment in segments)
+            {
+                if (segment.Length == 0 || !char.IsLetterOrDigit(segment[0]))
+                {
+                    return false;
+                }
+
+                for (var i = 0; i < segment.Length; i++)
+                {
+                    var ch = segment[i];
+                    if (!char.IsLetterOrDigit(ch) && ch != '-' && ch != '_')
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static string? TryExtractRegistryPackageId(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var at = value.IndexOf('@');
+            if (at < 0)
+            {
+                return value;
+            }
+
+            var packageId = value[..at];
+            var version = at + 1 < value.Length ? value[(at + 1)..] : string.Empty;
+            if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(version))
+            {
+                return null;
+            }
+
+            return packageId;
+        }
+
+        private static string ResolveInstallTargetVersion(string target, string targetType)
+        {
+            if (!targetType.Equals("registry", StringComparison.OrdinalIgnoreCase))
+            {
+                return target;
+            }
+
+            if (!IsRegistryPackageId(target))
+            {
+                return target;
+            }
+
+            if (target.Contains('@'))
+            {
+                return target;
+            }
+
+            var packageId = TryExtractRegistryPackageId(target);
+            if (string.IsNullOrWhiteSpace(packageId))
+            {
+                return target;
+            }
+
+            var installed = FindRegisteredPackage(packageId);
+            var latestCompatible = installed?.versions?.latestCompatible;
+            if (string.IsNullOrWhiteSpace(latestCompatible))
+            {
+                return target;
+            }
+
+            return $"{packageId}@{latestCompatible}";
+        }
+
+        private static UpmPackageInfo? FindRegisteredPackage(string packageId)
+        {
+            if (string.IsNullOrWhiteSpace(packageId))
+            {
+                return null;
+            }
+
+            var all = UpmPackageInfo.GetAllRegisteredPackages() ?? Array.Empty<UpmPackageInfo>();
+            return all.FirstOrDefault(package =>
+                package is not null
+                && package.name.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsPackageInManifest(string packageId)
+        {
+            if (string.IsNullOrWhiteSpace(packageId))
+            {
+                return false;
+            }
+
+            try
+            {
+                var manifestPath = Path.Combine(GetProjectRoot(), "Packages", "manifest.json");
+                if (!File.Exists(manifestPath))
+                {
+                    return false;
+                }
+
+                var content = File.ReadAllText(manifestPath);
+                return content.Contains($"\"{packageId}\"", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static Request? StartUpmResolveRequest()
+        {
+            var resolveMethod = typeof(Client).GetMethod(
+                "Resolve",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+            if (resolveMethod is null)
+            {
+                throw new MissingMethodException("UnityEditor.PackageManager.Client.Resolve()");
+            }
+
+            var result = resolveMethod.Invoke(null, null);
+            if (resolveMethod.ReturnType == typeof(void) || result is null)
+            {
+                return null;
+            }
+
+            if (result is Request request)
+            {
+                return request;
+            }
+
+            throw new InvalidOperationException(
+                $"Unexpected return type from Client.Resolve(): {resolveMethod.ReturnType.FullName}");
+        }
+
+        private static Task<string> AwaitRequestWithResolveAsync(
+            Request request,
+            string timeoutMessage,
+            string failurePrefix,
+            Func<string> onSuccess,
+            Func<bool>? postVerify = null,
+            string? postVerifyMessage = null)
+        {
+            if (!IsUnityMainThread())
+            {
+                var marshaled = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                CLIDaemon.DispatchOnMainThread(() =>
+                {
+                    _ = AwaitRequestWithResolveAsync(
+                            request,
+                            timeoutMessage,
+                            failurePrefix,
+                            onSuccess,
+                            postVerify,
+                            postVerifyMessage)
+                        .ContinueWith(task =>
+                        {
+                            if (task.IsCanceled)
+                            {
+                                marshaled.TrySetCanceled();
+                                return;
+                            }
+
+                            if (task.IsFaulted)
+                            {
+                                var exception = task.Exception;
+                                if (exception is not null)
+                                {
+                                    IEnumerable<Exception> exceptions = exception.InnerExceptions.Count > 0
+                                        ? exception.InnerExceptions
+                                        : new[] { exception };
+                                    marshaled.TrySetException(exceptions);
+                                }
+                                else
+                                {
+                                    marshaled.TrySetException(new InvalidOperationException("UPM request marshaling failed with unknown exception."));
+                                }
+                                return;
+                            }
+
+                            marshaled.TrySetResult(task.Result);
+                        }, TaskScheduler.Default);
+                });
+                return marshaled.Task;
+            }
+
+            var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var timeout = TimeSpan.FromSeconds(120);
+            var deadline = EditorApplication.timeSinceStartup + timeout.TotalSeconds;
+            var startedAtUtc = DateTime.UtcNow;
+            var finishedState = 0;
+            var primaryHandled = false;
+            var resolveHandled = false;
+            var nextRefreshAt = 0d;
+            Request? resolveRequest = null;
+            var stage = "waiting-primary";
+            var checkpointsLock = new object();
+            var checkpoints = new List<string>(12)
+            {
+                $"start thread={Environment.CurrentManagedThreadId}"
+            };
+
+            double ElapsedSeconds() => Math.Max(0d, (DateTime.UtcNow - startedAtUtc).TotalSeconds);
+
+            void AddCheckpoint(string detail)
+            {
+                lock (checkpointsLock)
+                {
+                    if (checkpoints.Count >= 12)
+                    {
+                        return;
+                    }
+
+                    checkpoints.Add($"{ElapsedSeconds():0.0}s {detail}");
+                }
+
+                CLIDaemon.UpdateProjectCommandStage(stage, detail);
+            }
+
+            string FormatRequestSnapshot(Request? target, string label)
+            {
+                if (target is null)
+                {
+                    return $"{label}=<none>";
+                }
+
+                var completed = target.IsCompleted ? "true" : "false";
+                var status = target.IsCompleted ? target.Status.ToString() : "InProgress";
+                var error = target.Error is null
+                    ? "-"
+                    : $"{target.Error.errorCode}:{target.Error.message}";
+                return $"{label}[completed={completed},status={status},error={error}]";
+            }
+
+            string BuildTimeoutDiagnostics()
+            {
+                var hint = string.IsNullOrWhiteSpace(postVerifyMessage)
+                    ? "postVerifyHint=-"
+                    : $"postVerifyHint={postVerifyMessage}";
+                string trace;
+                lock (checkpointsLock)
+                {
+                    trace = checkpoints.Count == 0 ? "-" : string.Join(" | ", checkpoints);
+                }
+                return $"stage={stage}; {FormatRequestSnapshot(request, "primary")}; {FormatRequestSnapshot(resolveRequest, "resolve")}; {hint}; trace={trace}";
+            }
+
+            string BuildWallClockTimeoutDiagnostics()
+            {
+                string trace;
+                lock (checkpointsLock)
+                {
+                    trace = checkpoints.Count == 0 ? "-" : string.Join(" | ", checkpoints);
+                }
+
+                return $"stage={stage}; source=wall-clock; elapsed={ElapsedSeconds():0.0}s; trace={trace}";
+            }
+
+            void Finish(string payload)
+            {
+                if (Interlocked.CompareExchange(ref finishedState, 1, 0) != 0)
+                {
+                    return;
+                }
+
+                CLIDaemon.UpdateProjectCommandStage(stage, "finished");
+                CLIDaemon.DispatchOnMainThread(() => EditorApplication.update -= Tick);
+                completion.TrySetResult(payload);
+            }
+
+            void Tick()
+            {
+                if (Volatile.Read(ref finishedState) != 0)
+                {
+                    return;
+                }
+
+                if (EditorApplication.timeSinceStartup >= deadline)
+                {
+                    AddCheckpoint("timeout reached");
+                    stage = "timeout";
+                    Finish(JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = $"{timeoutMessage}; diagnostics: {BuildTimeoutDiagnostics()}"
+                    }));
+                    return;
+                }
+
+                if (!primaryHandled)
+                {
+                    if (!request.IsCompleted)
+                    {
+                        return;
+                    }
+
+                    primaryHandled = true;
+                    AddCheckpoint("primary request completed");
+                    if (request.Status != StatusCode.Success)
+                    {
+                        var errorText = request.Error is null
+                            ? "unknown package manager error"
+                            : $"{request.Error.errorCode}: {request.Error.message}";
+                        Finish(JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"{failurePrefix}: {errorText}"
+                        }));
+                        return;
+                    }
+
+                    try
+                    {
+                        resolveRequest = StartUpmResolveRequest();
+                        stage = "waiting-resolve";
+                        AddCheckpoint("resolve request started");
+                    }
+                    catch (Exception ex)
+                    {
+                        AddCheckpoint($"resolve start failed: {ex.GetType().Name}");
+                        Finish(JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"{failurePrefix}: failed to start resolve ({ex.Message})"
+                        }));
+                        return;
+                    }
+
+                    if (postVerify is null)
+                    {
+                        if (resolveRequest is null)
+                        {
+                            Finish(onSuccess());
+                            return;
+                        }
+                    }
+
+                    if (resolveRequest is null)
+                    {
+                        stage = "waiting-post-verify";
+                    }
+                }
+
+                if (!resolveHandled && resolveRequest is not null)
+                {
+                    if (!resolveRequest.IsCompleted)
+                    {
+                        return;
+                    }
+
+                    resolveHandled = true;
+                    AddCheckpoint("resolve request completed");
+                    if (resolveRequest.Status != StatusCode.Success)
+                    {
+                        var resolveError = resolveRequest.Error is null
+                            ? "unknown package manager resolve error"
+                            : $"{resolveRequest.Error.errorCode}: {resolveRequest.Error.message}";
+                        Finish(JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"{failurePrefix}: resolve failed ({resolveError})"
+                        }));
+                        return;
+                    }
+
+                    stage = "waiting-post-verify";
+                    if (postVerify is null)
+                    {
+                        Finish(onSuccess());
+                        return;
+                    }
+                }
+
+                if (EditorApplication.timeSinceStartup >= nextRefreshAt
+                    && stage.Equals("waiting-post-verify", StringComparison.Ordinal))
+                {
+                    nextRefreshAt = EditorApplication.timeSinceStartup + 0.5d;
+                    try
+                    {
+                        AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (postVerify is not null && !postVerify())
+                {
+                    return;
+                }
+
+                AddCheckpoint("post-verify passed");
+                stage = "success";
+                Finish(onSuccess());
+            }
+
+            EditorApplication.update += Tick;
+            CLIDaemon.UpdateProjectCommandStage(stage, "update loop registered");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(timeout).ConfigureAwait(false);
+                }
+                catch
+                {
+                    return;
+                }
+
+                if (Volatile.Read(ref finishedState) != 0)
+                {
+                    return;
+                }
+
+                AddCheckpoint("wall-clock timeout reached");
+                stage = "timeout";
+                Finish(JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"{timeoutMessage}; diagnostics: {BuildWallClockTimeoutDiagnostics()}"
+                }));
+            });
+
+            return completion.Task;
+        }
+
+        private static bool IsGitPackageUrl(string value)
+        {
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+
+            var scheme = uri.Scheme;
+            var isHttp = scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                         || scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+            if (!isHttp)
+            {
+                return false;
+            }
+
+            var withoutQuery = value.Split(new[] { '?', '#' })[0];
+            return withoutQuery.EndsWith(".git", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLocalFilePackagePath(string value)
+        {
+            if (!value.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var pathPart = value.Substring("file:".Length).Trim();
+            return !string.IsNullOrWhiteSpace(pathPart);
         }
 
         private static bool IsValidAssetPath(string? assetPath)

@@ -6,6 +6,7 @@ internal sealed class ProjectViewRenderer
     private const int DefaultFrameWidth = 78;
     private const int MinFrameWidth = 40;
     private const int CommandRows = 8;
+    private const int MaxExpandedErrorRows = 40;
     private sealed record RenderLine(string Content, bool Highlight);
 
     public IReadOnlyList<string> Render(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
@@ -33,14 +34,47 @@ internal sealed class ProjectViewRenderer
         var wrappedTranscript = state.CommandTranscript
             .SelectMany(line => WrapTranscriptLine(line, contentWidth))
             .ToList();
-        var recent = wrappedTranscript
-            .Skip(Math.Max(0, wrappedTranscript.Count - CommandRows))
-            .ToList();
-        for (var i = 0; i < CommandRows; i++)
+        if (state.UpmFocusModeEnabled && state.LastUpmPackages.Count > 0)
         {
-            var line = i < recent.Count
-                ? recent[i]
-                : (i == recent.Count ? $"UnityCLI:{cwd} > _" : string.Empty);
+            wrappedTranscript.Add(string.Empty);
+            wrappedTranscript.Add("[grey]upm selection[/]: [white]up/down[/] move, [white]enter[/] actions, [white]esc/F7[/] exit");
+            for (var i = 0; i < state.LastUpmPackages.Count; i++)
+            {
+                var package = state.LastUpmPackages[i];
+                var prefix = i == state.UpmFocusSelectedIndex ? ">" : " ";
+                var line = $"{prefix} {i}. {package.DisplayName} ({package.PackageId}) v{package.Version}";
+                wrappedTranscript.Add(i == state.UpmFocusSelectedIndex
+                    ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{Markup.Escape(line)}[/]"
+                    : $"[grey]{Markup.Escape(line)}[/]");
+            }
+
+            if (state.UpmActionMenuVisible)
+            {
+                wrappedTranscript.Add(string.Empty);
+                wrappedTranscript.Add("[grey]action[/]: choose with [white]up/down[/], run with [white]enter[/], close with [white]esc[/]");
+                var actions = new[] { "update", "remove", "clean install" };
+                for (var i = 0; i < actions.Length; i++)
+                {
+                    var label = $"{(i == state.UpmActionSelectedIndex ? ">" : " ")} {actions[i]}";
+                    wrappedTranscript.Add(i == state.UpmActionSelectedIndex
+                        ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{Markup.Escape(label)}[/]"
+                        : $"[grey]{Markup.Escape(label)}[/]");
+                }
+            }
+        }
+
+        var transcriptRows = ResolveTranscriptRows(state, contentWidth);
+        var rows = state.ExpandTranscriptForUpmList
+            ? (wrappedTranscript.Count == 0
+                ? [$"UnityCLI:{cwd} > _"]
+                : wrappedTranscript.Append($"UnityCLI:{cwd} > _").ToList())
+            : wrappedTranscript
+                .Skip(Math.Max(0, wrappedTranscript.Count - transcriptRows))
+                .Append($"UnityCLI:{cwd} > _")
+                .ToList();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var line = rows[i];
             lines.Add(BorderBody($" {line}", frameWidth, allowMarkup: true));
         }
 
@@ -141,6 +175,37 @@ internal sealed class ProjectViewRenderer
         }
 
         return wrapped.Count == 0 ? [string.Empty] : wrapped;
+    }
+
+    private static int ResolveTranscriptRows(ProjectViewState state, int contentWidth)
+    {
+        if (state.CommandTranscript.Count == 0)
+        {
+            return CommandRows;
+        }
+
+        var lastLine = state.CommandTranscript[^1];
+        if (!LooksLikeErrorLine(lastLine))
+        {
+            return CommandRows;
+        }
+
+        var wrappedErrorRows = WrapTranscriptLine(lastLine, contentWidth).Count;
+        // Reserve a few lines for nearby context + prompt while keeping the frame bounded.
+        return Math.Clamp(wrappedErrorRows + 3, CommandRows, MaxExpandedErrorRows);
+    }
+
+    private static bool LooksLikeErrorLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return line.Contains("[x]", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("[red]", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("error", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<string> WrapMarkupLine(string markup, int width)
