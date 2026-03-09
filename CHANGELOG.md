@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 - 2026-03-10
+
+### Changed
+- Officialized `0.11.0` by closing the development cycle suffix.
+- Made command IntelliSense context-aware so invalid preconditions are no longer suggested (for example `/project`, `/hierarchy`, `/inspect`, `/build*`, `/upm*` before opening a project).
+
 ## 0.11.0a1 - 2026-03-09
 
 ### Changed
