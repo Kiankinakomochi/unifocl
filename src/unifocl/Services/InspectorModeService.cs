@@ -623,7 +623,11 @@ internal sealed class InspectorModeService
             AddStream(context, $"{context.PromptLabel} > {input}");
             if (rootMutationOk)
             {
-                AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {newValue}");
+                var refreshedFields = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, component.Index);
+                var appliedValue = refreshedFields?
+                    .FirstOrDefault(f => f.Name.Equals(rootField.Name, StringComparison.OrdinalIgnoreCase))
+                    ?.Value ?? newValue;
+                AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {appliedValue}");
             }
             else
             {
@@ -657,8 +661,11 @@ internal sealed class InspectorModeService
         AddStream(context, $"{context.PromptLabel} > {input}");
         if (mutationOk)
         {
-            ReplaceField(context, field with { Value = newValue });
-            AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
+            await PopulateFieldsAsync(context, session, context.SelectedComponentIndex!.Value, forceRefresh: true);
+            var appliedValue = context.Fields
+                .FirstOrDefault(f => f.Name.Equals(field.Name, StringComparison.OrdinalIgnoreCase))
+                ?.Value ?? newValue;
+            AddStream(context, $"[=] ok: {field.Name} updated to {appliedValue}");
         }
         else
         {
@@ -1733,7 +1740,10 @@ internal sealed class InspectorModeService
         }
 
         await PopulateFieldsAsync(context, session, context.SelectedComponentIndex!.Value, forceRefresh: true);
-        AddStream(context, $"[=] ok: {field.Name} updated to {value}");
+        var appliedValue = context.Fields
+            .FirstOrDefault(f => f.Name.Equals(field.Name, StringComparison.OrdinalIgnoreCase))
+            ?.Value ?? value;
+        AddStream(context, $"[=] ok: {field.Name} updated to {appliedValue}");
         _renderer.Render(context, null, field.Name, focusModeEnabled: true);
         return true;
     }

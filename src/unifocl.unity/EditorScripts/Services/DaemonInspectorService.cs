@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -12,6 +13,22 @@ namespace UniFocl.EditorBridge
 {
     internal static class DaemonInspectorService
     {
+        private readonly struct NumericClampConstraint
+        {
+            public NumericClampConstraint(bool hasMin, float min, bool hasMax, float max)
+            {
+                HasMin = hasMin;
+                Min = min;
+                HasMax = hasMax;
+                Max = max;
+            }
+
+            public bool HasMin { get; }
+            public float Min { get; }
+            public bool HasMax { get; }
+            public float Max { get; }
+        }
+
         private static readonly Dictionary<string, Type> ComponentTypeLookup = BuildComponentTypeLookup();
 
         public static string Execute(string payload)
@@ -621,7 +638,7 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Integer:
                     if (int.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intValue))
                     {
-                        property.intValue = intValue;
+                        property.intValue = ClampIntegerValue(property, intValue);
                         return true;
                     }
 
@@ -630,7 +647,12 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Float:
                     if (float.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var floatValue))
                     {
-                        property.floatValue = floatValue;
+                        if (!float.IsFinite(floatValue))
+                        {
+                            return false;
+                        }
+
+                        property.floatValue = ClampFloatValue(property, floatValue);
                         return true;
                     }
 
@@ -670,7 +692,11 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Color:
                     if (TryParseVector(rawValue, 4, out var rgba))
                     {
-                        property.colorValue = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
+                        property.colorValue = new Color(
+                            Mathf.Clamp01(rgba[0]),
+                            Mathf.Clamp01(rgba[1]),
+                            Mathf.Clamp01(rgba[2]),
+                            Mathf.Clamp01(rgba[3]));
                         return true;
                     }
 
@@ -886,9 +912,158 @@ namespace UniFocl.EditorBridge
                 {
                     return false;
                 }
+
+                if (!float.IsFinite(values[i]))
+                {
+                    return false;
+                }
             }
 
             return true;
+        }
+
+        private static int ClampIntegerValue(SerializedProperty property, int value)
+        {
+            var constraint = ResolveNumericConstraint(property);
+            if (constraint.HasMin)
+            {
+                value = Mathf.Max(value, Mathf.CeilToInt(constraint.Min));
+            }
+
+            if (constraint.HasMax)
+            {
+                value = Mathf.Min(value, Mathf.FloorToInt(constraint.Max));
+            }
+
+            return value;
+        }
+
+        private static float ClampFloatValue(SerializedProperty property, float value)
+        {
+            var constraint = ResolveNumericConstraint(property);
+            if (constraint.HasMin)
+            {
+                value = Mathf.Max(value, constraint.Min);
+            }
+
+            if (constraint.HasMax)
+            {
+                value = Mathf.Min(value, constraint.Max);
+            }
+
+            return value;
+        }
+
+        private static NumericClampConstraint ResolveNumericConstraint(SerializedProperty property)
+        {
+            var field = ResolveFieldInfo(property);
+            if (field is null)
+            {
+                return default;
+            }
+
+            var range = field.GetCustomAttribute<RangeAttribute>();
+            if (range is not null)
+            {
+                var min = Mathf.Min(range.min, range.max);
+                var max = Mathf.Max(range.min, range.max);
+                return new NumericClampConstraint(true, min, true, max);
+            }
+
+            var minAttr = field.GetCustomAttribute<MinAttribute>();
+            if (minAttr is not null)
+            {
+                return new NumericClampConstraint(true, minAttr.min, false, 0f);
+            }
+
+            return default;
+        }
+
+        private static FieldInfo? ResolveFieldInfo(SerializedProperty property)
+        {
+            var targetType = property.serializedObject.targetObject?.GetType();
+            if (targetType is null)
+            {
+                return null;
+            }
+
+            var currentType = targetType;
+            FieldInfo? resolved = null;
+            var segments = property.propertyPath.Split('.');
+            for (var i = 0; i < segments.Length; i++)
+            {
+                var segment = segments[i];
+                if (segment.Equals("Array", StringComparison.Ordinal))
+                {
+                    if (i + 1 >= segments.Length || !segments[i + 1].StartsWith("data[", StringComparison.Ordinal))
+                    {
+                        return null;
+                    }
+
+                    currentType = ResolveCollectionElementType(currentType);
+                    if (currentType is null)
+                    {
+                        return null;
+                    }
+
+                    i++;
+                    continue;
+                }
+
+                var fieldName = segment;
+                var bracket = fieldName.IndexOf('[');
+                if (bracket >= 0)
+                {
+                    fieldName = fieldName[..bracket];
+                }
+
+                resolved = FindFieldOnType(currentType, fieldName);
+                if (resolved is null)
+                {
+                    return null;
+                }
+
+                currentType = resolved.FieldType;
+            }
+
+            return resolved;
+        }
+
+        private static FieldInfo? FindFieldOnType(Type type, string fieldName)
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            for (var current = type; current is not null; current = current.BaseType)
+            {
+                var field = current.GetField(fieldName, flags);
+                if (field is not null)
+                {
+                    return field;
+                }
+            }
+
+            return null;
+        }
+
+        private static Type? ResolveCollectionElementType(Type type)
+        {
+            if (type.IsArray)
+            {
+                return type.GetElementType();
+            }
+
+            if (type.IsGenericType)
+            {
+                var genericTypeDef = type.GetGenericTypeDefinition();
+                if (genericTypeDef == typeof(List<>))
+                {
+                    return type.GetGenericArguments()[0];
+                }
+            }
+
+            var enumerable = type
+                .GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            return enumerable?.GetGenericArguments()[0];
         }
     }
 }
