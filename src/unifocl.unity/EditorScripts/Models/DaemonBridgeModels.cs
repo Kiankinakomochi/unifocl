@@ -169,6 +169,7 @@ namespace UniFocl.EditorBridge
         public string assetPath = string.Empty;
         public string newAssetPath = string.Empty;
         public string content = string.Empty;
+        public string requestId = string.Empty;
     }
 
     [Serializable]
@@ -181,11 +182,39 @@ namespace UniFocl.EditorBridge
     }
 
     [Serializable]
+    internal sealed class ProjectCommandStatusResponse
+    {
+        public string requestId = string.Empty;
+        public string action = string.Empty;
+        public bool active;
+        public bool success;
+        public string stage = string.Empty;
+        public string detail = string.Empty;
+        public string startedAtUtc = string.Empty;
+        public string lastUpdatedAtUtc = string.Empty;
+        public string finishedAtUtc = string.Empty;
+        public bool isCompiling;
+        public bool isUpdating;
+    }
+
+    [Serializable]
     internal sealed class UpmListRequestOptions
     {
         public bool includeOutdated;
         public bool includeBuiltin;
         public bool includeGit;
+    }
+
+    [Serializable]
+    internal sealed class UpmInstallRequestOptions
+    {
+        public string target = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class UpmRemoveRequestOptions
+    {
+        public string packageId = string.Empty;
     }
 
     [Serializable]
@@ -205,6 +234,15 @@ namespace UniFocl.EditorBridge
     internal sealed class UpmListResponse
     {
         public UpmPackageEntry[] packages = Array.Empty<UpmPackageEntry>();
+    }
+
+    [Serializable]
+    internal sealed class UpmInstallResponse
+    {
+        public string packageId = string.Empty;
+        public string version = string.Empty;
+        public string source = string.Empty;
+        public string targetType = string.Empty;
     }
 }
 #endif

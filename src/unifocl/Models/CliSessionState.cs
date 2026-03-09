@@ -51,6 +51,11 @@ internal sealed class CliSessionState
         ProjectView.AssetPathByInstanceId.Clear();
         ProjectView.LastFuzzyMatches.Clear();
         ProjectView.LastUpmPackages.Clear();
+        ProjectView.ExpandTranscriptForUpmList = false;
+        ProjectView.UpmFocusModeEnabled = false;
+        ProjectView.UpmFocusSelectedIndex = 0;
+        ProjectView.UpmActionMenuVisible = false;
+        ProjectView.UpmActionSelectedIndex = 0;
         UnityLogPane.Clear();
         RecentProjectEntries.Clear();
         RecentSelectionAllowUnsafe = false;
