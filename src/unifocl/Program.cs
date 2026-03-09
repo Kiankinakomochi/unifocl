@@ -829,7 +829,7 @@ static int RenderComposerFrame(
     else if (input.StartsWith('/'))
     {
         lines.Add(string.Empty);
-        lines.AddRange(GetSuggestionLines(input, commands, selectedFuzzyCandidateIndex));
+        lines.AddRange(GetSuggestionLines(input, commands, session, selectedFuzzyCandidateIndex));
     }
     else if (TryGetProjectMkTypeIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var mkTypeLines))
     {
@@ -852,7 +852,7 @@ static int RenderComposerFrame(
             ? inspectorCommands
             : projectCommands;
         lines.Add(string.Empty);
-        lines.AddRange(GetSuggestionLines(input, contextualCommands, selectedFuzzyCandidateIndex));
+        lines.AddRange(GetSuggestionLines(input, contextualCommands, session, selectedFuzzyCandidateIndex));
     }
     else if (session.Inspector is not null)
     {
@@ -1157,7 +1157,7 @@ static bool TryGetComposerIntellisenseCandidates(
 
     if (input.StartsWith('/'))
     {
-        candidates = GetSuggestionMatches(input, commands)
+        candidates = GetSuggestionMatches(input, commands, session)
             .Select(match => (match.Signature, (string?)match.Trigger))
             .ToList();
         return true;
@@ -1168,7 +1168,7 @@ static bool TryGetComposerIntellisenseCandidates(
         var contextualCommands = session.Inspector is not null
             ? inspectorCommands
             : projectCommands;
-        candidates = GetSuggestionMatches(input, contextualCommands)
+        candidates = GetSuggestionMatches(input, contextualCommands, session)
             .Select(match => (match.Signature, (string?)match.Trigger))
             .ToList();
         return true;
@@ -1708,9 +1708,13 @@ static bool TryGetUpmComposerCandidates(
     return true;
 }
 
-static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> commands, int selectedSuggestionIndex)
+static IEnumerable<string> GetSuggestionLines(
+    string query,
+    List<CommandSpec> commands,
+    CliSessionState session,
+    int selectedSuggestionIndex)
 {
-    var matches = GetSuggestionMatches(query, commands);
+    var matches = GetSuggestionMatches(query, commands, session);
     if (matches.Count == 0)
     {
         return new[]
@@ -1742,10 +1746,11 @@ static IEnumerable<string> GetSuggestionLines(string query, List<CommandSpec> co
     return lines;
 }
 
-static List<CommandSpec> GetSuggestionMatches(string query, List<CommandSpec> commands)
+static List<CommandSpec> GetSuggestionMatches(string query, List<CommandSpec> commands, CliSessionState session)
 {
     var normalized = query.Trim().ToLowerInvariant();
     return commands
+        .Where(command => IsSuggestionAvailableForSession(command, session))
         .Where(c => !c.Description.StartsWith("Alias for", StringComparison.OrdinalIgnoreCase))
         .Where(c => c.Signature.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                     || c.Description.Contains(normalized, StringComparison.OrdinalIgnoreCase)
@@ -1753,6 +1758,27 @@ static List<CommandSpec> GetSuggestionMatches(string query, List<CommandSpec> co
                     || normalized.StartsWith(c.Trigger, StringComparison.OrdinalIgnoreCase))
         .Take(14)
         .ToList();
+}
+
+static bool IsSuggestionAvailableForSession(CommandSpec command, CliSessionState session)
+{
+    var hasOpenProject = session.Mode == CliMode.Project
+        && !string.IsNullOrWhiteSpace(session.CurrentProjectPath);
+    if (hasOpenProject)
+    {
+        return true;
+    }
+
+    if (!command.Trigger.StartsWith('/'))
+    {
+        return false;
+    }
+
+    return !command.Trigger.StartsWith("/project", StringComparison.Ordinal)
+        && !command.Trigger.StartsWith("/hierarchy", StringComparison.Ordinal)
+        && !command.Trigger.StartsWith("/inspect", StringComparison.Ordinal)
+        && !command.Trigger.StartsWith("/upm", StringComparison.Ordinal)
+        && !command.Trigger.StartsWith("/build", StringComparison.Ordinal);
 }
 
 static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState session, int selectedFuzzyCandidateIndex, out List<string> lines)

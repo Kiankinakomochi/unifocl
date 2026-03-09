@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.0a1 - 2026-03-09
+
+### Changed
+- Started the `0.11.0` development cycle with `a1` suffix versioning.
+
 ## 0.10.0a2 - 2026-03-09
 
 ### Changed
