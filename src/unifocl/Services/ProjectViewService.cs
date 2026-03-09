@@ -726,11 +726,21 @@ internal sealed class ProjectViewService
         EmitImmediateLoadFeedback(state, target.Name, isSceneLoad);
         EmitLoadDiagnostic(state, $"selector '{selector}' resolved to '{target.RelativePath}'");
         EmitLoadDiagnostic(state, "ensuring Bridge mode context");
-        var bridgeModeReady = await EnsureModeContextAsync(
-            session,
-            daemonControlService,
-            daemonRuntime,
-            requireBridgeMode: isSceneLoad);
+        var bridgeModeReady = await (isSceneLoad
+            ? RunTrackableProgressAsync(
+                session,
+                "preparing scene load context",
+                TimeSpan.FromSeconds(6),
+                () => EnsureModeContextAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    requireBridgeMode: true))
+            : EnsureModeContextAsync(
+                session,
+                daemonControlService,
+                daemonRuntime,
+                requireBridgeMode: false));
         if (!bridgeModeReady && isSceneLoad)
         {
             outputs.Add("[x] scene load failed: Bridge mode is unavailable; set UNITY_PATH or start Unity editor for this project");
@@ -741,10 +751,19 @@ internal sealed class ProjectViewService
             EmitLoadDiagnostic(state, "Bridge mode context ready");
         }
 
-        var response = await ExecuteProjectCommandAsync(
-            session,
-            new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null),
-            status => EmitLoadDiagnostic(state, status));
+        var response = await (isSceneLoad
+            ? RunTrackableProgressAsync(
+                session,
+                $"loading scene {target.Name}",
+                TimeSpan.FromSeconds(20),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null),
+                    status => EmitLoadDiagnostic(state, status)))
+            : ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null),
+                status => EmitLoadDiagnostic(state, status)));
         if (!response.Ok && IsAssetNotFoundFailure(response.Message))
         {
             var fallbackPath = await ResolveAssetFallbackPathAsync(session, target.RelativePath, allowDirectoryFallback: false);
@@ -752,10 +771,19 @@ internal sealed class ProjectViewService
                 && !fallbackPath.Equals(target.RelativePath, StringComparison.OrdinalIgnoreCase))
             {
                 EmitLoadDiagnostic(state, $"asset fallback path resolved: '{fallbackPath}'");
-                response = await ExecuteProjectCommandAsync(
-                    session,
-                    new ProjectCommandRequestDto("load-asset", fallbackPath, null, null),
-                    status => EmitLoadDiagnostic(state, status));
+                response = await (isSceneLoad
+                    ? RunTrackableProgressAsync(
+                        session,
+                        $"retrying scene load {target.Name}",
+                        TimeSpan.FromSeconds(20),
+                        () => ExecuteProjectCommandAsync(
+                            session,
+                            new ProjectCommandRequestDto("load-asset", fallbackPath, null, null),
+                            status => EmitLoadDiagnostic(state, status)))
+                    : ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto("load-asset", fallbackPath, null, null),
+                        status => EmitLoadDiagnostic(state, status)));
             }
         }
 
@@ -1296,7 +1324,7 @@ internal sealed class ProjectViewService
                 return true;
             }
 
-            var installBridgeReady = await RunUpmProgressAsync(
+            var installBridgeReady = await RunTrackableProgressAsync(
                 session,
                 "preparing package manager",
                 TimeSpan.FromSeconds(6),
@@ -1310,7 +1338,7 @@ internal sealed class ProjectViewService
             if (targetType.Equals("registry", StringComparison.OrdinalIgnoreCase))
             {
                 var (registryPackageId, _) = SplitRegistryTarget(target);
-                var listResponse = await RunUpmProgressAsync(
+                var listResponse = await RunTrackableProgressAsync(
                     session,
                     "checking installed packages",
                     TimeSpan.FromSeconds(8),
@@ -1349,7 +1377,7 @@ internal sealed class ProjectViewService
                     var removePayload = JsonSerializer.Serialize(
                         new UpmRemoveRequestPayload(existingPackageId),
                         new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-                    var removeResponse = await RunUpmProgressAsync(
+                    var removeResponse = await RunTrackableProgressAsync(
                         session,
                         $"clean uninstalling {existingPackageId}",
                         TimeSpan.FromSeconds(25),
@@ -1372,7 +1400,7 @@ internal sealed class ProjectViewService
             var installPayload = JsonSerializer.Serialize(
                 new UpmInstallRequestPayload(target),
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-            var installResponse = await RunUpmProgressAsync(
+            var installResponse = await RunTrackableProgressAsync(
                 session,
                 $"installing {target}",
                 TimeSpan.FromSeconds(35),
@@ -1433,7 +1461,7 @@ internal sealed class ProjectViewService
                 return true;
             }
 
-            var removeBridgeReady = await RunUpmProgressAsync(
+            var removeBridgeReady = await RunTrackableProgressAsync(
                 session,
                 "preparing package manager",
                 TimeSpan.FromSeconds(6),
@@ -1447,7 +1475,7 @@ internal sealed class ProjectViewService
             var removePayload = JsonSerializer.Serialize(
                 new UpmRemoveRequestPayload(packageId),
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-            var removeResponse = await RunUpmProgressAsync(
+            var removeResponse = await RunTrackableProgressAsync(
                 session,
                 $"removing {packageId}",
                 TimeSpan.FromSeconds(20),
@@ -1470,7 +1498,7 @@ internal sealed class ProjectViewService
         if (subcommand.Equals("update", StringComparison.OrdinalIgnoreCase)
             || subcommand.Equals("u", StringComparison.OrdinalIgnoreCase))
         {
-            var updateBridgeReady = await RunUpmProgressAsync(
+            var updateBridgeReady = await RunTrackableProgressAsync(
                 session,
                 "preparing package manager",
                 TimeSpan.FromSeconds(6),
@@ -1484,7 +1512,7 @@ internal sealed class ProjectViewService
             var updateListPayload = JsonSerializer.Serialize(
                 new UpmListRequestPayload(false, true, false),
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-            var updateListResponse = await RunUpmProgressAsync(
+            var updateListResponse = await RunTrackableProgressAsync(
                 session,
                 "reading package state",
                 TimeSpan.FromSeconds(10),
@@ -1534,7 +1562,7 @@ internal sealed class ProjectViewService
                 var singleUpdatePayload = JsonSerializer.Serialize(
                     new UpmInstallRequestPayload(ComposeRegistryInstallTarget(requestedId, target.LatestCompatibleVersion)),
                     new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-                var singleUpdateResponse = await RunUpmProgressAsync(
+                var singleUpdateResponse = await RunTrackableProgressAsync(
                     session,
                     $"updating {requestedId}",
                     TimeSpan.FromSeconds(30),
@@ -1592,7 +1620,7 @@ internal sealed class ProjectViewService
                 var bulkPayload = JsonSerializer.Serialize(
                     new UpmInstallRequestPayload(ComposeRegistryInstallTarget(packageId, package.LatestCompatibleVersion)),
                     new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-                var bulkResponse = await RunUpmProgressAsync(
+                var bulkResponse = await RunTrackableProgressAsync(
                     session,
                     $"updating {packageId}",
                     TimeSpan.FromSeconds(30),
@@ -1674,7 +1702,7 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        var bridgeModeReady = await RunUpmProgressAsync(
+        var bridgeModeReady = await RunTrackableProgressAsync(
             session,
             "preparing package manager",
             TimeSpan.FromSeconds(6),
@@ -1688,7 +1716,7 @@ internal sealed class ProjectViewService
         var payload = JsonSerializer.Serialize(
             new UpmListRequestPayload(includeOutdatedOnly, includeBuiltin, includeGitOnly),
             new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-        var response = await RunUpmProgressAsync(
+        var response = await RunTrackableProgressAsync(
             session,
             "loading package information",
             TimeSpan.FromSeconds(12),
@@ -1894,7 +1922,7 @@ internal sealed class ProjectViewService
         return !string.IsNullOrWhiteSpace(pathPart);
     }
 
-    private async Task<T> RunUpmProgressAsync<T>(
+    private async Task<T> RunTrackableProgressAsync<T>(
         CliSessionState session,
         string activity,
         TimeSpan expectedDuration,
@@ -1904,7 +1932,6 @@ internal sealed class ProjectViewService
         var markerIndex = state.CommandTranscript.Count;
         state.CommandTranscript.Add(string.Empty);
 
-        var frames = new[] { "|", "/", "-", "\\" };
         var startedAt = DateTime.UtcNow;
         var tick = 0;
         var task = operation();
@@ -1912,8 +1939,8 @@ internal sealed class ProjectViewService
         while (!task.IsCompleted)
         {
             var elapsed = DateTime.UtcNow - startedAt;
-            var progress = ComputeUpmProgress(elapsed, expectedDuration);
-            state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, frames[tick % frames.Length], progress, elapsed);
+            var progress = TuiTrackableProgress.ComputeExpectedDurationProgress(elapsed, expectedDuration);
+            state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, progress, elapsed);
             RenderFrame(state);
             tick++;
             await Task.Delay(120);
@@ -1923,62 +1950,17 @@ internal sealed class ProjectViewService
         {
             var result = await task;
             var total = DateTime.UtcNow - startedAt;
-            state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, "OK", 1d, total, done: true);
+            state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, 1d, total, done: true);
             RenderFrame(state);
             return result;
         }
         catch
         {
             var total = DateTime.UtcNow - startedAt;
-            state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, "ERR", 1d, total, failed: true);
+            state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, 1d, total, failed: true);
             RenderFrame(state);
             throw;
         }
-    }
-
-    private static double ComputeUpmProgress(TimeSpan elapsed, TimeSpan expectedDuration)
-    {
-        if (expectedDuration.TotalMilliseconds <= 0d)
-        {
-            return 0d;
-        }
-
-        var ratio = elapsed.TotalMilliseconds / expectedDuration.TotalMilliseconds;
-        if (ratio <= 1d)
-        {
-            return Math.Clamp(ratio * 0.9d, 0d, 0.9d);
-        }
-
-        // After expected time, keep moving toward 99% so long-running package operations
-        // look active instead of appearing stuck at a fixed percentage.
-        var overrun = ratio - 1d;
-        var tail = 1d - Math.Exp(-overrun);
-        return Math.Clamp(0.9d + (0.09d * tail), 0.9d, 0.99d);
-    }
-
-    private static string BuildUpmProgressLine(
-        string activity,
-        string frame,
-        double progress01,
-        TimeSpan elapsed,
-        bool done = false,
-        bool failed = false)
-    {
-        var clamped = Math.Clamp(progress01, 0d, 1d);
-        var filled = (int)Math.Round(clamped * 18d);
-        if (filled > 18)
-        {
-            filled = 18;
-        }
-
-        var bar = new string('#', filled) + new string('-', 18 - filled);
-        var percent = (int)Math.Round(clamped * 100d);
-        var status = failed
-            ? "[red]x[/]"
-            : done
-                ? "[green]ok[/]"
-                : $"[{CliTheme.Info}]{Markup.Escape(frame)}[/]";
-        return $"{status} {Markup.Escape(activity)} [{CliTheme.TextSecondary}][{bar}] {percent,3}% {elapsed.TotalSeconds,4:0.0}s[/]";
     }
 
     private static UpmListPackagePayload? TryFindUpmPackageById(string? rawContent, string packageId)

@@ -503,7 +503,7 @@ internal sealed class BuildCommandService
 
         var result = new List<BuildTargetCandidate>();
         await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
+            .Spinner(TuiTrackableProgress.StatusSpinner)
             .StartAsync("Querying installed build targets...", async _ =>
             {
                 result = await QueryAsync();
@@ -1065,8 +1065,7 @@ internal sealed class BuildCommandService
 
         var progress = Math.Clamp(status.Progress01, 0f, 1f);
         var blocks = 30;
-        var filled = (int)Math.Round(progress * blocks);
-        var bar = new string('■', Math.Clamp(filled, 0, blocks)) + new string('□', Math.Clamp(blocks - filled, 0, blocks));
+        var bar = TuiTrackableProgress.BuildProgressBar(progress, blocks);
         var step = string.IsNullOrWhiteSpace(status.Step) ? "building..." : status.Step;
         var state = status.Running ? "[yellow]running[/]" : (status.Success ? "[green]success[/]" : "[red]failed[/]");
         AnsiConsole.MarkupLine($"[grey]state[/]: {state}  [grey]step[/]: [white]{Markup.Escape(step)}[/]");
@@ -1208,7 +1207,7 @@ internal sealed class BuildCommandService
 
         var result = default(T);
         await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
+            .Spinner(TuiTrackableProgress.StatusSpinner)
             .StartAsync(statusText, async _ =>
             {
                 result = await action();

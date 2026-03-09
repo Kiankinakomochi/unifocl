@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1a1 - 2026-03-09
+
+### Changed
+- Started the `0.5.1` development cycle (`a1`) after the `0.5.0` release.
+- Refactored TUI progress visuals into a shared `TuiTrackableProgress` renderer for spinner and progress-bar output across build and project UPM flows.
+- Added active progress feedback during `/recent` and `/init` execution, and scene loading (`load <scene>`) in project mode.
+
 ## 0.5.0 - 2026-03-09
 
 ### Patch Train
