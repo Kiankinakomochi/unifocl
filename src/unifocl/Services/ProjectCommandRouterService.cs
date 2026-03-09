@@ -110,7 +110,7 @@ internal sealed class ProjectCommandRouterService
         if (IsDaemonCommand(tokens))
         {
             log($"[yellow]project[/]: unsupported project command: [white]{Markup.Escape(normalizedInput)}[/]");
-            log("[grey]project[/]: use load/mk script/rename/rm/f inside project mode, or /hierarchy and /inspect for scene/object operations");
+            log("[grey]project[/]: use load/mk/make/rename/rm/f inside project mode, or /hierarchy and /inspect for scene/object operations");
             return true;
         }
 
