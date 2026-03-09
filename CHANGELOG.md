@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.7.2 - 2026-03-09
+## 0.8.0 - 2026-03-09
 
 ### Changed
-- Officialized `0.7.2` by closing the development cycle suffix.
+- Officialized `0.8.0` by closing the development cycle suffix.
 - Added agentic one-shot execution entrypoint: `unifocl exec "<command>" --agentic [--format json|yaml]` with deterministic response envelopes and standardized exit codes.
 - Added deterministic `/dump` command family (`/dump hierarchy|project|inspector`) with JSON/YAML serialization for LLM context snapshots.
 - Added daemon-side agentic HTTP surface (`/agent/exec`, `/agent/capabilities`, `/agent/status`, `/agent/dump/{category}`) aligned to the new envelope contract.
