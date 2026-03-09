@@ -317,7 +317,7 @@ internal sealed class ProjectLifecycleService
         return true;
     }
 
-    private Task<bool> HandleInitAsync(
+    private async Task<bool> HandleInitAsync(
         string input,
         CommandSpec matched,
         CliSessionState session,
@@ -327,7 +327,7 @@ internal sealed class ProjectLifecycleService
         if (args.Count > 1)
         {
             log("[red]error[/]: usage /init <path-to-project?>");
-            return Task.FromResult(true);
+            return true;
         }
 
         string? targetPath = null;
@@ -343,35 +343,41 @@ internal sealed class ProjectLifecycleService
         if (string.IsNullOrWhiteSpace(targetPath))
         {
             log("[red]error[/]: no attached project; use /init <path-to-project> or /open first");
-            return Task.FromResult(true);
+            return true;
         }
 
-        var configResult = EnsureProjectLocalConfig(targetPath);
+        var configResult = await RunWithStatusAsync(
+            "Preparing local bridge config...",
+            () => Task.FromResult(EnsureProjectLocalConfig(targetPath)));
         if (!configResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(configResult.Error)}");
-            return Task.FromResult(true);
+            return true;
         }
 
-        var packageFixResult = EnsureRequiredUnityPackageReferences(targetPath);
+        var packageFixResult = await RunWithStatusAsync(
+            "Checking project package references...",
+            () => Task.FromResult(EnsureRequiredUnityPackageReferences(targetPath)));
         if (!packageFixResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(packageFixResult.Error)}");
-            return Task.FromResult(true);
+            return true;
         }
 
-        var initResult = _editorDependencyInitializerService.InitializeProject(targetPath, log);
+        var initResult = await RunWithStatusAsync(
+            "Installing editor bridge dependencies...",
+            () => Task.FromResult(_editorDependencyInitializerService.InitializeProject(targetPath, log)));
         if (!initResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
-            return Task.FromResult(true);
+            return true;
         }
 
         log($"[green]init[/]: ready at [white]{Markup.Escape(targetPath)}[/]");
-        return Task.FromResult(true);
+        return true;
     }
 
-    private Task<bool> HandleRecentAsync(
+    private async Task<bool> HandleRecentAsync(
         string input,
         CommandSpec matched,
         CliSessionState session,
@@ -383,21 +389,28 @@ internal sealed class ProjectLifecycleService
         if (!TryParseRecentArgs(args, out var indexRaw, out var allowUnsafe, out var parseError))
         {
             log($"[red]error[/]: {Markup.Escape(parseError)}");
-            return Task.FromResult(true);
+            return true;
         }
 
-        if (!_recentProjectHistoryService.TryGetRecentProjects(100, out var entries, out var historyError))
+        var recentResult = await RunWithStatusAsync("Loading recent projects...", () =>
         {
-            log($"[red]error[/]: {Markup.Escape(historyError ?? "failed to load recent projects")}");
-            return Task.FromResult(true);
+            var ok = _recentProjectHistoryService.TryGetRecentProjects(100, out var loadedEntries, out var loadError);
+            return Task.FromResult((ok, loadedEntries, loadError));
+        });
+
+        if (!recentResult.ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(recentResult.loadError ?? "failed to load recent projects")}");
+            return true;
         }
 
+        var entries = recentResult.loadedEntries;
         if (entries.Count == 0)
         {
             session.RecentProjectEntries.Clear();
             session.RecentSelectionAllowUnsafe = false;
             log("[grey]recent[/]: no recent projects found");
-            return Task.FromResult(true);
+            return true;
         }
 
         LogRecentEntries(entries, log);
@@ -410,13 +423,13 @@ internal sealed class ProjectLifecycleService
             if (!int.TryParse(indexRaw, out var idx) || idx <= 0)
             {
                 log("[red]error[/]: idx must be a positive integer");
-                return Task.FromResult(true);
+                return true;
             }
 
             if (idx > entries.Count)
             {
                 log($"[red]error[/]: idx {idx} is out of range (1-{entries.Count})");
-                return Task.FromResult(true);
+                return true;
             }
 
             var selectedEntry = entries[idx - 1];
@@ -424,14 +437,14 @@ internal sealed class ProjectLifecycleService
             if (!AnsiConsole.Confirm(confirmMessage, defaultValue: true))
             {
                 log("[grey]recent[/]: cancelled");
-                return Task.FromResult(true);
+                return true;
             }
 
-            return OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, allowUnsafe, log);
+            return await OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, allowUnsafe, log);
         }
 
         log("[grey]recent[/]: press [white]F7[/] to enter selection mode ([white]↑/↓[/] move, [white]Enter[/] open, [white]F7[/] exit)");
-        return Task.FromResult(true);
+        return true;
     }
 
     private static void LogRecentEntries(IReadOnlyList<RecentProjectEntry> entries, Action<string> log)
@@ -445,7 +458,7 @@ internal sealed class ProjectLifecycleService
         }
     }
 
-    private Task<bool> OpenRecentSelectionAsync(
+    private async Task<bool> OpenRecentSelectionAsync(
         RecentProjectEntry selectedEntry,
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -454,15 +467,34 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         log($"[grey]recent[/]: opening [white]{Markup.Escape(selectedEntry.ProjectPath)}[/]");
-        return TryOpenProjectAsync(
-            selectedEntry.ProjectPath,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            _editorDependencyInitializerService,
-            promptForInitialization: true,
-            allowUnsafe: allowUnsafe,
-            log: log);
+        return await RunWithStatusAsync(
+            "Opening recent project...",
+            () => TryOpenProjectAsync(
+                selectedEntry.ProjectPath,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                _editorDependencyInitializerService,
+                promptForInitialization: true,
+                allowUnsafe: allowUnsafe,
+                log: log));
+    }
+
+    private static async Task<T> RunWithStatusAsync<T>(string statusText, Func<Task<T>> action)
+    {
+        if (Console.IsInputRedirected)
+        {
+            return await action();
+        }
+
+        var result = default(T);
+        await AnsiConsole.Status()
+            .Spinner(TuiTrackableProgress.StatusSpinner)
+            .StartAsync(statusText, async _ =>
+            {
+                result = await action();
+            });
+        return result!;
     }
 
     private async Task RunRecentSelectionModeAsync(
