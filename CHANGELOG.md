@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2a1 - 2026-03-09
+
+### Changed
+- Fixed project-mode rendering transition after hierarchy exit by forcing a project frame refresh when returning from `/hierarchy` without entering inspector mode.
+- Applied the same redraw guard to hierarchy auto-enter return paths triggered by scene load transitions.
+
 ## 0.5.1 - 2026-03-09
 
 ### Changed
