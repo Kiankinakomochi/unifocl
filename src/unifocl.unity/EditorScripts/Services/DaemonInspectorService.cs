@@ -29,6 +29,8 @@ namespace UniFocl.EditorBridge
             public float Max { get; }
         }
 
+        private static readonly Dictionary<string, Type> ComponentTypeLookup = BuildComponentTypeLookup();
+
         public static string Execute(string payload)
         {
             InspectorBridgeRequest? request;
@@ -69,6 +71,12 @@ namespace UniFocl.EditorBridge
                         results = Find(request.targetPath, request.query, request.componentName)
                     });
 
+                case "add-component":
+                    return JsonUtility.ToJson(BuildComponentMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError));
+
+                case "remove-component":
+                    return JsonUtility.ToJson(BuildComponentMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
+
                 case "toggle-component":
                     return JsonUtility.ToJson(new InspectorMutationResponse
                     {
@@ -90,6 +98,15 @@ namespace UniFocl.EditorBridge
                 default:
                     return JsonUtility.ToJson(new InspectorMutationResponse { ok = false });
             }
+        }
+
+        private static InspectorMutationResponse BuildComponentMutationResponse(bool ok, string? error)
+        {
+            return new InspectorMutationResponse
+            {
+                ok = ok,
+                message = ok ? string.Empty : (error ?? "component mutation failed")
+            };
         }
 
         private static InspectorComponentEntry[] GetComponents(string? targetPath)
@@ -260,6 +277,71 @@ namespace UniFocl.EditorBridge
             return false;
         }
 
+        private static bool TryAddComponent(string? targetPath, string? componentTypeToken, out string? error)
+        {
+            error = null;
+            var target = ResolveTarget(targetPath);
+            if (target is null)
+            {
+                error = "inspector target was not found";
+                return false;
+            }
+
+            if (!TryResolveComponentType(componentTypeToken, out var componentType))
+            {
+                error = $"unsupported component type: {componentTypeToken}";
+                return false;
+            }
+
+            if (componentType == typeof(Transform))
+            {
+                error = "Transform cannot be added manually";
+                return false;
+            }
+
+            var disallowMultiple = Attribute.IsDefined(componentType, typeof(DisallowMultipleComponent), inherit: true);
+            if (disallowMultiple && target.GetComponent(componentType) is not null)
+            {
+                error = $"{componentType.Name} disallows multiple components on the same object";
+                return false;
+            }
+
+            Undo.RegisterCompleteObjectUndo(target, "unifocl add component");
+            var added = Undo.AddComponent(target, componentType);
+            if (added is null)
+            {
+                error = $"failed to add component: {componentType.Name}";
+                return false;
+            }
+
+            EditorUtility.SetDirty(target);
+            EditorUtility.SetDirty(added);
+            DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", target.scene);
+            return true;
+        }
+
+        private static bool TryRemoveComponent(string? targetPath, int componentIndex, string? componentName, out string? error)
+        {
+            error = null;
+            var component = ResolveComponent(targetPath, componentIndex, componentName);
+            if (component is null)
+            {
+                error = "component was not found on target object";
+                return false;
+            }
+
+            if (component is Transform)
+            {
+                error = "Transform cannot be removed";
+                return false;
+            }
+
+            var scene = component.gameObject.scene;
+            Undo.DestroyObjectImmediate(component);
+            DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", scene);
+            return true;
+        }
+
         private static bool ToggleField(string? targetPath, int componentIndex, string? componentName, string? fieldName)
         {
             var component = ResolveComponent(targetPath, componentIndex, componentName);
@@ -328,11 +410,44 @@ namespace UniFocl.EditorBridge
 
             if (!string.IsNullOrWhiteSpace(componentName))
             {
+                if (TryResolveComponentType(componentName, out var resolvedType))
+                {
+                    var typed = target.GetComponent(resolvedType);
+                    if (typed is not null)
+                    {
+                        return typed;
+                    }
+                }
+
                 return components.FirstOrDefault(component =>
                     component is not null && component.GetType().Name.Equals(componentName, StringComparison.OrdinalIgnoreCase));
             }
 
             return null;
+        }
+
+        private static bool TryResolveComponentType(string? token, out Type componentType)
+        {
+            componentType = typeof(Component);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return false;
+            }
+
+            if (ComponentTypeLookup.TryGetValue(token.Trim(), out var exact))
+            {
+                componentType = exact;
+                return true;
+            }
+
+            var normalized = NormalizeTypeLookupKey(token);
+            if (ComponentTypeLookup.TryGetValue(normalized, out var matched))
+            {
+                componentType = matched;
+                return true;
+            }
+
+            return false;
         }
 
         private static GameObject? ResolveTarget(string? targetPath)
@@ -677,6 +792,58 @@ namespace UniFocl.EditorBridge
             }
 
             return true;
+        }
+
+        private static Dictionary<string, Type> BuildComponentTypeLookup()
+        {
+            var lookup = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(type => type is not null).Cast<Type>().ToArray();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    if (type.IsAbstract || !typeof(Component).IsAssignableFrom(type))
+                    {
+                        continue;
+                    }
+
+                    lookup[type.FullName ?? type.Name] = type;
+                    lookup[type.Name] = type;
+                    lookup[NormalizeTypeLookupKey(type.Name)] = type;
+                    if (!string.IsNullOrWhiteSpace(type.FullName))
+                    {
+                        lookup[NormalizeTypeLookupKey(type.FullName)] = type;
+                    }
+                }
+            }
+
+            return lookup;
+        }
+
+        private static string NormalizeTypeLookupKey(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var chars = value.Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray();
+            return new string(chars);
         }
 
         private static bool TryScore(string query, string candidate, out double score)

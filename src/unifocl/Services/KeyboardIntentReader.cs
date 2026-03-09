@@ -71,11 +71,6 @@ internal static class KeyboardIntentReader
             return KeyboardIntent.FocusProject;
         }
 
-        if (key.Key == ConsoleKey.F8)
-        {
-            return KeyboardIntent.FocusInspector;
-        }
-
         return KeyboardIntent.None;
     }
 

@@ -46,6 +46,8 @@ internal sealed class InspectorModeService
             "t" or
             "f" or
             "ff" or
+            "component" or
+            "comp" or
             "make" or
             "mk" or
             "remove" or
@@ -126,6 +128,16 @@ internal sealed class InspectorModeService
             case "ff":
                 await HandleFuzzyFindAsync(input, tokens, session, log);
                 return true;
+            case "component":
+                await HandleComponentAsync(input, tokens, session, log);
+                return true;
+            case "comp":
+                await HandleComponentAsync(
+                    $"component {string.Join(' ', tokens.Skip(1))}",
+                    ["component", .. tokens.Skip(1)],
+                    session,
+                    log);
+                return true;
             case "make":
             case "mk":
                 await HandleMakeAsync(input, tokens, session, log);
@@ -171,7 +183,6 @@ internal sealed class InspectorModeService
             await PopulateFieldsAsync(context, session, selectedComponentIndex, forceRefresh: context.Fields.Count == 0);
         }
 
-        AddStream(context, "[i] inspector focus mode enabled (up/down select, tab inspect, shift+tab back, esc back, f7/f8 exit)");
         var selectedComponentPosition = 0;
         var selectedFieldPosition = 0;
 
@@ -301,12 +312,23 @@ internal sealed class InspectorModeService
                     }
 
                     break;
-                case KeyboardIntent.FocusInspector:
                 case KeyboardIntent.FocusProject:
-                    AddStream(context, "[i] inspector focus mode disabled");
-                    context.FocusHighlightedFieldName = null;
-                    context.FocusHighlightedComponentIndex = null;
-                    _renderer.Render(context);
+                    if (context.Depth == InspectorDepth.ComponentFields)
+                    {
+                        StepUpToComponentList(context, "[i] returned to component list");
+                    }
+
+                    await PopulateComponentsAsync(context, session, forceRefresh: context.Components.Count == 0);
+
+                    if (context.FocusHighlightedComponentIndex is null && context.Components.Count > 0)
+                    {
+                        context.FocusHighlightedComponentIndex = context.Components
+                            .OrderBy(component => component.Index)
+                            .First()
+                            .Index;
+                    }
+
+                    _renderer.Render(context, context.FocusHighlightedComponentIndex, null, focusModeEnabled: false);
                     return;
                 case KeyboardIntent.Escape:
                     if (context.Depth == InspectorDepth.ComponentFields)
@@ -761,6 +783,156 @@ internal sealed class InspectorModeService
         _renderer.Render(context);
     }
 
+    private async Task HandleComponentAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: component requires inspect mode");
+            return;
+        }
+
+        if (context.Depth != InspectorDepth.ComponentList)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] component add/remove is available from the component list view (use up to return)");
+            _renderer.Render(context);
+            return;
+        }
+
+        if (tokens.Count < 2)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: component <add|remove> <type|index>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var action = tokens[1].ToLowerInvariant();
+        switch (action)
+        {
+            case "add":
+                await HandleComponentAddAsync(input, tokens, session, context);
+                return;
+            case "remove":
+            case "rm":
+                await HandleComponentRemoveAsync(input, tokens, session, context);
+                return;
+            default:
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, "[!] usage: component <add|remove> <type|index>");
+                _renderer.Render(context);
+                return;
+        }
+    }
+
+    private async Task HandleComponentAddAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        InspectorContext context)
+    {
+        if (tokens.Count < 3)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: component add <component-type>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var rawType = string.Join(' ', tokens.Skip(2)).Trim();
+        if (!InspectorComponentCatalog.TryResolve(rawType, out var displayName, out var typeReference, out var error))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, $"[!] {error}");
+            AddStream(context, "[i] use fuzzy suggestions: component add <partial-name>");
+            _renderer.Render(context);
+            return;
+        }
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        var mutation = await TrySendInspectorMutationWithMessageAsync(
+            session,
+            new InspectorBridgeRequest(
+                "add-component",
+                context.TargetPath,
+                null,
+                typeReference,
+                null,
+                null,
+                null));
+
+        if (!mutation.Ok)
+        {
+            var detail = string.IsNullOrWhiteSpace(mutation.Message)
+                ? "failed to add component in Bridge mode"
+                : mutation.Message!;
+            AddStream(context, $"[!] {detail}");
+            _renderer.Render(context);
+            return;
+        }
+
+        await PopulateComponentsAsync(context, session, forceRefresh: true);
+        AddStream(context, $"[+] added component: {displayName}");
+        _renderer.Render(context);
+    }
+
+    private async Task HandleComponentRemoveAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        InspectorContext context)
+    {
+        if (tokens.Count < 3)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: component remove <index|component-name>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var selector = string.Join(' ', tokens.Skip(2)).Trim();
+        var target = ResolveComponentRemoveTarget(context, selector);
+        if (target is null)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, $"[!] no component match for: {selector}");
+            AddStream(context, "[i] use component remove <index> to disambiguate");
+            _renderer.Render(context);
+            return;
+        }
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        var mutation = await TrySendInspectorMutationWithMessageAsync(
+            session,
+            new InspectorBridgeRequest(
+                "remove-component",
+                context.TargetPath,
+                target.Index,
+                target.Name,
+                null,
+                null,
+                null));
+
+        if (!mutation.Ok)
+        {
+            var detail = string.IsNullOrWhiteSpace(mutation.Message)
+                ? "failed to remove component in Bridge mode"
+                : mutation.Message!;
+            AddStream(context, $"[!] {detail}");
+            _renderer.Render(context);
+            return;
+        }
+
+        await PopulateComponentsAsync(context, session, forceRefresh: true);
+        AddStream(context, $"[-] removed component: {target.Name}");
+        _renderer.Render(context);
+    }
+
     private async Task HandleRemoveAsync(
         string input,
         CliSessionState session,
@@ -1104,7 +1276,7 @@ internal sealed class InspectorModeService
         context.FollowStreamScroll = true;
         context.StreamScrollOffset = int.MaxValue;
         await PopulateFieldsAsync(context, session, componentIndex, forceRefresh: true);
-        AddStream(context, $"UnityCLI:{context.TargetPath} [inspect] > {rawCommand}");
+        AddStream(context, $"UnityCLI:{context.TargetPath} [[inspect]] > {rawCommand}");
         AddStream(context, $"[i] inspecting component: {component.Name}");
         if (context.Fields.Count == 0)
         {
@@ -1745,22 +1917,61 @@ internal sealed class InspectorModeService
         }
     }
 
+    private static InspectorComponentEntry? ResolveComponentRemoveTarget(InspectorContext context, string selector)
+    {
+        if (int.TryParse(selector, out var index))
+        {
+            return context.Components.FirstOrDefault(component => component.Index == index);
+        }
+
+        var matches = context.Components
+            .Where(component => component.Name.Equals(selector, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (matches.Count == 1)
+        {
+            return matches[0];
+        }
+
+        if (InspectorComponentCatalog.TryResolve(selector, out _, out var typeReference, out _))
+        {
+            var simpleName = typeReference.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            if (!string.IsNullOrWhiteSpace(simpleName))
+            {
+                var typedMatches = context.Components
+                    .Where(component => component.Name.Equals(simpleName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (typedMatches.Count == 1)
+                {
+                    return typedMatches[0];
+                }
+            }
+        }
+
+        return null;
+    }
+
     private async Task<bool> TrySendInspectorMutationAsync(CliSessionState session, InspectorBridgeRequest request)
+    {
+        var result = await TrySendInspectorMutationWithMessageAsync(session, request);
+        return result.Ok;
+    }
+
+    private async Task<(bool Ok, string? Message)> TrySendInspectorMutationWithMessageAsync(CliSessionState session, InspectorBridgeRequest request)
     {
         var response = await SendBridgeRequestAsync(request, session);
         if (string.IsNullOrWhiteSpace(response))
         {
-            return false;
+            return (false, null);
         }
 
         try
         {
             var mutation = JsonSerializer.Deserialize<InspectorBridgeMutationResponse>(response, _jsonOptions);
-            return mutation?.Ok == true;
+            return (mutation?.Ok == true, mutation?.Message);
         }
         catch
         {
-            return false;
+            return (false, null);
         }
     }
 
@@ -2121,10 +2332,17 @@ internal sealed class InspectorModeService
             return;
         }
 
+        const int maxLines = 10;
         AddStream(context, $"[*] fuzzy results for: {query}");
-        for (var i = 0; i < buffered.Count; i++)
+        var shown = Math.Min(maxLines, buffered.Count);
+        for (var i = 0; i < shown; i++)
         {
             AddStream(context, $"[{i}] {buffered[i]}");
+        }
+
+        if (buffered.Count > shown)
+        {
+            AddStream(context, $"[i] showing first {shown}/{buffered.Count} results");
         }
     }
 
@@ -2160,7 +2378,7 @@ internal sealed class InspectorModeService
     private sealed record InspectorBridgeComponentsResponse(bool Ok, List<InspectorBridgeComponent>? Components);
     private sealed record InspectorBridgeFieldsResponse(bool Ok, List<InspectorBridgeField>? Fields);
     private sealed record InspectorBridgeSearchResponse(bool Ok, List<InspectorSearchResultDto>? Results);
-    private sealed record InspectorBridgeMutationResponse(bool Ok);
+    private sealed record InspectorBridgeMutationResponse(bool Ok, string? Message);
     private sealed record InspectorBridgeComponent(int Index, string Name, bool Enabled);
     private sealed record InspectorBridgeField(string Name, string Value, string Type, bool IsBoolean, List<string>? EnumOptions);
 }
