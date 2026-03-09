@@ -60,6 +60,8 @@ namespace UniFocl.EditorBridge
         public int targetId;
         public string name = string.Empty;
         public bool primitive;
+        public string type = string.Empty;
+        public int count;
     }
 
     [Serializable]

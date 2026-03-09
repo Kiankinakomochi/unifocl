@@ -1,5 +1,6 @@
 using System.Text;
 using Spectre.Console;
+using Unifocl.Contracts;
 
 internal sealed class HierarchyTui
 {
@@ -21,9 +22,10 @@ internal sealed class HierarchyTui
         new("up", "Move to parent object", "up"),
         new("..", "Alias for up", ".."),
         new(":i", "Alias for up", ":i"),
-        new("make <name>", "Create empty GameObject under current object", "make"),
-        new("mk <name>", "Alias for make", "mk"),
-        new("mk cube <name> [-p]", "Create primitive cube", "mk cube"),
+        new("make --type <type> [--count <count>]", "Create typed objects under current object", "make"),
+        new("mk <type> [count] [--name <name>|-n <name>]", "Create typed object(s) under current object", "mk"),
+        new("remove <idx>", "Remove object by visible index", "remove"),
+        new("rm <idx>", "Alias for remove", "rm"),
         new("toggle <idx>", "Toggle active state by index", "toggle"),
         new("t <idx>", "Alias for toggle", "t"),
         new("f <query>", "Fuzzy search hierarchy paths", "f"),
@@ -31,6 +33,42 @@ internal sealed class HierarchyTui
         new("scroll [tree|log] <up|down> [count]", "Scroll tree or command stream", "scroll"),
         new("quit|exit|q|:q", "Exit hierarchy mode", "quit")
     ];
+
+    private static readonly List<CommandSpec> MkTypeCommands =
+    [
+        new("mk Canvas [count]", "Root UI structural element", "mk Canvas"),
+        new("mk Panel [count]", "Stretching UI panel with image background", "mk Panel"),
+        new("mk Text [count]", "TextMeshPro UI text", "mk Text"),
+        new("mk TMP [count]", "Alias for TextMeshPro UI text", "mk TMP"),
+        new("mk Image [count]", "Standard UI image", "mk Image"),
+        new("mk Button [count]", "Compound UI button with TMP label", "mk Button"),
+        new("mk Toggle [count]", "Compound UI toggle", "mk Toggle"),
+        new("mk Slider [count]", "UI slider", "mk Slider"),
+        new("mk Scrollbar [count]", "UI scrollbar", "mk Scrollbar"),
+        new("mk ScrollView [count]", "UI scroll view", "mk ScrollView"),
+        new("mk EventSystem", "Standalone event system", "mk EventSystem"),
+        new("mk Cube [count]", "3D primitive cube", "mk Cube"),
+        new("mk Sphere [count]", "3D primitive sphere", "mk Sphere"),
+        new("mk Capsule [count]", "3D primitive capsule", "mk Capsule"),
+        new("mk Cylinder [count]", "3D primitive cylinder", "mk Cylinder"),
+        new("mk Plane [count]", "3D primitive plane", "mk Plane"),
+        new("mk Quad [count]", "3D primitive quad", "mk Quad"),
+        new("mk DirLight [count]", "Directional light", "mk DirLight"),
+        new("mk DirectionalLight [count]", "Directional light", "mk DirectionalLight"),
+        new("mk PointLight [count]", "Point light", "mk PointLight"),
+        new("mk SpotLight [count]", "Spot light", "mk SpotLight"),
+        new("mk AreaLight [count]", "Area-light workflow helper", "mk AreaLight"),
+        new("mk ReflectionProbe [count]", "Reflection probe", "mk ReflectionProbe"),
+        new("mk Sprite [count]", "2D sprite renderer object", "mk Sprite"),
+        new("mk SpriteMask [count]", "2D sprite mask", "mk SpriteMask"),
+        new("mk Camera [count]", "Camera with audio listener", "mk Camera"),
+        new("mk AudioSource [count]", "Audio source object", "mk AudioSource"),
+        new("mk Empty [count]", "Empty object", "mk Empty"),
+        new("mk EmptyParent", "Wrap current object in a new empty parent", "mk EmptyParent"),
+        new("mk EmptyChild [count]", "Create empty child under current object", "mk EmptyChild")
+    ];
+
+    private static readonly Dictionary<string, HierarchyMkType> MkTypeLookup = BuildMkTypeLookup();
 
     private readonly HierarchyDaemonClient _daemonClient = new();
     private int _treeScrollOffset;
@@ -189,7 +227,7 @@ internal sealed class HierarchyTui
         {
             "enter" => "cd",
             ".." => "up",
-            "make" => "mk",
+            "remove" => "rm",
             "t" => "toggle",
             "ff" => "f",
             _ => tokens[0]
@@ -223,14 +261,72 @@ internal sealed class HierarchyTui
             return true;
         }
 
-        if (tokens.Count >= 2 && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
+        if (tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase))
         {
-            var primitiveKeyword = tokens[1].Equals("cube", StringComparison.OrdinalIgnoreCase);
-            var name = primitiveKeyword && tokens.Count >= 3 ? tokens[2] : tokens[1];
-            var primitive = primitiveKeyword || tokens.Skip(2).Any(t => t.Equals("-p", StringComparison.OrdinalIgnoreCase));
+            if (!TryParseMakeArguments(tokens, out var makeType, out var makeCount, out var makeError))
+            {
+                commandLog.Add($"[!] {makeError}");
+                return true;
+            }
+
+            if (!TryNormalizeMkType(makeType, out var normalizedMakeType, out makeError))
+            {
+                commandLog.Add($"[!] {makeError}");
+                return true;
+            }
+
+            var targetId = normalizedMakeType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? cwdId : (int?)null;
+            if (normalizedMakeType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) && cwdId == snapshot.Root.Id)
+            {
+                commandLog.Add("[!] EmptyParent requires a non-root current object");
+                return true;
+            }
+
+            var parentId = normalizedMakeType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase)
+                ? (FindParentId(snapshot.Root, cwdId) ?? snapshot.Root.Id)
+                : cwdId;
+
             var response = await _daemonClient.ExecuteAsync(
                 port,
-                new HierarchyCommandRequestDto("mk", cwdId, null, name, primitive));
+                new HierarchyCommandRequestDto("mk", parentId, targetId, null, false, normalizedMakeType, makeCount));
+            if (!response.Ok)
+            {
+                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
+                return true;
+            }
+
+            commandLog.Add($"[+] created: {normalizedMakeType} x{makeCount}");
+            return true;
+        }
+
+        if (tokens.Count >= 2 && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!TryParseMkArguments(tokens, out var mkType, out var mkCount, out var mkName, out var mkError))
+            {
+                commandLog.Add($"[!] {mkError}");
+                return true;
+            }
+
+            if (!TryNormalizeMkType(mkType, out var normalizedMkType, out mkError))
+            {
+                commandLog.Add($"[!] {mkError}");
+                return true;
+            }
+
+            var targetId = normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? cwdId : (int?)null;
+            if (normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) && cwdId == snapshot.Root.Id)
+            {
+                commandLog.Add("[!] EmptyParent requires a non-root current object");
+                return true;
+            }
+
+            var parentId = normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase)
+                ? (FindParentId(snapshot.Root, cwdId) ?? snapshot.Root.Id)
+                : cwdId;
+
+            var response = await _daemonClient.ExecuteAsync(
+                port,
+                new HierarchyCommandRequestDto("mk", parentId, targetId, mkName, false, normalizedMkType, mkCount));
 
             if (!response.Ok)
             {
@@ -238,8 +334,7 @@ internal sealed class HierarchyTui
                 return true;
             }
 
-            var parentName = FindNode(snapshot.Root, cwdId)?.Name ?? "?";
-            commandLog.Add($"[+] created: {name} [{(response.NodeId?.ToString() ?? "?")}] -> parent: {parentName}");
+            commandLog.Add($"[+] created: {normalizedMkType} x{mkCount}");
             return true;
         }
 
@@ -263,6 +358,28 @@ internal sealed class HierarchyTui
             var targetName = FindNode(snapshot.Root, targetId)?.Name ?? "Object";
             var activeState = response.IsActive == true ? "active" : "inactive";
             commandLog.Add($"[*] ok: {targetName} set to {activeState}");
+            return true;
+        }
+
+        if (tokens.Count == 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out var rmIndex))
+        {
+            if (!indexMap.TryGetValue(rmIndex, out var targetId))
+            {
+                commandLog.Add($"[!] invalid index: {rmIndex}");
+                return true;
+            }
+
+            var targetName = FindNode(snapshot.Root, targetId)?.Name ?? "Object";
+            var response = await _daemonClient.ExecuteAsync(
+                port,
+                new HierarchyCommandRequestDto("rm", null, targetId, null, false));
+            if (!response.Ok)
+            {
+                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
+                return true;
+            }
+
+            commandLog.Add($"[-] removed: {targetName} [{targetId}]");
             return true;
         }
 
@@ -962,6 +1079,7 @@ internal sealed class HierarchyTui
     {
         var normalized = query.Trim().ToLowerInvariant();
         IEnumerable<CommandSpec> source = HierarchyCommands
+            .Concat(MkTypeCommands)
             .Where(command => !command.Description.StartsWith("Alias for", StringComparison.OrdinalIgnoreCase));
 
         if (!string.IsNullOrWhiteSpace(normalized))
@@ -979,8 +1097,244 @@ internal sealed class HierarchyTui
     private static List<(string Label, string CommitCommand)> GetHierarchyIntellisenseCandidates(string query)
     {
         return GetHierarchySuggestionMatches(query)
-            .Select(match => (match.Signature, match.Trigger))
+            .Select(match => (match.Signature, string.IsNullOrWhiteSpace(match.Trigger) ? match.Signature : match.Trigger))
             .ToList();
+    }
+
+    private static bool TryParseMakeArguments(
+        IReadOnlyList<string> tokens,
+        out string type,
+        out int count,
+        out string error)
+    {
+        type = string.Empty;
+        count = 1;
+        error = "usage: make --type <type> [--count <count>]";
+        if (tokens.Count < 3)
+        {
+            return false;
+        }
+
+        for (var i = 1; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.Equals("--type", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count)
+                {
+                    error = "usage: make --type <type> [--count <count>]";
+                    return false;
+                }
+
+                type = tokens[++i];
+                continue;
+            }
+
+            if (token.StartsWith("--type=", StringComparison.OrdinalIgnoreCase))
+            {
+                type = token["--type=".Length..];
+                continue;
+            }
+
+            if (token.Equals("--count", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count || !int.TryParse(tokens[++i], out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+            {
+                var raw = token["--count=".Length..];
+                if (!int.TryParse(raw, out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                continue;
+            }
+
+            error = $"unsupported option: {token}";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(type))
+        {
+            error = "missing --type <type>";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseMkArguments(
+        IReadOnlyList<string> tokens,
+        out string type,
+        out int count,
+        out string? name,
+        out string error)
+    {
+        type = string.Empty;
+        count = 1;
+        name = null;
+        error = "usage: mk <type> [count] [--name <name>|-n <name>]";
+        if (tokens.Count < 2)
+        {
+            return false;
+        }
+
+        type = tokens[1];
+        var countSpecified = false;
+        for (var i = 2; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+            {
+                var raw = token["--count=".Length..];
+                if (!int.TryParse(raw, out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                countSpecified = true;
+                continue;
+            }
+
+            if (token.Equals("--count", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count || !int.TryParse(tokens[++i], out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                countSpecified = true;
+                continue;
+            }
+
+            if (token.StartsWith("--name=", StringComparison.OrdinalIgnoreCase))
+            {
+                name = token["--name=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.StartsWith("-n=", StringComparison.OrdinalIgnoreCase))
+            {
+                name = token["-n=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.Equals("--name", StringComparison.OrdinalIgnoreCase) || token.Equals("-n", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count)
+                {
+                    error = "usage: mk <type> [count] [--name <name>|-n <name>]";
+                    return false;
+                }
+
+                name = tokens[++i].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!countSpecified && int.TryParse(token, out var parsedCount) && parsedCount > 0)
+            {
+                count = parsedCount;
+                countSpecified = true;
+                continue;
+            }
+
+            error = $"unsupported mk argument: {token}";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static Dictionary<string, HierarchyMkType> BuildMkTypeLookup()
+    {
+        var lookup = new Dictionary<string, HierarchyMkType>(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in Enum.GetValues<HierarchyMkType>())
+        {
+            if (value == HierarchyMkType.Unspecified)
+            {
+                continue;
+            }
+
+            var key = NormalizeMkTypeKey(value.ToString());
+            if (!lookup.ContainsKey(key))
+            {
+                lookup[key] = value;
+            }
+        }
+
+        lookup[NormalizeMkTypeKey("ScrollView")] = HierarchyMkType.ScrollView;
+        lookup[NormalizeMkTypeKey("EventSystem")] = HierarchyMkType.EventSystem;
+        lookup[NormalizeMkTypeKey("DirLight")] = HierarchyMkType.DirLight;
+        lookup[NormalizeMkTypeKey("DirectionalLight")] = HierarchyMkType.DirectionalLight;
+        lookup[NormalizeMkTypeKey("PointLight")] = HierarchyMkType.PointLight;
+        lookup[NormalizeMkTypeKey("SpotLight")] = HierarchyMkType.SpotLight;
+        lookup[NormalizeMkTypeKey("AreaLight")] = HierarchyMkType.AreaLight;
+        lookup[NormalizeMkTypeKey("ReflectionProbe")] = HierarchyMkType.ReflectionProbe;
+        lookup[NormalizeMkTypeKey("SpriteMask")] = HierarchyMkType.SpriteMask;
+        lookup[NormalizeMkTypeKey("AudioSource")] = HierarchyMkType.AudioSource;
+        lookup[NormalizeMkTypeKey("EmptyParent")] = HierarchyMkType.EmptyParent;
+        lookup[NormalizeMkTypeKey("EmptyChild")] = HierarchyMkType.EmptyChild;
+        lookup[NormalizeMkTypeKey("TMP")] = HierarchyMkType.Tmp;
+        return lookup;
+    }
+
+    private static bool TryNormalizeMkType(string raw, out string canonical, out string error)
+    {
+        canonical = string.Empty;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            error = "mk type is required";
+            return false;
+        }
+
+        var key = NormalizeMkTypeKey(raw);
+        if (!MkTypeLookup.TryGetValue(key, out var mkType))
+        {
+            var known = string.Join(", ", MkTypeLookup.Values.Distinct().OrderBy(v => v.ToString()).Select(v => v.ToString()));
+            error = $"unsupported mk type: {raw}. supported types: {known}";
+            return false;
+        }
+
+        canonical = mkType.ToString();
+        return true;
+    }
+
+    private static string NormalizeMkTypeKey(string raw)
+    {
+        return raw.Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .ToLowerInvariant();
     }
 
     private static string FormatHierarchyCommandFailure(string? message, string fallback = "hierarchy command failed")

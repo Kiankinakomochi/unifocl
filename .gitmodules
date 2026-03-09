@@ -1,0 +1,3 @@
+[submodule "external/unifocl-protobuf"]
+	path = external/unifocl-protobuf
+	url = https://github.com/Kiankinakomochi/unifocl-protobuf.git

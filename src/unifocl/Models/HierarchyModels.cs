@@ -16,7 +16,9 @@ internal sealed record HierarchyCommandRequestDto(
     int? ParentId,
     int? TargetId,
     string? Name,
-    bool Primitive);
+    bool Primitive,
+    string? Type = null,
+    int? Count = null);
 
 internal sealed record HierarchyCommandResponseDto(
     bool Ok,
