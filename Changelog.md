@@ -14,27 +14,12 @@
 ## 0.3.1 - 2026-03-08
 
 ### Added
-- Added UPM install command support:
-  - `/upm install <target>`
-  - aliases: `/upm add <target>`, `/upm i <target>`
-  - project-mode equivalents: `upm install`, `upm add`, `upm i`
-- Added UPM remove command support:
-  - `/upm remove <id>`
-  - aliases: `/upm rm <id>`, `/upm uninstall <id>`
-  - project-mode equivalents: `upm remove`, `upm rm`, `upm uninstall`
-- Added UPM update command support:
-  - `/upm update [id]`
-  - alias: `/upm u [id]`
-  - project-mode equivalents: `upm update [id]`, `upm u [id]`
-  - `id` omitted updates all outdated packages safely (sequential execution with per-package error isolation)
-- Added install target validation for:
-  - registry IDs (e.g., `com.unity.addressables`)
-  - Git URLs (e.g., `https://github.com/user/repo.git?path=/subfolder#v1.0.0`)
-  - local package paths (e.g., `file:../local-pkg`)
+- Hierarchy mode now provides in-prompt IntelliSense with command signatures, argument usage, and descriptions.
+- Hierarchy mode prompt now supports suggestion navigation and insertion (`↑/↓` + `Enter`) plus `Esc` dismissal behavior.
 
 ### Changed
-- Extended project command timeout handling for long-running `upm-install` operations.
-- Updated UPM command intellisense suggestions to include install flows and target examples.
+- Project composer IntelliSense now uses inspector-specific command suggestions while in inspector context.
+- Inspector command suggestions now include context-specific command usage and explanations rather than only project-wide command listings.
 
 ## 0.3.0 - 2026-03-06
 
