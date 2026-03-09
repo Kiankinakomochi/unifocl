@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3 - 2026-03-09
+
+### Changed
+- Officialized `0.5.3` by closing the development cycle suffix.
+- Fixed project-context empty-input routing so redraw requests execute `ProjectViewService` rendering instead of returning early from the router.
+- Fixed project-mode rendering transition after hierarchy exit by forcing a project frame refresh when returning from `/hierarchy` without entering inspector mode.
+- Applied the same redraw guard to hierarchy auto-enter return paths triggered by scene load transitions.
+
 ## 0.5.2 - 2026-03-09
 
 ### Changed

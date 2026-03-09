@@ -286,6 +286,16 @@ while (true)
                 if (session.Mode == CliMode.Project)
                 {
                     session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
+                    if (session.ContextMode == CliContextMode.Project
+                        && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+                    {
+                        await projectCommandRouterService.TryHandleProjectCommandAsync(
+                            string.Empty,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            line => AppendLog(streamLog, line));
+                    }
                 }
             }
 
@@ -350,6 +360,16 @@ while (true)
             if (session.Mode == CliMode.Project)
             {
                 session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
+                if (session.ContextMode == CliContextMode.Project
+                    && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+                {
+                    await projectCommandRouterService.TryHandleProjectCommandAsync(
+                        string.Empty,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => AppendLog(streamLog, line));
+                }
             }
             continue;
         }
