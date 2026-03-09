@@ -125,6 +125,7 @@ namespace UniFocl.EditorBridge
         public string value = string.Empty;
         public string type = string.Empty;
         public bool isBoolean;
+        public string[] enumOptions = Array.Empty<string>();
     }
 
     [Serializable]

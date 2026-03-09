@@ -190,7 +190,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk did not create any objects" });
             }
 
-            EditorSceneManager.MarkSceneDirty(lastCreated.scene);
+            PersistSceneChanges(lastCreated.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -548,7 +548,7 @@ namespace UniFocl.EditorBridge
 
             Undo.RecordObject(target, "unifocl toggle hierarchy active");
             target.SetActive(!target.activeSelf);
-            EditorSceneManager.MarkSceneDirty(target.scene);
+            PersistSceneChanges(target.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -577,7 +577,7 @@ namespace UniFocl.EditorBridge
             Undo.DestroyObjectImmediate(target);
             if (scene.IsValid())
             {
-                EditorSceneManager.MarkSceneDirty(scene);
+                PersistSceneChanges(scene);
             }
 
             _snapshotVersion++;
@@ -611,7 +611,7 @@ namespace UniFocl.EditorBridge
 
             Undo.RecordObject(target, "unifocl rename hierarchy object");
             target.name = request.name.Trim();
-            EditorSceneManager.MarkSceneDirty(target.scene);
+            PersistSceneChanges(target.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -651,8 +651,9 @@ namespace UniFocl.EditorBridge
                 }
 
                 Undo.SetTransformParent(target.transform, null, "unifocl move hierarchy object");
+                var previousScene = target.scene;
                 SceneManager.MoveGameObjectToScene(target, activeScene);
-                EditorSceneManager.MarkSceneDirty(activeScene);
+                PersistSceneChanges(previousScene, activeScene);
                 _snapshotVersion++;
                 return JsonUtility.ToJson(new HierarchyCommandResponse
                 {
@@ -680,9 +681,10 @@ namespace UniFocl.EditorBridge
                 cursor = cursor.parent;
             }
 
+            var previousParentScene = target.scene;
             Undo.SetTransformParent(target.transform, parentObject.transform, "unifocl move hierarchy object");
             SceneManager.MoveGameObjectToScene(target, parentObject.scene);
-            EditorSceneManager.MarkSceneDirty(parentObject.scene);
+            PersistSceneChanges(previousParentScene, parentObject.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -692,6 +694,24 @@ namespace UniFocl.EditorBridge
                 nodeId = target.GetInstanceID(),
                 isActive = target.activeSelf
             });
+        }
+
+        private static void PersistSceneChanges(params Scene[] scenes)
+        {
+            var seen = new HashSet<int>();
+            foreach (var scene in scenes)
+            {
+                if (!scene.IsValid() || !seen.Add(scene.handle))
+                {
+                    continue;
+                }
+
+                EditorSceneManager.MarkSceneDirty(scene);
+                if (!EditorSceneManager.SaveScene(scene))
+                {
+                    Debug.LogWarning($"[unifocl] Failed to save scene '{scene.name}' (path: '{scene.path}') after hierarchy mutation.");
+                }
+            }
         }
 
         private static HierarchySnapshotResponse BuildSnapshot()

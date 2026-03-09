@@ -28,6 +28,8 @@ internal sealed class HierarchyTui
         new("rm <idx>", "Alias for remove", "rm"),
         new("toggle <idx>", "Toggle active state by index", "toggle"),
         new("t <idx>", "Alias for toggle", "t"),
+        new("inspect <idx|name>", "Transition selected hierarchy object to inspector mode", "inspect"),
+        new("ins <idx|name>", "Alias for inspect", "ins"),
         new("f <query>", "Fuzzy search hierarchy paths", "f"),
         new("ff <query>", "Alias for fuzzy search", "ff"),
         new("scroll [tree|log] <up|down> [count]", "Scroll tree or command stream", "scroll"),
@@ -71,6 +73,7 @@ internal sealed class HierarchyTui
     private static readonly Dictionary<string, HierarchyMkType> MkTypeLookup = BuildMkTypeLookup();
 
     private readonly HierarchyDaemonClient _daemonClient = new();
+    private readonly HashSet<int> _collapsedNodeIds = [];
     private int _treeScrollOffset;
     private int _commandScrollOffset = int.MaxValue;
     private bool _followCommandScroll = true;
@@ -82,7 +85,8 @@ internal sealed class HierarchyTui
         CliSessionState session,
         DaemonControlService daemonControlService,
         DaemonRuntime daemonRuntime,
-        Action<string> log)
+        Action<string> log,
+        Func<string, Task<bool>>? transitionToInspectorAsync = null)
     {
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
@@ -115,10 +119,11 @@ internal sealed class HierarchyTui
         _treeScrollOffset = 0;
         _commandScrollOffset = int.MaxValue;
         _followCommandScroll = true;
+        _collapsedNodeIds.Clear();
 
         while (true)
         {
-            var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath, out _, null);
+            var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath, out _, _collapsedNodeIds);
             RenderFrame(port, snapshot.Scene, treeLines.Select(line => line.Text).ToList(), commandLog, cwdPath);
 
             var firstKey = Console.ReadKey(intercept: true);
@@ -126,8 +131,8 @@ internal sealed class HierarchyTui
             if (firstIntent == KeyboardIntent.FocusProject
                 || firstKey.Key == FocusModeKey)
             {
-                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, tab expand, shift+tab collapse, esc/F7 exit)");
-                await RunKeyboardFocusModeAsync(port, snapshot, cwdId, commandLog, updatedSnapshot =>
+                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, tab expand, enter inspect, shift+tab collapse, esc/F7 exit)");
+                var focusInspectTarget = await RunKeyboardFocusModeAsync(port, snapshot, cwdId, commandLog, updatedSnapshot =>
                 {
                     snapshot = updatedSnapshot;
                     if (!ContainsNode(snapshot.Root, cwdId))
@@ -136,6 +141,16 @@ internal sealed class HierarchyTui
                     }
                 });
                 TrimCommandLog(commandLog);
+
+                if (!string.IsNullOrWhiteSpace(focusInspectTarget)
+                    && transitionToInspectorAsync is not null
+                    && await transitionToInspectorAsync(focusInspectTarget))
+                {
+                    Console.Clear();
+                    log($"[grey]hierarchy[/]: transitioned to inspector -> [white]{Markup.Escape(focusInspectTarget)}[/]");
+                    return;
+                }
+
                 continue;
             }
 
@@ -152,6 +167,26 @@ internal sealed class HierarchyTui
                 || input.Equals(":q", StringComparison.OrdinalIgnoreCase))
             {
                 break;
+            }
+
+            var (inspectCommandHandled, inspectTransitioned) = await TryHandleInspectTransitionCommandAsync(
+                input,
+                indexMap,
+                cwdId,
+                snapshot,
+                commandLog,
+                transitionToInspectorAsync);
+            if (inspectCommandHandled)
+            {
+                TrimCommandLog(commandLog);
+                if (inspectTransitioned)
+                {
+                    Console.Clear();
+                    log("[grey]hierarchy[/]: transitioned to inspector mode");
+                    return;
+                }
+
+                continue;
             }
 
             if (input.Equals("ref", StringComparison.OrdinalIgnoreCase)
@@ -199,6 +234,8 @@ internal sealed class HierarchyTui
                 {
                     cwdId = snapshot.Root.Id;
                 }
+
+                PruneCollapsedNodeSet(snapshot.Root, _collapsedNodeIds);
             }
 
             TrimCommandLog(commandLog);
@@ -229,6 +266,7 @@ internal sealed class HierarchyTui
             ".." => "up",
             "remove" => "rm",
             "t" => "toggle",
+            "ins" => "inspect",
             "ff" => "f",
             _ => tokens[0]
         };
@@ -413,6 +451,49 @@ internal sealed class HierarchyTui
         return false;
     }
 
+    private async Task<(bool Handled, bool Transitioned)> TryHandleInspectTransitionCommandAsync(
+        string input,
+        IReadOnlyDictionary<int, int> indexMap,
+        int cwdId,
+        HierarchySnapshotDto snapshot,
+        List<string> commandLog,
+        Func<string, Task<bool>>? transitionToInspectorAsync)
+    {
+        var tokens = Tokenize(input);
+        if (tokens.Count == 0)
+        {
+            return (false, false);
+        }
+
+        var command = tokens[0].ToLowerInvariant();
+        if (command is not ("inspect" or "ins"))
+        {
+            return (false, false);
+        }
+
+        if (transitionToInspectorAsync is null)
+        {
+            commandLog.Add("[!] inspect transition is unavailable in this context");
+            return (true, false);
+        }
+
+        if (!TryResolveInspectTargetPath(tokens, indexMap, cwdId, snapshot, out var targetPath, out var error))
+        {
+            commandLog.Add($"[!] {error}");
+            return (true, false);
+        }
+
+        var transitioned = await transitionToInspectorAsync(targetPath);
+        if (transitioned)
+        {
+            commandLog.Add($"[*] switched to inspector: {targetPath}");
+            return (true, true);
+        }
+
+        commandLog.Add("[!] failed to switch to inspector");
+        return (true, false);
+    }
+
     private bool TryHandleScrollCommand(IReadOnlyList<string> tokens, List<string> commandLog)
     {
         if (tokens.Count < 2 || !tokens[0].Equals("scroll", StringComparison.OrdinalIgnoreCase))
@@ -475,14 +556,14 @@ internal sealed class HierarchyTui
         return true;
     }
 
-    private async Task RunKeyboardFocusModeAsync(
+    private async Task<string?> RunKeyboardFocusModeAsync(
         int port,
         HierarchySnapshotDto snapshot,
         int cwdId,
         List<string> commandLog,
         Action<HierarchySnapshotDto> setSnapshot)
     {
-        var collapsedNodeIds = BuildDefaultCollapsedNodeSet(snapshot.Root, cwdId);
+        var collapsedNodeIds = _collapsedNodeIds;
         var selectedEntryPosition = 0;
         int? highlightedNodeId = null;
         int? pendingExpandedNodeId = null;
@@ -500,7 +581,7 @@ internal sealed class HierarchyTui
             if (visibleEntries.Count == 0)
             {
                 commandLog.Add("[i] hierarchy has no children to focus");
-                return;
+                return null;
             }
 
             if (pendingExpandedNodeId is int expandedNodeId)
@@ -569,6 +650,11 @@ internal sealed class HierarchyTui
 
                     commandLog.Add($"[i] already expanded [{selectedEntry.EntryIndex}]");
                     break;
+                case KeyboardIntent.Enter:
+                    selectedEntry = visibleEntries[selectedEntryPosition];
+                    var inspectTargetPath = BuildPath(snapshot.Root, selectedEntry.NodeId);
+                    return inspectTargetPath;
+
                 case KeyboardIntent.ShiftTab:
                     selectedEntry = visibleEntries[selectedEntryPosition];
                     if (!selectedEntry.HasChildren)
@@ -588,7 +674,7 @@ internal sealed class HierarchyTui
                 case KeyboardIntent.Escape:
                 case KeyboardIntent.FocusProject:
                     commandLog.Add("[i] hierarchy focus mode disabled");
-                    return;
+                    return null;
                 default:
                     break;
             }
@@ -636,7 +722,7 @@ internal sealed class HierarchyTui
             : [];
 
         var focusLabel = focusModeEnabled
-            ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
+            ? " | FOCUS: ON (up/down, tab expand, enter inspect, shift+tab collapse, esc)"
             : $" | Focus Key: {FocusModeKey}";
 
         WriteFrameLine(borderTop);
@@ -744,32 +830,6 @@ internal sealed class HierarchyTui
         return expandedNodeId;
     }
 
-    private static HashSet<int> BuildDefaultCollapsedNodeSet(HierarchyNodeDto root, int cwdId)
-    {
-        var collapsed = new HashSet<int>();
-        var cwdNode = FindNode(root, cwdId);
-        if (cwdNode is null)
-        {
-            return collapsed;
-        }
-
-        AddCollapsedDescendantNodes(cwdNode, collapsed);
-        return collapsed;
-    }
-
-    private static void AddCollapsedDescendantNodes(HierarchyNodeDto node, HashSet<int> collapsed)
-    {
-        foreach (var child in node.Children)
-        {
-            if (child.Children.Count > 0)
-            {
-                collapsed.Add(child.Id);
-            }
-
-            AddCollapsedDescendantNodes(child, collapsed);
-        }
-    }
-
     private static void PruneCollapsedNodeSet(HierarchyNodeDto root, HashSet<int> collapsedNodeIds)
     {
         if (collapsedNodeIds.Count == 0)
@@ -859,6 +919,80 @@ internal sealed class HierarchyTui
     }
 
     private static bool ContainsNode(HierarchyNodeDto node, int id) => FindNode(node, id) is not null;
+
+    private static bool TryResolveInspectTargetPath(
+        IReadOnlyList<string> tokens,
+        IReadOnlyDictionary<int, int> indexMap,
+        int cwdId,
+        HierarchySnapshotDto snapshot,
+        out string targetPath,
+        out string error)
+    {
+        targetPath = string.Empty;
+        error = string.Empty;
+
+        if (tokens.Count < 2)
+        {
+            error = "usage: inspect <idx|name>";
+            return false;
+        }
+
+        var argument = string.Join(' ', tokens.Skip(1)).Trim();
+        if (string.IsNullOrWhiteSpace(argument))
+        {
+            error = "usage: inspect <idx|name>";
+            return false;
+        }
+
+        if (int.TryParse(argument, out var index))
+        {
+            if (!indexMap.TryGetValue(index, out var nodeId))
+            {
+                error = $"invalid index: {index}";
+                return false;
+            }
+
+            targetPath = BuildPath(snapshot.Root, nodeId);
+            return true;
+        }
+
+        var cwdPath = BuildPath(snapshot.Root, cwdId);
+        var byName = indexMap
+            .Values
+            .Distinct()
+            .Select(nodeId => FindNode(snapshot.Root, nodeId))
+            .OfType<HierarchyNodeDto>()
+            .Where(node => node.Name.Equals(argument, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (byName.Count == 1)
+        {
+            targetPath = BuildPath(snapshot.Root, byName[0].Id);
+            return true;
+        }
+
+        if (byName.Count > 1)
+        {
+            error = $"ambiguous name: {argument} (use inspect <idx>)";
+            return false;
+        }
+
+        var normalizedAbsolute = argument.StartsWith("/", StringComparison.Ordinal)
+            ? argument
+            : $"{cwdPath.TrimEnd('/')}/{argument.TrimStart('/')}";
+        var byPath = indexMap
+            .Values
+            .Distinct()
+            .Select(nodeId => BuildPath(snapshot.Root, nodeId))
+            .FirstOrDefault(path => path.Equals(normalizedAbsolute, StringComparison.OrdinalIgnoreCase));
+        if (byPath is not null)
+        {
+            targetPath = byPath;
+            return true;
+        }
+
+        error = $"unable to resolve hierarchy target: {argument}";
+        return false;
+    }
 
     private static int? FindParentId(HierarchyNodeDto root, int id)
     {
