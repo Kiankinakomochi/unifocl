@@ -5,7 +5,10 @@ using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+using UnityText = UnityEngine.UI.Text;
 
 namespace UniFocl.EditorBridge
 {
@@ -16,6 +19,14 @@ namespace UniFocl.EditorBridge
         private static int _snapshotVersion = 1;
         private static int _lastSnapshotHash;
         private static bool _hasSnapshotHash;
+
+        private sealed class UiTextMirror
+        {
+            public string Name { get; set; } = "Text";
+            public string Text { get; set; } = "New Text";
+            public Color Color { get; set; } = Color.black;
+            public TextAnchor Alignment { get; set; } = TextAnchor.MiddleCenter;
+        }
 
         public static string BuildSnapshotPayload()
         {
@@ -53,6 +64,21 @@ namespace UniFocl.EditorBridge
                 if (request.action.Equals("toggle", StringComparison.OrdinalIgnoreCase))
                 {
                     return ExecuteToggle(request);
+                }
+
+                if (request.action.Equals("rm", StringComparison.OrdinalIgnoreCase))
+                {
+                    return ExecuteRemove(request);
+                }
+
+                if (request.action.Equals("rename", StringComparison.OrdinalIgnoreCase))
+                {
+                    return ExecuteRename(request);
+                }
+
+                if (request.action.Equals("mv", StringComparison.OrdinalIgnoreCase))
+                {
+                    return ExecuteMove(request);
                 }
 
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"unsupported action: {request.action}" });
@@ -114,50 +140,397 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteCreate(HierarchyCommandRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request.name))
-            {
-                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk requires a name" });
-            }
-
             var activeScene = SceneManager.GetActiveScene();
             if (!activeScene.IsValid())
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "active scene is not valid" });
             }
 
-            var parentId = request.parentId != 0 ? request.parentId : SceneRootNodeId;
-            var created = request.primitive
-                ? GameObject.CreatePrimitive(PrimitiveType.Cube)
-                : new GameObject();
-            created.name = request.name.Trim();
-
-            if (parentId == SceneRootNodeId)
+            var normalizedType = NormalizeMkType(request);
+            if (string.IsNullOrWhiteSpace(normalizedType))
             {
-                SceneManager.MoveGameObjectToScene(created, activeScene);
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk requires a type (e.g. mk Canvas)" });
             }
-            else
+
+            var count = Mathf.Clamp(request.count <= 0 ? 1 : request.count, 1, 100);
+            if (normalizedType.Equals("LegacyNamedEmpty", StringComparison.OrdinalIgnoreCase))
+            {
+                count = 1;
+            }
+
+            var parentId = request.parentId != 0 ? request.parentId : SceneRootNodeId;
+            Transform? parentTransform = null;
+            Scene parentScene = activeScene;
+            if (parentId != SceneRootNodeId)
             {
                 var parentObject = EditorUtility.InstanceIDToObject(parentId) as GameObject;
                 if (parentObject is null)
                 {
-                    UnityEngine.Object.DestroyImmediate(created);
                     return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {parentId}" });
                 }
 
-                created.transform.SetParent(parentObject.transform, false);
-                SceneManager.MoveGameObjectToScene(created, parentObject.scene);
+                parentTransform = parentObject.transform;
+                parentScene = parentObject.scene;
             }
 
-            EditorSceneManager.MarkSceneDirty(created.scene);
+            GameObject? lastCreated = null;
+            for (var i = 0; i < count; i++)
+            {
+                var created = CreateTypedObject(normalizedType, request, parentTransform, parentScene, activeScene, i, out var error);
+                if (created is null)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = error ?? $"mk failed for type: {normalizedType}" });
+                }
+
+                lastCreated = created;
+            }
+
+            if (lastCreated is null)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk did not create any objects" });
+            }
+
+            EditorSceneManager.MarkSceneDirty(lastCreated.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
             {
                 ok = true,
-                message = "created",
-                nodeId = created.GetInstanceID(),
-                isActive = created.activeSelf
+                message = count <= 1 ? $"created {normalizedType}" : $"created {normalizedType} x{count}",
+                nodeId = lastCreated.GetInstanceID(),
+                isActive = lastCreated.activeSelf
             });
+        }
+
+        private static string NormalizeMkType(HierarchyCommandRequest request)
+        {
+            if (request.primitive)
+            {
+                return "Cube";
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.type))
+            {
+                return request.type.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.name))
+            {
+                return "LegacyNamedEmpty";
+            }
+
+            return string.Empty;
+        }
+
+        private static GameObject? CreateTypedObject(
+            string rawType,
+            HierarchyCommandRequest request,
+            Transform? parentTransform,
+            Scene parentScene,
+            Scene activeScene,
+            int iteration,
+            out string? error)
+        {
+            error = null;
+            var explicitName = string.IsNullOrWhiteSpace(request.name) ? null : request.name.Trim();
+            var normalized = rawType.Replace("-", string.Empty, StringComparison.Ordinal)
+                .Replace("_", string.Empty, StringComparison.Ordinal)
+                .Replace(" ", string.Empty, StringComparison.Ordinal)
+                .ToLowerInvariant();
+
+            var uiResources = new DefaultControls.Resources();
+            switch (normalized)
+            {
+                case "legacynamedempty":
+                    return CreateAndParent(new GameObject(request.name.Trim()), parentTransform, parentScene, activeScene, explicitName);
+                case "canvas":
+                    return CreateCanvas(parentTransform, parentScene, activeScene, explicitName);
+                case "panel":
+                    return CreateUiControl(DefaultControls.CreatePanel(uiResources), "Panel", parentTransform, parentScene, activeScene, explicitName);
+                case "text":
+                case "tmp":
+                    return CreateUiControl(
+                        CreateTextFromMirror(new UiTextMirror
+                        {
+                            Name = explicitName ?? (normalized == "tmp" ? "Text (TMP)" : "Text"),
+                            Text = "New Text",
+                            Color = Color.black,
+                            Alignment = TextAnchor.MiddleCenter
+                        }),
+                        "Text",
+                        parentTransform,
+                        parentScene,
+                        activeScene,
+                        explicitName);
+                case "image":
+                    return CreateUiControl(DefaultControls.CreateImage(uiResources), "Image", parentTransform, parentScene, activeScene, explicitName);
+                case "button":
+                    return CreateUiControl(CreateButtonFromMirror(uiResources), "Button", parentTransform, parentScene, activeScene, explicitName);
+                case "toggle":
+                    return CreateUiControl(CreateToggleFromMirror(uiResources), "Toggle", parentTransform, parentScene, activeScene, explicitName);
+                case "slider":
+                    return CreateUiControl(DefaultControls.CreateSlider(uiResources), "Slider", parentTransform, parentScene, activeScene, explicitName);
+                case "scrollbar":
+                    return CreateUiControl(DefaultControls.CreateScrollbar(uiResources), "Scrollbar", parentTransform, parentScene, activeScene, explicitName);
+                case "scrollview":
+                    return CreateUiControl(DefaultControls.CreateScrollView(uiResources), "Scroll View", parentTransform, parentScene, activeScene, explicitName);
+                case "eventsystem":
+                    return CreateEventSystem(parentTransform, parentScene, activeScene, explicitName);
+                case "cube":
+                    return CreateAndParent(GameObject.CreatePrimitive(PrimitiveType.Cube), parentTransform, parentScene, activeScene, explicitName);
+                case "sphere":
+                    return CreateAndParent(GameObject.CreatePrimitive(PrimitiveType.Sphere), parentTransform, parentScene, activeScene, explicitName);
+                case "capsule":
+                    return CreateAndParent(GameObject.CreatePrimitive(PrimitiveType.Capsule), parentTransform, parentScene, activeScene, explicitName);
+                case "cylinder":
+                    return CreateAndParent(GameObject.CreatePrimitive(PrimitiveType.Cylinder), parentTransform, parentScene, activeScene, explicitName);
+                case "plane":
+                    return CreateAndParent(GameObject.CreatePrimitive(PrimitiveType.Plane), parentTransform, parentScene, activeScene, explicitName);
+                case "quad":
+                    return CreateAndParent(GameObject.CreatePrimitive(PrimitiveType.Quad), parentTransform, parentScene, activeScene, explicitName);
+                case "dirlight":
+                case "directionallight":
+                    return CreateLight(explicitName ?? "Directional Light", LightType.Directional, parentTransform, parentScene, activeScene, explicitName);
+                case "pointlight":
+                    return CreateLight(explicitName ?? "Point Light", LightType.Point, parentTransform, parentScene, activeScene, explicitName);
+                case "spotlight":
+                    return CreateLight(explicitName ?? "Spot Light", LightType.Spot, parentTransform, parentScene, activeScene, explicitName);
+                case "arealight":
+                case "reflectionprobe":
+                    return CreateReflectionProbe(parentTransform, parentScene, activeScene, explicitName);
+                case "sprite":
+                    return CreateAndParent(new GameObject("Sprite", typeof(SpriteRenderer)), parentTransform, parentScene, activeScene, explicitName);
+                case "spritemask":
+                    return CreateAndParent(new GameObject("Sprite Mask", typeof(SpriteMask)), parentTransform, parentScene, activeScene, explicitName);
+                case "camera":
+                    return CreateAndParent(new GameObject("Main Camera", typeof(Camera), typeof(AudioListener)), parentTransform, parentScene, activeScene, explicitName);
+                case "audiosource":
+                    return CreateAndParent(new GameObject("Audio Source", typeof(AudioSource)), parentTransform, parentScene, activeScene, explicitName);
+                case "empty":
+                    return CreateAndParent(new GameObject("GameObject"), parentTransform, parentScene, activeScene, explicitName);
+                case "emptychild":
+                {
+                    var childParent = ResolveTargetTransform(request.targetId, parentTransform, out error);
+                    if (childParent is null)
+                    {
+                        return null;
+                    }
+
+                    return CreateAndParent(new GameObject("GameObject"), childParent, childParent.gameObject.scene, activeScene, explicitName);
+                }
+                case "emptyparent":
+                    return CreateEmptyParent(request.targetId, activeScene, explicitName, out error);
+                default:
+                    error = $"unsupported mk type: {rawType}";
+                    return null;
+            }
+        }
+
+        private static Transform? ResolveTargetTransform(int targetId, Transform? fallback, out string? error)
+        {
+            error = null;
+            if (targetId == 0)
+            {
+                return fallback;
+            }
+
+            var targetObject = EditorUtility.InstanceIDToObject(targetId) as GameObject;
+            if (targetObject is null)
+            {
+                error = $"target id not found: {targetId}";
+                return null;
+            }
+
+            return targetObject.transform;
+        }
+
+        private static GameObject CreateAndParent(GameObject created, Transform? parentTransform, Scene parentScene, Scene activeScene, string? explicitName = null)
+        {
+            if (!string.IsNullOrWhiteSpace(explicitName))
+            {
+                created.name = explicitName!;
+            }
+
+            if (parentTransform is not null)
+            {
+                Undo.SetTransformParent(created.transform, parentTransform, "unifocl create hierarchy object");
+                SceneManager.MoveGameObjectToScene(created, parentScene);
+                created.name = GameObjectUtility.GetUniqueNameForSibling(parentTransform, created.name);
+                return created;
+            }
+
+            SceneManager.MoveGameObjectToScene(created, activeScene);
+            return created;
+        }
+
+        private static GameObject CreateCanvas(Transform? parentTransform, Scene parentScene, Scene activeScene, string? explicitName = null)
+        {
+            var canvas = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvasComponent = canvas.GetComponent<Canvas>();
+            if (canvasComponent is not null)
+            {
+                canvasComponent.renderMode = RenderMode.ScreenSpaceOverlay;
+            }
+
+            return CreateAndParent(canvas, parentTransform, parentScene, activeScene, explicitName);
+        }
+
+        private static GameObject CreateUiControl(GameObject created, string fallbackName, Transform? parentTransform, Scene parentScene, Scene activeScene, string? explicitName = null)
+        {
+            var effectiveParent = parentTransform;
+            var effectiveScene = parentScene;
+            if (effectiveParent is null)
+            {
+                var canvas = EnsureSceneCanvas(activeScene);
+                effectiveParent = canvas.transform;
+                effectiveScene = canvas.scene;
+            }
+
+            EnsureEventSystemExists(activeScene);
+            created.name = !string.IsNullOrWhiteSpace(explicitName)
+                ? explicitName!
+                : (string.IsNullOrWhiteSpace(created.name) ? fallbackName : created.name);
+            return CreateAndParent(created, effectiveParent, effectiveScene, activeScene, explicitName);
+        }
+
+        private static GameObject CreateTextFromMirror(UiTextMirror mirror)
+        {
+            var go = new GameObject(mirror.Name, typeof(RectTransform), typeof(UnityText));
+            var uiText = go.GetComponent<UnityText>();
+            if (uiText is not null)
+            {
+                uiText.text = mirror.Text;
+                uiText.color = mirror.Color;
+                uiText.alignment = mirror.Alignment;
+            }
+
+            return go;
+        }
+
+        private static GameObject CreateButtonFromMirror(DefaultControls.Resources resources)
+        {
+            var button = DefaultControls.CreateButton(resources);
+            ApplyTextMirrors(button);
+            return button;
+        }
+
+        private static GameObject CreateToggleFromMirror(DefaultControls.Resources resources)
+        {
+            var toggle = DefaultControls.CreateToggle(resources);
+            ApplyTextMirrors(toggle);
+            return toggle;
+        }
+
+        private static void ApplyTextMirrors(GameObject root)
+        {
+            var legacyTexts = root.GetComponentsInChildren<UnityText>(true);
+            foreach (var legacy in legacyTexts)
+            {
+                var mirror = new UiTextMirror
+                {
+                    Name = legacy.gameObject.name,
+                    Text = string.IsNullOrWhiteSpace(legacy.text) ? "Text" : legacy.text,
+                    Color = legacy.color,
+                    Alignment = legacy.alignment
+                };
+
+                legacy.text = mirror.Text;
+                legacy.color = mirror.Color;
+                legacy.alignment = mirror.Alignment;
+            }
+        }
+
+        private static GameObject CreateLight(string name, LightType type, Transform? parentTransform, Scene parentScene, Scene activeScene, string? explicitName = null)
+        {
+            var go = new GameObject(name, typeof(Light));
+            var light = go.GetComponent<Light>();
+            if (light is not null)
+            {
+                light.type = type;
+            }
+
+            return CreateAndParent(go, parentTransform, parentScene, activeScene, explicitName);
+        }
+
+        private static GameObject CreateReflectionProbe(Transform? parentTransform, Scene parentScene, Scene activeScene, string? explicitName = null)
+        {
+            var probe = new GameObject("Reflection Probe", typeof(ReflectionProbe));
+            return CreateAndParent(probe, parentTransform, parentScene, activeScene, explicitName);
+        }
+
+        private static GameObject CreateEventSystem(Transform? parentTransform, Scene parentScene, Scene activeScene, string? explicitName = null)
+        {
+            var eventSystem = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+            return CreateAndParent(eventSystem, parentTransform, parentScene, activeScene, explicitName);
+        }
+
+        private static GameObject EnsureSceneCanvas(Scene scene)
+        {
+            foreach (var canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+            {
+                if (canvas.gameObject.scene == scene)
+                {
+                    return canvas.gameObject;
+                }
+            }
+
+            var created = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvasComponent = created.GetComponent<Canvas>();
+            if (canvasComponent is not null)
+            {
+                canvasComponent.renderMode = RenderMode.ScreenSpaceOverlay;
+            }
+
+            SceneManager.MoveGameObjectToScene(created, scene);
+            return created;
+        }
+
+        private static void EnsureEventSystemExists(Scene scene)
+        {
+            foreach (var eventSystem in UnityEngine.Object.FindObjectsOfType<EventSystem>())
+            {
+                if (eventSystem.gameObject.scene == scene)
+                {
+                    return;
+                }
+            }
+
+            var created = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+            SceneManager.MoveGameObjectToScene(created, scene);
+        }
+
+        private static GameObject? CreateEmptyParent(int targetId, Scene activeScene, string? explicitName, out string? error)
+        {
+            error = null;
+            if (targetId == 0)
+            {
+                error = "EmptyParent requires target id";
+                return null;
+            }
+
+            var target = EditorUtility.InstanceIDToObject(targetId) as GameObject;
+            if (target is null)
+            {
+                error = $"target id not found: {targetId}";
+                return null;
+            }
+
+            var wrapper = new GameObject(string.IsNullOrWhiteSpace(explicitName) ? "GameObject" : explicitName!);
+            var previousParent = target.transform.parent;
+            if (previousParent is not null)
+            {
+                Undo.SetTransformParent(wrapper.transform, previousParent, "unifocl create empty parent");
+                SceneManager.MoveGameObjectToScene(wrapper, previousParent.gameObject.scene);
+            }
+            else
+            {
+                SceneManager.MoveGameObjectToScene(wrapper, target.scene.IsValid() ? target.scene : activeScene);
+            }
+
+            wrapper.transform.position = target.transform.position;
+            wrapper.transform.rotation = target.transform.rotation;
+            Undo.SetTransformParent(target.transform, wrapper.transform, "unifocl create empty parent");
+            return wrapper;
         }
 
         private static string ExecuteToggle(HierarchyCommandRequest request)
@@ -182,6 +555,140 @@ namespace UniFocl.EditorBridge
             {
                 ok = true,
                 message = "toggled",
+                nodeId = target.GetInstanceID(),
+                isActive = target.activeSelf
+            });
+        }
+
+        private static string ExecuteRemove(HierarchyCommandRequest request)
+        {
+            if (request.targetId == 0)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "rm requires target id" });
+            }
+
+            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
+            }
+
+            var scene = target.scene;
+            Undo.DestroyObjectImmediate(target);
+            if (scene.IsValid())
+            {
+                EditorSceneManager.MarkSceneDirty(scene);
+            }
+
+            _snapshotVersion++;
+
+            return JsonUtility.ToJson(new HierarchyCommandResponse
+            {
+                ok = true,
+                message = "removed",
+                nodeId = request.targetId,
+                isActive = false
+            });
+        }
+
+        private static string ExecuteRename(HierarchyCommandRequest request)
+        {
+            if (request.targetId == 0)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "rename requires target id" });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.name))
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "rename requires a name" });
+            }
+
+            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
+            }
+
+            Undo.RecordObject(target, "unifocl rename hierarchy object");
+            target.name = request.name.Trim();
+            EditorSceneManager.MarkSceneDirty(target.scene);
+            _snapshotVersion++;
+
+            return JsonUtility.ToJson(new HierarchyCommandResponse
+            {
+                ok = true,
+                message = "renamed",
+                nodeId = target.GetInstanceID(),
+                isActive = target.activeSelf
+            });
+        }
+
+        private static string ExecuteMove(HierarchyCommandRequest request)
+        {
+            if (request.targetId == 0)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mv requires target id" });
+            }
+
+            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
+            }
+
+            var nextParentId = request.parentId == 0 ? SceneRootNodeId : request.parentId;
+            if (nextParentId == request.targetId)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "cannot move object under itself" });
+            }
+
+            if (nextParentId == SceneRootNodeId)
+            {
+                var activeScene = SceneManager.GetActiveScene();
+                if (!activeScene.IsValid())
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "active scene is not valid" });
+                }
+
+                Undo.SetTransformParent(target.transform, null, "unifocl move hierarchy object");
+                SceneManager.MoveGameObjectToScene(target, activeScene);
+                EditorSceneManager.MarkSceneDirty(activeScene);
+                _snapshotVersion++;
+                return JsonUtility.ToJson(new HierarchyCommandResponse
+                {
+                    ok = true,
+                    message = "moved",
+                    nodeId = target.GetInstanceID(),
+                    isActive = target.activeSelf
+                });
+            }
+
+            var parentObject = EditorUtility.InstanceIDToObject(nextParentId) as GameObject;
+            if (parentObject is null)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {nextParentId}" });
+            }
+
+            var cursor = parentObject.transform;
+            while (cursor is not null)
+            {
+                if (cursor == target.transform)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "cannot move object under its descendant" });
+                }
+
+                cursor = cursor.parent;
+            }
+
+            Undo.SetTransformParent(target.transform, parentObject.transform, "unifocl move hierarchy object");
+            SceneManager.MoveGameObjectToScene(target, parentObject.scene);
+            EditorSceneManager.MarkSceneDirty(parentObject.scene);
+            _snapshotVersion++;
+
+            return JsonUtility.ToJson(new HierarchyCommandResponse
+            {
+                ok = true,
+                message = "moved",
                 nodeId = target.GetInstanceID(),
                 isActive = target.activeSelf
             });

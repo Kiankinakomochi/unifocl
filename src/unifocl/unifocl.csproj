@@ -11,6 +11,10 @@
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 
+  <ItemGroup Condition="Exists('../../external/unifocl-protobuf/src/Unifocl.Shared/Unifocl.Shared.csproj')">
+    <ProjectReference Include="../../external/unifocl-protobuf/src/Unifocl.Shared/Unifocl.Shared.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/CLIDaemon.cs" LogicalName="Payload/EditorScripts/CLIDaemon.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Models/DaemonBridgeModels.cs" LogicalName="Payload/EditorScripts/Models/DaemonBridgeModels.cs" />

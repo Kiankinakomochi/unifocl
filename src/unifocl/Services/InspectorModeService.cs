@@ -4,9 +4,11 @@ using System.Text.Json;
 
 internal sealed class InspectorModeService
 {
+    private const int SceneRootNodeId = int.MaxValue;
     private const int DefaultInnerWidth = 78;
     private const int MinInnerWidth = 40;
     private readonly InspectorTuiRenderer _renderer = new();
+    private readonly HierarchyDaemonClient _hierarchyDaemonClient = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly HttpClient Http = new();
 
@@ -105,13 +107,19 @@ internal sealed class InspectorModeService
                 return true;
             case "make":
             case "mk":
+                await HandleMakeAsync(input, tokens, session, log);
+                return true;
             case "remove":
             case "rm":
+                await HandleRemoveAsync(input, session, log);
+                return true;
             case "rename":
             case "rn":
+                await HandleRenameAsync(input, tokens, session, log);
+                return true;
             case "move":
             case "mv":
-                HandleUnsupportedInspectorMutation(input, session, log);
+                await HandleMoveAsync(input, tokens, session, log);
                 return true;
             case "scroll":
                 HandleScroll(input, tokens, session, log);
@@ -636,6 +644,235 @@ internal sealed class InspectorModeService
         _renderer.Render(context);
     }
 
+    private async Task HandleMakeAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: make requires inspect mode");
+            return;
+        }
+
+        if (!TryParseInspectorCreateArguments(tokens, out var type, out var count, out var name, out var error))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, $"[!] {error}");
+            _renderer.Render(context);
+            return;
+        }
+
+        var targetNode = await TryResolveHierarchyNodeAsync(session, context.TargetPath, includeRoot: false);
+        if (targetNode is null)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] unable to resolve inspected target in hierarchy");
+            _renderer.Render(context);
+            return;
+        }
+
+        var response = await _hierarchyDaemonClient.ExecuteAsync(
+            session.AttachedPort!.Value,
+            new HierarchyCommandRequestDto(
+                "mk",
+                type.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? null : targetNode.Id,
+                type.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? targetNode.Id : null,
+                name,
+                false,
+                type,
+                count));
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        if (!response.Ok)
+        {
+            AddStream(context, $"[!] {response.Message}");
+            _renderer.Render(context);
+            return;
+        }
+
+        AddStream(context, $"[+] created: {type} x{count}");
+        _renderer.Render(context);
+    }
+
+    private async Task HandleRemoveAsync(
+        string input,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: remove requires inspect mode");
+            return;
+        }
+
+        var targetNode = await TryResolveHierarchyNodeAsync(session, context.TargetPath, includeRoot: false);
+        if (targetNode is null)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] unable to resolve inspected target in hierarchy");
+            _renderer.Render(context);
+            return;
+        }
+
+        var response = await _hierarchyDaemonClient.ExecuteAsync(
+            session.AttachedPort!.Value,
+            new HierarchyCommandRequestDto("rm", null, targetNode.Id, null, false));
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        if (!response.Ok)
+        {
+            AddStream(context, $"[!] {response.Message}");
+            _renderer.Render(context);
+            return;
+        }
+
+        AddStream(context, $"[-] removed target: {targetNode.Name}");
+        session.Inspector = null;
+        session.ContextMode = CliContextMode.Project;
+        log("[i] inspector target removed; returned to project context");
+    }
+
+    private async Task HandleRenameAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: rename requires inspect mode");
+            return;
+        }
+
+        if (tokens.Count < 2)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: rename <new-name>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var targetNode = await TryResolveHierarchyNodeAsync(session, context.TargetPath, includeRoot: false);
+        if (targetNode is null)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] unable to resolve inspected target in hierarchy");
+            _renderer.Render(context);
+            return;
+        }
+
+        var newName = string.Join(' ', tokens.Skip(1)).Trim();
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: rename <new-name>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var response = await _hierarchyDaemonClient.ExecuteAsync(
+            session.AttachedPort!.Value,
+            new HierarchyCommandRequestDto("rename", null, targetNode.Id, newName, false));
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        if (!response.Ok)
+        {
+            AddStream(context, $"[!] {response.Message}");
+            _renderer.Render(context);
+            return;
+        }
+
+        context.TargetPath = ReplaceLeafSegment(context.TargetPath, newName);
+        session.FocusPath = context.TargetPath;
+        AddStream(context, $"[=] renamed target to: {newName}");
+        _renderer.Render(context);
+    }
+
+    private async Task HandleMoveAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var context = session.Inspector;
+        if (context is null)
+        {
+            log("[grey]system[/]: move requires inspect mode");
+            return;
+        }
+
+        if (tokens.Count < 2)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: move </path|..|/>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var targetNode = await TryResolveHierarchyNodeAsync(session, context.TargetPath, includeRoot: false);
+        if (targetNode is null)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] unable to resolve inspected target in hierarchy");
+            _renderer.Render(context);
+            return;
+        }
+
+        var destinationToken = string.Join(' ', tokens.Skip(1)).Trim();
+        if (string.IsNullOrWhiteSpace(destinationToken))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: move </path|..|/>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var parentPath = ResolveMoveDestinationPath(context.TargetPath, destinationToken);
+        int parentId;
+        if (parentPath == "/")
+        {
+            parentId = SceneRootNodeId;
+        }
+        else
+        {
+            var parentNode = await TryResolveHierarchyNodeAsync(session, parentPath, includeRoot: false);
+            if (parentNode is null)
+            {
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, $"[!] destination not found: {parentPath}");
+                _renderer.Render(context);
+                return;
+            }
+
+            parentId = parentNode.Id;
+        }
+
+        var response = await _hierarchyDaemonClient.ExecuteAsync(
+            session.AttachedPort!.Value,
+            new HierarchyCommandRequestDto("mv", parentId, targetNode.Id, null, false));
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        if (!response.Ok)
+        {
+            AddStream(context, $"[!] {response.Message}");
+            _renderer.Render(context);
+            return;
+        }
+
+        var movedPath = parentPath == "/"
+            ? "/" + targetNode.Name
+            : $"{parentPath.TrimEnd('/')}/{targetNode.Name}";
+        context.TargetPath = movedPath;
+        session.FocusPath = movedPath;
+        AddStream(context, $"[*] moved target to: {movedPath}");
+        _renderer.Render(context);
+    }
+
     private void HandleScroll(
         string input,
         IReadOnlyList<string> tokens,
@@ -959,18 +1196,302 @@ internal sealed class InspectorModeService
         }
     }
 
-    private void HandleUnsupportedInspectorMutation(string input, CliSessionState session, Action<string> log)
+    private static bool TryParseInspectorCreateArguments(
+        IReadOnlyList<string> tokens,
+        out string type,
+        out int count,
+        out string? name,
+        out string error)
     {
-        var context = session.Inspector;
-        if (context is null)
+        type = string.Empty;
+        count = 1;
+        name = null;
+        error = "usage: make --type <type> [--count <count>] | mk <type> [count] [--name <name>|-n <name>]";
+        if (tokens.Count == 0)
         {
-            log("[grey]system[/]: inspector mode is required");
-            return;
+            return false;
         }
 
-        AddStream(context, $"{context.PromptLabel} > {input}");
-        AddStream(context, "[!] command not implemented in inspector mode yet");
-        _renderer.Render(context);
+        if (tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase)
+            || (tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase) && tokens.Count >= 2 && tokens[1].StartsWith("--", StringComparison.Ordinal)))
+        {
+            if (tokens.Count < 3)
+            {
+                return false;
+            }
+
+            for (var i = 1; i < tokens.Count; i++)
+            {
+                var token = tokens[i];
+                if (token.Equals("--type", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count)
+                    {
+                        return false;
+                    }
+
+                    type = tokens[++i];
+                    continue;
+                }
+
+                if (token.StartsWith("--type=", StringComparison.OrdinalIgnoreCase))
+                {
+                    type = token["--type=".Length..];
+                    continue;
+                }
+
+                if (token.Equals("--count", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count || !int.TryParse(tokens[++i], out count) || count <= 0)
+                    {
+                        error = "count must be a positive integer";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+                {
+                    var raw = token["--count=".Length..];
+                    if (!int.TryParse(raw, out count) || count <= 0)
+                    {
+                        error = "count must be a positive integer";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                error = $"unsupported option: {token}";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(type))
+            {
+                error = "missing --type <type>";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (tokens.Count < 2)
+        {
+            return false;
+        }
+
+        type = tokens[1];
+        var countSpecified = false;
+        for (var i = 2; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+            {
+                var raw = token["--count=".Length..];
+                if (!int.TryParse(raw, out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                countSpecified = true;
+                continue;
+            }
+
+            if (token.Equals("--count", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count || !int.TryParse(tokens[++i], out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                countSpecified = true;
+                continue;
+            }
+
+            if (token.StartsWith("--name=", StringComparison.OrdinalIgnoreCase))
+            {
+                name = token["--name=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.StartsWith("-n=", StringComparison.OrdinalIgnoreCase))
+            {
+                name = token["-n=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.Equals("--name", StringComparison.OrdinalIgnoreCase) || token.Equals("-n", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count)
+                {
+                    error = "usage: mk <type> [count] [--name <name>|-n <name>]";
+                    return false;
+                }
+
+                name = tokens[++i].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!countSpecified && int.TryParse(token, out var parsedCount) && parsedCount > 0)
+            {
+                count = parsedCount;
+                countSpecified = true;
+                continue;
+            }
+
+            error = $"unsupported mk argument: {token}";
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<HierarchyNodeDto?> TryResolveHierarchyNodeAsync(
+        CliSessionState session,
+        string targetPath,
+        bool includeRoot)
+    {
+        if (session.AttachedPort is null)
+        {
+            return null;
+        }
+
+        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        return TryFindNodeByInspectorPath(snapshot.Root, targetPath, includeRoot, out var resolved)
+            ? resolved
+            : null;
+    }
+
+    private static bool TryFindNodeByInspectorPath(
+        HierarchyNodeDto root,
+        string targetPath,
+        bool includeRoot,
+        out HierarchyNodeDto node)
+    {
+        node = root;
+        var normalized = NormalizeInspectorPath(targetPath);
+        if (normalized == "/")
+        {
+            return includeRoot;
+        }
+
+        var segments = normalized
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var current = root;
+        foreach (var segment in segments)
+        {
+            var next = current.Children.FirstOrDefault(child =>
+                child.Name.Equals(segment, StringComparison.OrdinalIgnoreCase));
+            if (next is null)
+            {
+                return false;
+            }
+
+            current = next;
+        }
+
+        node = current;
+        return true;
+    }
+
+    private static string ResolveMoveDestinationPath(string currentTargetPath, string destinationToken)
+    {
+        var normalizedCurrent = NormalizeInspectorPath(currentTargetPath);
+        if (destinationToken.Equals("/", StringComparison.Ordinal)
+            || destinationToken.Equals("root", StringComparison.OrdinalIgnoreCase))
+        {
+            return "/";
+        }
+
+        if (destinationToken.Equals("..", StringComparison.Ordinal))
+        {
+            return GetParentPath(normalizedCurrent);
+        }
+
+        return NormalizeInspectorPath(destinationToken.StartsWith('/') ? destinationToken : "/" + destinationToken);
+    }
+
+    private static string ReplaceLeafSegment(string path, string newLeafName)
+    {
+        var normalized = NormalizeInspectorPath(path);
+        if (normalized == "/")
+        {
+            return normalized;
+        }
+
+        var segments = normalized
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+        segments[^1] = newLeafName;
+        return "/" + string.Join('/', segments);
+    }
+
+    private static string GetParentPath(string path)
+    {
+        var normalized = NormalizeInspectorPath(path);
+        if (normalized == "/")
+        {
+            return "/";
+        }
+
+        var segments = normalized
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length <= 1)
+        {
+            return "/";
+        }
+
+        return "/" + string.Join('/', segments.Take(segments.Length - 1));
+    }
+
+    private static string NormalizeInspectorPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "/";
+        }
+
+        var normalized = path.Trim();
+        if (!normalized.StartsWith('/'))
+        {
+            normalized = "/" + normalized;
+        }
+
+        while (normalized.Contains("//", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("//", "/", StringComparison.Ordinal);
+        }
+
+        return normalized.Length > 1 ? normalized.TrimEnd('/') : normalized;
     }
 
     private static void AddStream(InspectorContext context, string line)

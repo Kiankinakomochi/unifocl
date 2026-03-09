@@ -141,7 +141,7 @@ internal sealed class ProjectCommandRouterService
             "ref" => "ls",
             "enter" => "cd",
             ".." => "up",
-            "make" => "mk",
+            "make" => mode == CliContextMode.Inspector ? "make" : "mk",
             "remove" => "rm",
             "rn" => "rename",
             "s" => "set",

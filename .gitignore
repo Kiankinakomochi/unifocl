@@ -1,6 +1,7 @@
 # .NET build outputs
 **/bin/
 **/obj/
+src/unifocl.unity/EditorScripts/Plugins/*.dll
 
 # IDE files
 .vs/

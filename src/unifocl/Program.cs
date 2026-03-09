@@ -160,10 +160,11 @@ var inspectorCommands = new List<CommandSpec>
     new("f <query>", "Fuzzy find in inspector context", "f"),
     new("ff <query>", "Alias for fuzzy find", "ff"),
     new("scroll [body|stream] <up|down> [count]", "Scroll inspector body or command stream", "scroll"),
-    new("make|mk <...>", "Not implemented in inspector mode yet", "make"),
-    new("remove|rm <...>", "Not implemented in inspector mode yet", "remove"),
-    new("rename|rn <...>", "Not implemented in inspector mode yet", "rename"),
-    new("move|mv <...>", "Not implemented in inspector mode yet", "move")
+    new("make --type <type> [--count <count>]", "Create typed object(s) under inspected target", "make"),
+    new("mk <type> [count] [--name <name>|-n <name>]", "Create typed object(s) under inspected target", "mk"),
+    new("remove|rm", "Remove inspected target object", "remove"),
+    new("rename|rn <new-name>", "Rename inspected target object", "rename"),
+    new("move|mv </path|..|/>", "Move inspected target under another parent path", "move")
 };
 
 var streamLog = new List<string>();

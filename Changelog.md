@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.1 - 2026-03-09
+
+### Patch Train
+- `a2`: Protobuf-contract integration pass for hierarchy `mk` command typing and validation.
+
+### Added
+- Added `HierarchyMkType` enum to protobuf contracts (`external/unifocl-protobuf/contracts/hierarchy.proto`) as the shared source of truth for hierarchy create types.
+
+### Changed
+- Hierarchy `mk` / `make` command parsing now validates type tokens against protobuf-generated contract enum values.
+- Hierarchy `mk` / `make` now normalize accepted aliases and send canonical contract type names to the daemon bridge.
+
+## 0.4.0 - 2026-03-09
+
+### Patch Train
+- `a1`: Incremental development pass for hierarchy/inspector command completeness and typed object creation.
+
+### Added
+- Hierarchy mode now supports `make --type <type> [--count <count>]` and `mk <type> [count]`.
+- Inspector mode now supports typed creation via `make`/`mk`.
+- Typed `mk` object creation support for UI, 3D primitives, lights, 2D objects, camera/audio, and empty structural objects.
+- `mk` suggestions and fuzzy matching now include common typed creation shortcuts directly in hierarchy IntelliSense.
+
+### Changed
+- Unified hierarchy command payload to carry typed create parameters (`type`, `count`) across CLI and Unity bridge.
+- Inspector command metadata now documents typed `make`/`mk` forms.
+- Standardized changelog file casing to `CHANGELOG.md` for GitHub tooling compatibility.
+
 ## 0.3.2a6 - 2026-03-09
 
 ### Changed
