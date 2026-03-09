@@ -113,6 +113,29 @@ The daemon maintains a persistent connection to the project. Manage it using the
 | `attach <port>` | Attach the CLI to an existing daemon at the specified port. |
 | `detach` | Detach the CLI but keep the daemon alive in the background. |
 
+### AI Agent Worktree Orchestration
+
+For concurrent autonomous agents, provision isolated git worktrees and run daemon boot per worktree with dynamic port mapping.
+
+- Bash workflow: `src/unifocl/scripts/agent-worktree.sh`
+- PowerShell workflow: `src/unifocl/scripts/agent-worktree.ps1`
+- Lifecycle contract: `AGENT_WORKTREE_LIFECYCLE.md`
+
+Example (bash):
+
+```bash
+src/unifocl/scripts/agent-worktree.sh provision \
+  --repo-root . \
+  --worktree-path ../unifocl-agent-a \
+  --branch codex/agent-a \
+  --source-project . \
+  --seed-library
+
+src/unifocl/scripts/agent-worktree.sh start-daemon \
+  --worktree-path ../unifocl-agent-a \
+  --project-path ../unifocl-agent-a
+```
+
 ### 3. Mode Switching
 Once a project is opened, use these commands to switch your active context.
 

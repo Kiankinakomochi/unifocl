@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.1a1 - 2026-03-09
+
+### Added
+- Added agent worktree orchestration scripts for bash and PowerShell:
+  - `src/unifocl/scripts/agent-worktree.sh`
+  - `src/unifocl/scripts/agent-worktree.ps1`
+- Added lifecycle contract documentation for autonomous worktree agents (`AGENT_WORKTREE_LIFECYCLE.md`).
+- Added milestone step tracker for worktree isolation deliverables (`MILESTONE_WORKTREE_ISOLATION.md`).
+
+### Changed
+- Added README guidance for isolated worktree provisioning, Library cache seeding, and dynamic daemon port startup.
+- Started the `0.7.1` development cycle with `a1` suffix versioning.
+
 ## 0.7.0 - 2026-03-09
 
 ### Changed
