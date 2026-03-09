@@ -155,6 +155,8 @@ var inspectorCommands = new List<CommandSpec>
     new("set <field> <value...>", "Set selected component field in inspector", "set"),
     new("s <field> <value...>", "Alias for set", "s"),
     new("set <Component>.<field> <value...>", "Set a field directly from inspector root", "set"),
+    new("edit <field> <value...>", "Edit serialized field value for selected component", "edit"),
+    new("e <field> <value...>", "Alias for edit", "e"),
     new("toggle <component-index|field>", "Toggle component enabled state or bool field", "toggle"),
     new("t <component-index|field>", "Alias for toggle", "t"),
     new("f <query>", "Fuzzy find in inspector context", "f"),
@@ -261,7 +263,26 @@ while (true)
                     session,
                     daemonControlService,
                     daemonRuntime,
-                    line => AppendLog(streamLog, line));
+                    line => AppendLog(streamLog, line),
+                    async targetPath =>
+                    {
+                        var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
+                            ? $"inspect \"{targetPath}\""
+                            : $"inspect {targetPath}";
+                        await projectCommandRouterService.TryHandleProjectCommandAsync(
+                            inspectInput,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            line => AppendLog(streamLog, line));
+                        if (session.Inspector is null)
+                        {
+                            return false;
+                        }
+
+                        session.ContextMode = CliContextMode.Inspector;
+                        return true;
+                    });
                 if (session.Mode == CliMode.Project)
                 {
                     session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
@@ -306,7 +327,26 @@ while (true)
                 session,
                 daemonControlService,
                 daemonRuntime,
-                line => AppendLog(streamLog, line));
+                line => AppendLog(streamLog, line),
+                async targetPath =>
+                {
+                    var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
+                        ? $"inspect \"{targetPath}\""
+                        : $"inspect {targetPath}";
+                    await projectCommandRouterService.TryHandleProjectCommandAsync(
+                        inspectInput,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => AppendLog(streamLog, line));
+                    if (session.Inspector is null)
+                    {
+                        return false;
+                    }
+
+                    session.ContextMode = CliContextMode.Inspector;
+                    return true;
+                });
             if (session.Mode == CliMode.Project)
             {
                 session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
@@ -587,6 +627,15 @@ static string? ReadInteractiveInput(
                 break;
             case ConsoleKey.F7:
                 if (input.Length == 0
+                    && session.ContextMode == CliContextMode.Inspector
+                    && session.Inspector is not null
+                    && session.Inspector.Depth == InspectorDepth.ComponentFields)
+                {
+                    Console.WriteLine();
+                    return ":focus-inspector";
+                }
+
+                if (input.Length == 0
                     && session.ContextMode == CliContextMode.Project
                     && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
                 {
@@ -674,7 +723,7 @@ static int RenderComposerFrame(
     }
     else if (session.Inspector is not null)
     {
-        lines.Add("[dim]Inspector mode: list, enter <idx>, up, set <field> <value>, toggle <field|idx>, scroll [body|stream] <up|down> [n], F8 focus nav[/]");
+        lines.Add("[dim]Inspector mode: list, enter <idx>, up, set/edit <field> <value>, toggle <field|idx>, field select + Enter interactive edit (vector/enum/bool/number/string-overlay), scroll [body|stream] <up|down> [n], F7/F8 focus nav[/]");
     }
     else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
@@ -894,6 +943,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: hierarchy focus");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted GameObject");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] expand selected node");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] enter inspector for selected node");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] collapse selected node");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F7[/] exit focus mode");
 
@@ -904,10 +954,16 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F7[/] exit focus mode");
 
     AppendLog(streamLog, "[grey]keybinds[/]: inspector focus");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted component/field");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted component/field (auto-scrolls long lists)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] inspect selected component");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] edit selected field (component inspection)");
+    AppendLog(streamLog, "[grey]keybinds[/]: edit mode -> [white]Tab[/] next vector component / enum-bool option, [white]←/→[/] adjust/cycle, number keys edit vector/color component, [white]Enter[/] apply, [white]Esc[/] cancel");
+    AppendLog(streamLog, "[grey]keybinds[/]: numeric edit -> type value directly, [white]Backspace[/] delete, [white]Enter[/] apply");
+    AppendLog(streamLog, "[grey]keybinds[/]: text edit -> full-value overlay with cursor, [white]←/→[/] move cursor, [white]Backspace/Delete[/] edit");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] back to component list");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F8[/] exit focus mode");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] toggle between inspector interactive selection and command input (component inspection)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] fields -> component list, component list -> hierarchy");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] exit inspector focus mode");
 
     if (session.ContextMode == CliContextMode.Project && session.Inspector is null)
     {

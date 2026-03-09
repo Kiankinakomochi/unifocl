@@ -18,6 +18,14 @@ internal sealed class InspectorContext
     public int BodyScrollOffset { get; set; }
     public int StreamScrollOffset { get; set; } = int.MaxValue;
     public bool FollowStreamScroll { get; set; } = true;
+    public bool InteractiveEditActive { get; set; }
+    public string? InteractiveEditFieldName { get; set; }
+    public int InteractiveEditPartIndex { get; set; }
+    public int InteractiveEditPartCount { get; set; }
+    public string? InteractiveEditMode { get; set; }
+    public bool InteractiveOverlayActive { get; set; }
+    public string? InteractiveOverlayTitle { get; set; }
+    public string? InteractiveOverlayValue { get; set; }
 
     public string PromptPath =>
         Depth == InspectorDepth.ComponentFields && !string.IsNullOrWhiteSpace(SelectedComponentName)
@@ -31,4 +39,9 @@ internal sealed class InspectorContext
 }
 
 internal sealed record InspectorComponentEntry(int Index, string Name, bool Enabled);
-internal sealed record InspectorFieldEntry(string Name, string Value, string Type, bool IsBoolean);
+internal sealed record InspectorFieldEntry(
+    string Name,
+    string Value,
+    string Type,
+    bool IsBoolean,
+    IReadOnlyList<string>? EnumOptions = null);

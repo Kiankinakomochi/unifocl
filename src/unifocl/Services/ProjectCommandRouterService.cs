@@ -13,6 +13,8 @@ internal sealed class ProjectCommandRouterService
         DaemonRuntime daemonRuntime,
         Action<string> log)
     {
+        var enteredFromHierarchyContext = session.ContextMode == CliContextMode.Hierarchy;
+
         if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
             log("[grey]system[/]: boot mode is slash-first; type / to see available commands");
@@ -54,7 +56,14 @@ internal sealed class ProjectCommandRouterService
             return true;
         }
 
-        if (session.ContextMode == CliContextMode.Hierarchy)
+        var tokens = Tokenize(normalizedInput);
+        if (tokens.Count == 0)
+        {
+            return true;
+        }
+
+        var isInspectCommand = tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase);
+        if (session.ContextMode == CliContextMode.Hierarchy && !isInspectCommand)
         {
             log("[yellow]mode[/]: hierarchy contextual commands run inside /hierarchy mode");
             return true;
@@ -62,12 +71,6 @@ internal sealed class ProjectCommandRouterService
 
         if (session.ContextMode == CliContextMode.Project
             && await _projectViewService.TryHandleProjectViewCommandAsync(normalizedInput, session, daemonControlService, daemonRuntime))
-        {
-            return true;
-        }
-
-        var tokens = Tokenize(normalizedInput);
-        if (tokens.Count == 0)
         {
             return true;
         }
@@ -80,6 +83,12 @@ internal sealed class ProjectCommandRouterService
                 log))
         {
             session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
+            if (session.ContextMode == CliContextMode.Inspector
+                && tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
+            {
+                await _inspectorModeService.RunKeyboardFocusModeAsync(session, log, enteredFromHierarchyContext);
+            }
+
             return true;
         }
 
@@ -137,6 +146,7 @@ internal sealed class ProjectCommandRouterService
 
         tokens[0] = tokens[0].ToLowerInvariant() switch
         {
+            "ins" => "inspect",
             "list" => "ls",
             "ref" => "ls",
             "enter" => "cd",
@@ -145,6 +155,7 @@ internal sealed class ProjectCommandRouterService
             "remove" => "rm",
             "rn" => "rename",
             "s" => "set",
+            "e" => "edit",
             "t" => "toggle",
             "find" => "f",
             "move" => "mv",
