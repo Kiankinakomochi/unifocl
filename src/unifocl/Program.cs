@@ -163,6 +163,9 @@ var inspectorCommands = new List<CommandSpec>
     new("e <field> <value...>", "Alias for edit", "e"),
     new("toggle <component-index|field>", "Toggle component enabled state or bool field", "toggle"),
     new("t <component-index|field>", "Alias for toggle", "t"),
+    new("component add <type>", "Add a component from catalog to inspected target", "component add"),
+    new("component remove <index|name>", "Remove a component from inspected target", "component remove"),
+    new("comp <add|remove> <...>", "Alias for component", "comp"),
     new("f <query>", "Fuzzy find in inspector context", "f"),
     new("ff <query>", "Alias for fuzzy find", "ff"),
     new("scroll [body|stream] <up|down> [count]", "Scroll inspector body or command stream", "scroll"),
@@ -688,8 +691,7 @@ static string? ReadInteractiveInput(
             case ConsoleKey.F7:
                 if (input.Length == 0
                     && session.ContextMode == CliContextMode.Inspector
-                    && session.Inspector is not null
-                    && session.Inspector.Depth == InspectorDepth.ComponentFields)
+                    && session.Inspector is not null)
                 {
                     Console.WriteLine();
                     return ":focus-inspector";
@@ -709,15 +711,6 @@ static string? ReadInteractiveInput(
                 {
                     Console.WriteLine();
                     return ":focus-recent";
-                }
-                break;
-            case ConsoleKey.F8:
-                if (input.Length == 0
-                    && session.ContextMode == CliContextMode.Inspector
-                    && session.Inspector is not null)
-                {
-                    Console.WriteLine();
-                    return ":focus-inspector";
                 }
                 break;
             default:
@@ -752,7 +745,8 @@ static bool ShouldCommitSuggestionOnEnter(
         return false;
     }
 
-    return IsMkTypeSelectionPhase(input, session);
+    return IsMkTypeSelectionPhase(input, session)
+        || IsInspectorComponentAddSelectionPhase(input, session);
 }
 
 static bool IsMkTypeSelectionPhase(string input, CliSessionState session)
@@ -781,6 +775,34 @@ static bool IsMkTypeSelectionPhase(string input, CliSessionState session)
     }
 
     return false;
+}
+
+static bool IsInspectorComponentAddSelectionPhase(string input, CliSessionState session)
+{
+    var context = session.Inspector;
+    if (context is null || context.Depth != InspectorDepth.ComponentList)
+    {
+        return false;
+    }
+
+    var tokens = TokenizeComposerInput(input.TrimStart());
+    if (tokens.Count == 0)
+    {
+        return false;
+    }
+
+    var command = tokens[0].ToLowerInvariant();
+    if (command is not ("component" or "comp"))
+    {
+        return false;
+    }
+
+    if (tokens.Count == 1)
+    {
+        return true;
+    }
+
+    return tokens[1].Equals("add", StringComparison.OrdinalIgnoreCase);
 }
 
 static int RenderComposerFrame(
@@ -814,6 +836,11 @@ static int RenderComposerFrame(
         lines.Add(string.Empty);
         lines.AddRange(mkTypeLines);
     }
+    else if (TryGetInspectorComponentIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var componentLines))
+    {
+        lines.Add(string.Empty);
+        lines.AddRange(componentLines);
+    }
     else if (TryGetFuzzyQueryIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var fuzzyLines))
     {
         lines.Add(string.Empty);
@@ -829,7 +856,8 @@ static int RenderComposerFrame(
     }
     else if (session.Inspector is not null)
     {
-        lines.Add("[dim]Inspector mode: list, enter <idx>, up, set/edit <field> <value>, toggle <field|idx>, field select + Enter interactive edit (vector/enum/bool/number/string-overlay), scroll [body|stream] <up|down> [n], F7/F8 focus nav[/]");
+        // Keep inspector idle composer minimal; avoid verbose default helper line.
+        lines.Add(string.Empty);
     }
     else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
@@ -905,13 +933,13 @@ static string BuildPromptLabelMarkup(CliSessionState session)
     {
         var escapedPromptPath = Markup.Escape(context.PromptPath);
         return context.Depth == InspectorDepth.ComponentList
-            ? $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/] [grey][inspect][/]"
+            ? $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/] [grey][[inspect]][/]"
             : $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/]";
     }
 
     if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        var safeLabel = session.SafeModeEnabled ? " [yellow][safe][/]" : string.Empty;
+        var safeLabel = session.SafeModeEnabled ? " [yellow][[safe]][/]" : string.Empty;
         return $"[bold deepskyblue1]unifocl[/][grey]:[/][{CliTheme.Info}]{Markup.Escape(session.CurrentProjectPath)}[/]{safeLabel}";
     }
 
@@ -1041,7 +1069,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: global");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit hierarchy focus mode (inside /hierarchy)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context), or recent selection mode after /recent");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] enter/exit inspector focus mode (inspector context)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit inspector focus mode (inspector context)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] dismiss intellisense (or clear input if already dismissed)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] fuzzy candidate selection in composer");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] insert selected intellisense suggestion, or commit input when none selected");
@@ -1069,7 +1097,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] back to component list");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] toggle between inspector interactive selection and command input (component inspection)");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] fields -> component list, component list -> hierarchy");
-    AppendLog(streamLog, "[grey]keybinds[/]: [white]F8[/] exit inspector focus mode");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] exit inspector focus mode");
 
     if (session.ContextMode == CliContextMode.Project && session.Inspector is null)
     {
@@ -1077,7 +1105,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
     }
     else if (session.ContextMode == CliContextMode.Inspector && session.Inspector is not null)
     {
-        AppendLog(streamLog, "[grey]keybinds[/]: current context -> inspector (F8 available now)");
+        AppendLog(streamLog, "[grey]keybinds[/]: current context -> inspector (F7 available now)");
     }
     else if (session.ContextMode == CliContextMode.Hierarchy)
     {
@@ -1118,6 +1146,12 @@ static bool TryGetComposerIntellisenseCandidates(
     if (TryGetProjectMkTypeComposerCandidates(input, session, out var mkTypeCandidates))
     {
         candidates = mkTypeCandidates;
+        return true;
+    }
+
+    if (TryGetInspectorComponentComposerCandidates(input, session, out var componentCandidates))
+    {
+        candidates = componentCandidates;
         return true;
     }
 
@@ -1266,6 +1300,130 @@ static bool TryGetProjectMkTypeComposerCandidates(
                 $"mk {display}",
                 $"mk {match.Type} "));
         }
+    }
+
+    return true;
+}
+
+static bool TryGetInspectorComponentIntellisenseLines(
+    string input,
+    CliSessionState session,
+    int selectedSuggestionIndex,
+    out List<string> lines)
+{
+    lines = [];
+    if (!TryGetInspectorComponentComposerCandidates(input, session, out var candidates))
+    {
+        return false;
+    }
+
+    lines.Add("[grey]component[/]: add suggestions [dim](fuzzy, up/down + enter to insert)[/]");
+    if (candidates.Count == 0)
+    {
+        lines.Add("[dim]no component matches[/]");
+        return true;
+    }
+
+    const int maxSuggestions = 10;
+    var visibleCount = Math.Min(maxSuggestions, candidates.Count);
+    var selected = Math.Clamp(selectedSuggestionIndex, 0, visibleCount - 1);
+    for (var i = 0; i < visibleCount; i++)
+    {
+        var candidate = candidates[i];
+        var selectedLine = i == selected;
+        var prefix = selectedLine
+            ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]>[/]"
+            : "[grey] [/]";
+        var escaped = Markup.Escape(candidate.Label);
+        lines.Add(selectedLine
+            ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escaped}[/]"
+            : $"{prefix} [grey]{escaped}[/]");
+    }
+
+    if (candidates.Count > visibleCount)
+    {
+        lines.Add($"[dim]showing first {visibleCount}/{candidates.Count} matches[/]");
+    }
+
+    lines.Add(string.Empty);
+    lines.Add("[dim]Usage: component add <Component Name>[/]");
+    return true;
+}
+
+static bool TryGetInspectorComponentComposerCandidates(
+    string input,
+    CliSessionState session,
+    out List<(string Label, string? CommitCommand)> candidates)
+{
+    candidates = [];
+
+    var context = session.Inspector;
+    if (context is null || context.Depth != InspectorDepth.ComponentList)
+    {
+        return false;
+    }
+
+    var trimmed = input.TrimStart();
+    if (trimmed.StartsWith('/'))
+    {
+        return false;
+    }
+
+    var tokens = TokenizeComposerInput(trimmed);
+    if (tokens.Count == 0)
+    {
+        return false;
+    }
+
+    var root = tokens[0].ToLowerInvariant();
+    if (root is not ("component" or "comp"))
+    {
+        return false;
+    }
+
+    if (tokens.Count >= 2 && !tokens[1].Equals("add", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var query = tokens.Count >= 3
+        ? string.Join(' ', tokens.Skip(2))
+        : string.Empty;
+
+    var matches = new List<(string DisplayName, double Score)>();
+    foreach (var displayName in InspectorComponentCatalog.KnownDisplayNames)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            matches.Add((displayName, 1d));
+            continue;
+        }
+
+        if (displayName.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            matches.Add((displayName, 0.9d));
+            continue;
+        }
+
+        if (FuzzyMatcher.TryScore(query, displayName, out var score))
+        {
+            matches.Add((displayName, score));
+        }
+    }
+
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var match in matches
+                 .OrderByDescending(x => x.Score)
+                 .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
+    {
+        if (!seen.Add(match.DisplayName))
+        {
+            continue;
+        }
+
+        candidates.Add((
+            $"component add {match.DisplayName}",
+            $"component add {match.DisplayName}"));
     }
 
     return true;
