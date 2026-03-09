@@ -21,6 +21,49 @@ unifocl is a .NET console application built for cross-platform compatibility (Wi
 3.  **Daemon Layer:** A persistent background coordinator that tracks project state.
 4.  **Bridge Mode Channel:** The communication interface between the daemon and an active Unity Editor/runtime.
 
+## Protobuf Contract Pipeline
+
+unifocl uses Protocol Buffers as the transport contract boundary between CLI and Unity bridge logic.
+
+* Contract source-of-truth lives in the submodule: `external/unifocl-protobuf/contracts/*.proto`
+* Generated C# DTO project: `external/unifocl-protobuf/src/Unifocl.Shared`
+* CLI compiles against generated protobuf contracts only (no Unity assembly dependency at the transport boundary).
+* Unity bridge compiles against both Unity assemblies and protobuf contracts, then maps Unity runtime types to/from stable contract DTOs.
+
+### Setup
+
+```bash
+git submodule update --init --recursive
+dotnet build external/unifocl-protobuf/src/Unifocl.Shared/Unifocl.Shared.csproj --disable-build-servers -v minimal
+```
+
+### Unity Plugin Sync
+
+To copy the generated shared DLL into the Unity bridge payload plugin path:
+
+```bash
+./scripts/sync-protobuf-unity-plugin.sh
+```
+
+### Contract Change Workflow
+
+When you change `.proto` contracts:
+
+1. Update `.proto` files under `external/unifocl-protobuf/contracts/`.
+2. Build the shared contract assembly:
+```bash
+dotnet build external/unifocl-protobuf/src/Unifocl.Shared/Unifocl.Shared.csproj --disable-build-servers -v minimal
+```
+3. Sync generated protobuf plugin DLLs into Unity bridge plugin path:
+```bash
+./scripts/sync-protobuf-unity-plugin.sh
+```
+4. Rebuild unifocl solution and compat check:
+```bash
+dotnet build unifocl.sln --disable-build-servers -v minimal
+dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal
+```
+
 ## The unifocl Daemon
 
 The daemon is a localhost control process, not a kernel/OS-level file mutation service.
@@ -125,7 +168,7 @@ When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash t
 | `list` | `ls` | List entries in the current active context. |
 | `enter <idx>` | `cd` | Enter the selected node, folder, or component by index. |
 | `up` | `..` | Navigate up one level to the parent. |
-| `make <type> <name>`| `mk` | Create an item (e.g., `mk script Player`, `mk gameobject`). |
+| `make --type <type> [--count <count>]` | `mk` | Create typed hierarchy objects. |
 | `load <idx/name>` | | Load/open a scene or script. |
 | `remove <idx>` | `rm` | Remove the selected item. |
 | `rename <idx> <new>`| `rn` | Rename the selected item. |
@@ -136,7 +179,52 @@ When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash t
 ### 5. Fuzzy Search & Intellisense
 unifocl features a composer with Intellisense. 
 * Type `/` to open the slash-command suggestion palette.
-* Type any standard text to receive project-mode suggestions.
+* Type any standard text to receive contextual suggestions.
+* In hierarchy mode, typing `mk` surfaces the typed `mk` catalog and supports partial matching by type/description.
+
+### Hierarchy Create Commands
+
+Hierarchy create commands are typed and contract-driven.
+
+* `make --type <type> [--count <count>]`
+* `mk <type> [count] [--count <count>] [--name <name>|-n <name>]`
+
+`--name`/`-n` applies an explicit created object name override.
+
+Examples:
+
+```bash
+mk Cube
+mk Cube 3
+mk Cube --name Block
+mk Button --count 2 -n CTA
+make --type ScrollView --count 1
+```
+
+Supported hierarchy mk types:
+
+`Canvas`, `Panel`, `Text`, `TMP`, `Image`, `Button`, `Toggle`, `Slider`, `Scrollbar`, `ScrollView`, `EventSystem`, `Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`, `Quad`, `DirLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `AreaLight`, `ReflectionProbe`, `Sprite`, `SpriteMask`, `Camera`, `AudioSource`, `Empty`, `EmptyParent`, `EmptyChild`
+
+Type semantics:
+
+* `Canvas`: Root UI structural element.
+* `Panel`: Image component set to stretch with a default semi-transparent background.
+* `Text` / `TMP`: TextMeshPro - Text (UI) object.
+* `Image`: Standard UI Image.
+* `Button`: Compound object (Image + Button + child TMP Text).
+* `Toggle`: Compound object (Background + Checkmark + Label).
+* `Slider` / `Scrollbar`: Compound interactive UI objects.
+* `ScrollView`: Viewport + content + scrollbar structure.
+* `EventSystem`: Standalone event system.
+* `Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`, `Quad`: 3D primitives with default primitive setup.
+* `DirLight` / `DirectionalLight`, `PointLight`, `SpotLight`, `AreaLight`, `ReflectionProbe`: Lighting objects.
+* `Sprite`: GameObject with `SpriteRenderer`.
+* `SpriteMask`: Sprite mask object.
+* `Camera`: GameObject with `Camera` and `AudioListener`.
+* `AudioSource`: Empty GameObject with `AudioSource`.
+* `Empty`: Standard empty object.
+* `EmptyParent`: Creates an empty parent above the currently selected hierarchy node.
+* `EmptyChild`: Creates an empty child under the currently selected hierarchy node.
 
 **Fuzzy Finding:**
 Use the `f` or `ff` command to trigger fuzzy search across your project or inspector. You can scope searches using the `t:<type>` filter.
