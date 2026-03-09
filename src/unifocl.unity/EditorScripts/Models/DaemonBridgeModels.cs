@@ -169,6 +169,7 @@ namespace UniFocl.EditorBridge
         public string assetPath = string.Empty;
         public string newAssetPath = string.Empty;
         public string content = string.Empty;
+        public string requestId = string.Empty;
     }
 
     [Serializable]
@@ -178,6 +179,22 @@ namespace UniFocl.EditorBridge
         public string message = string.Empty;
         public string kind = string.Empty;
         public string content = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class ProjectCommandStatusResponse
+    {
+        public string requestId = string.Empty;
+        public string action = string.Empty;
+        public bool active;
+        public bool success;
+        public string stage = string.Empty;
+        public string detail = string.Empty;
+        public string startedAtUtc = string.Empty;
+        public string lastUpdatedAtUtc = string.Empty;
+        public string finishedAtUtc = string.Empty;
+        public bool isCompiling;
+        public bool isUpdating;
     }
 
     [Serializable]

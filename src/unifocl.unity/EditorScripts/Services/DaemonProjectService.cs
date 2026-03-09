@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
@@ -1953,28 +1954,36 @@ namespace UniFocl.EditorBridge
             }
 
             var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var deadline = EditorApplication.timeSinceStartup + 120d;
-            var startedAt = EditorApplication.timeSinceStartup;
-            var finished = false;
+            var timeout = TimeSpan.FromSeconds(120);
+            var deadline = EditorApplication.timeSinceStartup + timeout.TotalSeconds;
+            var startedAtUtc = DateTime.UtcNow;
+            var finishedState = 0;
             var primaryHandled = false;
             var resolveHandled = false;
             var nextRefreshAt = 0d;
             Request? resolveRequest = null;
             var stage = "waiting-primary";
+            var checkpointsLock = new object();
             var checkpoints = new List<string>(12)
             {
                 $"start thread={Environment.CurrentManagedThreadId}"
             };
 
+            double ElapsedSeconds() => Math.Max(0d, (DateTime.UtcNow - startedAtUtc).TotalSeconds);
+
             void AddCheckpoint(string detail)
             {
-                if (checkpoints.Count >= 12)
+                lock (checkpointsLock)
                 {
-                    return;
+                    if (checkpoints.Count >= 12)
+                    {
+                        return;
+                    }
+
+                    checkpoints.Add($"{ElapsedSeconds():0.0}s {detail}");
                 }
 
-                var elapsed = Math.Max(0d, EditorApplication.timeSinceStartup - startedAt);
-                checkpoints.Add($"{elapsed:0.0}s {detail}");
+                CLIDaemon.UpdateProjectCommandStage(stage, detail);
             }
 
             string FormatRequestSnapshot(Request? target, string label)
@@ -1997,25 +2006,40 @@ namespace UniFocl.EditorBridge
                 var hint = string.IsNullOrWhiteSpace(postVerifyMessage)
                     ? "postVerifyHint=-"
                     : $"postVerifyHint={postVerifyMessage}";
-                var trace = checkpoints.Count == 0 ? "-" : string.Join(" | ", checkpoints);
+                string trace;
+                lock (checkpointsLock)
+                {
+                    trace = checkpoints.Count == 0 ? "-" : string.Join(" | ", checkpoints);
+                }
                 return $"stage={stage}; {FormatRequestSnapshot(request, "primary")}; {FormatRequestSnapshot(resolveRequest, "resolve")}; {hint}; trace={trace}";
+            }
+
+            string BuildWallClockTimeoutDiagnostics()
+            {
+                string trace;
+                lock (checkpointsLock)
+                {
+                    trace = checkpoints.Count == 0 ? "-" : string.Join(" | ", checkpoints);
+                }
+
+                return $"stage={stage}; source=wall-clock; elapsed={ElapsedSeconds():0.0}s; trace={trace}";
             }
 
             void Finish(string payload)
             {
-                if (finished)
+                if (Interlocked.CompareExchange(ref finishedState, 1, 0) != 0)
                 {
                     return;
                 }
 
-                finished = true;
-                EditorApplication.update -= Tick;
+                CLIDaemon.UpdateProjectCommandStage(stage, "finished");
+                CLIDaemon.DispatchOnMainThread(() => EditorApplication.update -= Tick);
                 completion.TrySetResult(payload);
             }
 
             void Tick()
             {
-                if (finished)
+                if (Volatile.Read(ref finishedState) != 0)
                 {
                     return;
                 }
@@ -2023,6 +2047,7 @@ namespace UniFocl.EditorBridge
                 if (EditorApplication.timeSinceStartup >= deadline)
                 {
                     AddCheckpoint("timeout reached");
+                    stage = "timeout";
                     Finish(JsonUtility.ToJson(new ProjectCommandResponse
                     {
                         ok = false,
@@ -2139,6 +2164,31 @@ namespace UniFocl.EditorBridge
             }
 
             EditorApplication.update += Tick;
+            CLIDaemon.UpdateProjectCommandStage(stage, "update loop registered");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(timeout).ConfigureAwait(false);
+                }
+                catch
+                {
+                    return;
+                }
+
+                if (Volatile.Read(ref finishedState) != 0)
+                {
+                    return;
+                }
+
+                AddCheckpoint("wall-clock timeout reached");
+                stage = "timeout";
+                Finish(JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"{timeoutMessage}; diagnostics: {BuildWallClockTimeoutDiagnostics()}"
+                }));
+            });
 
             return completion.Task;
         }

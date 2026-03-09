@@ -860,6 +860,152 @@ internal sealed class ProjectViewService
         return await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus);
     }
 
+    private async Task<ProjectCommandResponseDto> ExecuteUpmMutationWithRecoveryAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        ProjectCommandRequestDto request,
+        List<string> outputs)
+    {
+        var response = await ExecuteProjectCommandAsync(session, request);
+        if (response.Ok)
+        {
+            return response;
+        }
+
+        if (DidResponseChannelInterruptAfterCompletion(response.Message))
+        {
+            outputs.Add("[yellow]upm[/]: command completed in daemon, but response channel was interrupted; verifying package state");
+            return response;
+        }
+
+        if (!ShouldRecoverUpmTimeout(response.Message))
+        {
+            return response;
+        }
+
+        if (DidDaemonRuntimeRestart(response.Message))
+        {
+            outputs.Add("[yellow]upm[/]: daemon runtime restarted during command; retrying once on refreshed runtime");
+        }
+        else
+        {
+            outputs.Add("[yellow]upm[/]: timed out while daemon is reachable; restarting bridge and retrying once");
+            await daemonControlService.HandleDaemonCommandAsync(
+                input: "/daemon restart",
+                trigger: "/daemon restart",
+                runtime: daemonRuntime,
+                session: session,
+                log: line => outputs.Add(line),
+                streamLog: outputs);
+        }
+
+        var bridgeReady = await EnsureModeContextAsync(session, daemonControlService, daemonRuntime, requireBridgeMode: true);
+        if (!bridgeReady)
+        {
+            return new ProjectCommandResponseDto(
+                false,
+                "bridge restart after UPM timeout did not recover project command endpoint",
+                null,
+                null);
+        }
+
+        var retried = await ExecuteProjectCommandAsync(session, request);
+        if (!retried.Ok && !string.IsNullOrWhiteSpace(retried.Message))
+        {
+            return new ProjectCommandResponseDto(
+                false,
+                $"{retried.Message} (after automatic bridge restart retry)",
+                retried.Kind,
+                retried.Content);
+        }
+
+        return retried;
+    }
+
+    private static bool ShouldRecoverUpmTimeout(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return message.Contains("daemon project command timed out", StringComparison.OrdinalIgnoreCase)
+               && message.Contains("daemonPing=ok", StringComparison.OrdinalIgnoreCase)
+               || DidDaemonRuntimeRestart(message);
+    }
+
+    private static bool DidDaemonRuntimeRestart(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return message.Contains("daemon runtime restarted during project command", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool DidResponseChannelInterruptAfterCompletion(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return message.Contains("completed successfully but response channel was interrupted", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<(bool Confirmed, string? Version)> TryConfirmUpmUpdateSucceededAsync(
+        CliSessionState session,
+        string packageId,
+        string? expectedVersion)
+    {
+        if (string.IsNullOrWhiteSpace(packageId) || !IsRegistryPackageId(packageId))
+        {
+            return (false, null);
+        }
+
+        var payload = JsonSerializer.Serialize(
+            new UpmListRequestPayload(false, true, false),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            if (attempt > 0)
+            {
+                await Task.Delay(1200);
+            }
+
+            var response = await ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto("upm-list", null, null, payload));
+            if (!response.Ok)
+            {
+                continue;
+            }
+
+            var current = TryFindUpmPackageById(response.Content, packageId);
+            if (current is null)
+            {
+                continue;
+            }
+
+            var installedVersion = string.IsNullOrWhiteSpace(current.Version) ? null : current.Version!;
+            if (!string.IsNullOrWhiteSpace(expectedVersion)
+                && string.Equals(installedVersion, expectedVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                return (true, installedVersion);
+            }
+
+            if (!current.IsOutdated)
+            {
+                return (true, installedVersion);
+            }
+        }
+
+        return (false, null);
+    }
+
     private static ProjectTreeEntry? FindEntryBySelector(ProjectViewState state, string selector)
     {
         var normalizedSelector = NormalizeLoadSelector(selector);
@@ -1207,9 +1353,12 @@ internal sealed class ProjectViewService
                         session,
                         $"clean uninstalling {existingPackageId}",
                         TimeSpan.FromSeconds(25),
-                        () => ExecuteProjectCommandAsync(
+                        () => ExecuteUpmMutationWithRecoveryAsync(
                             session,
-                            new ProjectCommandRequestDto("upm-remove", null, null, removePayload)));
+                            daemonControlService,
+                            daemonRuntime,
+                            new ProjectCommandRequestDto("upm-remove", null, null, removePayload),
+                            outputs));
                     if (!removeResponse.Ok)
                     {
                         outputs.Add(FormatProjectCommandFailure("upm clean remove", removeResponse.Message));
@@ -1227,9 +1376,12 @@ internal sealed class ProjectViewService
                 session,
                 $"installing {target}",
                 TimeSpan.FromSeconds(35),
-                () => ExecuteProjectCommandAsync(
+                () => ExecuteUpmMutationWithRecoveryAsync(
                     session,
-                    new ProjectCommandRequestDto("upm-install", null, null, installPayload)));
+                    daemonControlService,
+                    daemonRuntime,
+                    new ProjectCommandRequestDto("upm-install", null, null, installPayload),
+                    outputs));
 
             if (!installResponse.Ok)
             {
@@ -1299,9 +1451,12 @@ internal sealed class ProjectViewService
                 session,
                 $"removing {packageId}",
                 TimeSpan.FromSeconds(20),
-                () => ExecuteProjectCommandAsync(
+                () => ExecuteUpmMutationWithRecoveryAsync(
                     session,
-                    new ProjectCommandRequestDto("upm-remove", null, null, removePayload)));
+                    daemonControlService,
+                    daemonRuntime,
+                    new ProjectCommandRequestDto("upm-remove", null, null, removePayload),
+                    outputs));
             if (!removeResponse.Ok)
             {
                 outputs.Add(FormatProjectCommandFailure("upm remove", removeResponse.Message));
@@ -1383,11 +1538,29 @@ internal sealed class ProjectViewService
                     session,
                     $"updating {requestedId}",
                     TimeSpan.FromSeconds(30),
-                    () => ExecuteProjectCommandAsync(
+                    () => ExecuteUpmMutationWithRecoveryAsync(
                         session,
-                        new ProjectCommandRequestDto("upm-install", null, null, singleUpdatePayload)));
+                        daemonControlService,
+                        daemonRuntime,
+                        new ProjectCommandRequestDto("upm-install", null, null, singleUpdatePayload),
+                        outputs));
                 if (!singleUpdateResponse.Ok)
                 {
+                    var verified = await TryConfirmUpmUpdateSucceededAsync(
+                        session,
+                        requestedId,
+                        target.LatestCompatibleVersion);
+                    if (verified.Confirmed)
+                    {
+                        var confirmedOldVersion = string.IsNullOrWhiteSpace(target.Version) ? "-" : target.Version!;
+                        var confirmedVersion = string.IsNullOrWhiteSpace(verified.Version)
+                            ? ResolveUpmUpdatedVersion(singleUpdateResponse.Content, target.LatestCompatibleVersion)
+                            : verified.Version!;
+                        outputs.Add("[i] update command timed out, but package state confirms success");
+                        outputs.Add($"[+] updated package: {Markup.Escape(requestedId)} [grey]v{Markup.Escape(confirmedOldVersion)} -> v{Markup.Escape(confirmedVersion)}[/]");
+                        return true;
+                    }
+
                     outputs.Add(FormatProjectCommandFailure("upm update", singleUpdateResponse.Message));
                     return true;
                 }
@@ -1423,9 +1596,12 @@ internal sealed class ProjectViewService
                     session,
                     $"updating {packageId}",
                     TimeSpan.FromSeconds(30),
-                    () => ExecuteProjectCommandAsync(
+                    () => ExecuteUpmMutationWithRecoveryAsync(
                         session,
-                        new ProjectCommandRequestDto("upm-install", null, null, bulkPayload)));
+                        daemonControlService,
+                        daemonRuntime,
+                        new ProjectCommandRequestDto("upm-install", null, null, bulkPayload),
+                        outputs));
                 if (bulkResponse.Ok)
                 {
                     successCount++;
@@ -1435,8 +1611,25 @@ internal sealed class ProjectViewService
                 }
                 else
                 {
-                    failureCount++;
-                    outputs.Add(FormatProjectCommandFailure($"upm update {packageId}", bulkResponse.Message));
+                    var verified = await TryConfirmUpmUpdateSucceededAsync(
+                        session,
+                        packageId,
+                        package.LatestCompatibleVersion);
+                    if (verified.Confirmed)
+                    {
+                        successCount++;
+                        var oldVersion = string.IsNullOrWhiteSpace(package.Version) ? "-" : package.Version!;
+                        var confirmedVersion = string.IsNullOrWhiteSpace(verified.Version)
+                            ? ResolveUpmUpdatedVersion(bulkResponse.Content, package.LatestCompatibleVersion)
+                            : verified.Version!;
+                        outputs.Add("[i] update command timed out, but package state confirms success");
+                        outputs.Add($"[+] updated: {Markup.Escape(packageId)} [grey]v{Markup.Escape(oldVersion)} -> v{Markup.Escape(confirmedVersion)}[/]");
+                    }
+                    else
+                    {
+                        failureCount++;
+                        outputs.Add(FormatProjectCommandFailure($"upm update {packageId}", bulkResponse.Message));
+                    }
                 }
             }
 
@@ -1719,9 +1912,7 @@ internal sealed class ProjectViewService
         while (!task.IsCompleted)
         {
             var elapsed = DateTime.UtcNow - startedAt;
-            var progress = expectedDuration.TotalMilliseconds <= 0
-                ? 0d
-                : Math.Clamp(elapsed.TotalMilliseconds / expectedDuration.TotalMilliseconds, 0d, 0.95d);
+            var progress = ComputeUpmProgress(elapsed, expectedDuration);
             state.CommandTranscript[markerIndex] = BuildUpmProgressLine(activity, frames[tick % frames.Length], progress, elapsed);
             RenderFrame(state);
             tick++;
@@ -1743,6 +1934,26 @@ internal sealed class ProjectViewService
             RenderFrame(state);
             throw;
         }
+    }
+
+    private static double ComputeUpmProgress(TimeSpan elapsed, TimeSpan expectedDuration)
+    {
+        if (expectedDuration.TotalMilliseconds <= 0d)
+        {
+            return 0d;
+        }
+
+        var ratio = elapsed.TotalMilliseconds / expectedDuration.TotalMilliseconds;
+        if (ratio <= 1d)
+        {
+            return Math.Clamp(ratio * 0.9d, 0d, 0.9d);
+        }
+
+        // After expected time, keep moving toward 99% so long-running package operations
+        // look active instead of appearing stuck at a fixed percentage.
+        var overrun = ratio - 1d;
+        var tail = 1d - Math.Exp(-overrun);
+        return Math.Clamp(0.9d + (0.09d * tail), 0.9d, 0.99d);
     }
 
     private static string BuildUpmProgressLine(

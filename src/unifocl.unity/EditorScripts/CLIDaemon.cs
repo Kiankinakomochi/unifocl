@@ -42,6 +42,12 @@ namespace UniFocl.EditorBridge
         private static bool _isBatchMode;
         private static int _inactivityTtlSeconds;
         private static int _mainThreadManagedThreadId;
+        private static string _runtimeInstanceId = Guid.NewGuid().ToString("N");
+        private static volatile bool _editorIsCompiling;
+        private static volatile bool _editorIsUpdating;
+        private static readonly object ProjectCommandStatusLock = new();
+        private static ProjectCommandStatusResponse _projectCommandStatus = new();
+        private static string _projectCommandStageLogSignature = string.Empty;
         private static readonly ConcurrentQueue<MainThreadWorkItem> _mainThreadWorkQueue = new();
         private static readonly ConcurrentQueue<Action> _mainThreadActionQueue = new();
 
@@ -86,6 +92,8 @@ namespace UniFocl.EditorBridge
             _inactivityTtlSeconds = Math.Max(1, options.ttlSeconds);
             _lastActivityUtc = DateTime.UtcNow;
             _mainThreadManagedThreadId = Environment.CurrentManagedThreadId;
+            _runtimeInstanceId = Guid.NewGuid().ToString("N");
+            RefreshEditorStateCache();
 
             _cts = new CancellationTokenSource();
             _listener = new HttpListener();
@@ -154,6 +162,19 @@ namespace UniFocl.EditorBridge
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
                     await WriteTextResponseAsync(context.Response, "PONG");
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime-id", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteTextResponseAsync(context.Response, _runtimeInstanceId);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command-status", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requestedId = request.QueryString["requestId"];
+                    await WriteJsonResponseAsync(context.Response, GetProjectCommandStatusPayload(requestedId));
                     return;
                 }
 
@@ -237,10 +258,13 @@ namespace UniFocl.EditorBridge
                     var payload = await ReadRequestBodyAsync(request);
                     MarkActivity();
                     var action = TryExtractProjectAction(payload);
+                    var requestId = TryExtractProjectRequestId(payload);
                     var stopwatch = Stopwatch.StartNew();
                     Debug.Log($"[unifocl] project command received: action={action}");
+                    BeginProjectCommand(action, requestId);
                     var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.ExecuteAsync(payload));
                     stopwatch.Stop();
+                    CompleteProjectCommandFromResponse(response);
                     Debug.Log($"[unifocl] project command completed: action={action}, elapsedMs={stopwatch.ElapsedMilliseconds}");
                     await WriteJsonResponseAsync(context.Response, response);
                     return;
@@ -270,6 +294,7 @@ namespace UniFocl.EditorBridge
             catch (Exception ex)
             {
                 Debug.LogError($"[unifocl] request failed: {request.HttpMethod} {path} -> {ex}");
+                MarkProjectCommandFailed($"request exception: {ex.GetType().Name}: {ex.Message}");
                 try
                 {
                     var detail = $"ERR: {ex.GetType().Name}: {ex.Message}";
@@ -316,6 +341,42 @@ namespace UniFocl.EditorBridge
             return payload[(valueStart + 1)..valueEnd];
         }
 
+        private static string? TryExtractProjectRequestId(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return null;
+            }
+
+            const string marker = "\"requestId\"";
+            var actionIndex = payload.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (actionIndex < 0)
+            {
+                return null;
+            }
+
+            var colonIndex = payload.IndexOf(':', actionIndex + marker.Length);
+            if (colonIndex < 0)
+            {
+                return null;
+            }
+
+            var valueStart = payload.IndexOf('"', colonIndex + 1);
+            if (valueStart < 0)
+            {
+                return null;
+            }
+
+            var valueEnd = payload.IndexOf('"', valueStart + 1);
+            if (valueEnd <= valueStart)
+            {
+                return null;
+            }
+
+            var requestId = payload[(valueStart + 1)..valueEnd];
+            return string.IsNullOrWhiteSpace(requestId) ? null : requestId;
+        }
+
         private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
         {
             using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
@@ -349,6 +410,8 @@ namespace UniFocl.EditorBridge
 
         private static void OnEditorUpdate()
         {
+            RefreshEditorStateCache();
+
             if (!_running || !_autoExitEditor)
             {
                 return;
@@ -363,6 +426,12 @@ namespace UniFocl.EditorBridge
 
             Debug.Log("[unifocl] CLIDaemon inactivity TTL reached; exiting editor process.");
             StopInternal(quitEditor: true);
+        }
+
+        private static void RefreshEditorStateCache()
+        {
+            _editorIsCompiling = EditorApplication.isCompiling;
+            _editorIsUpdating = EditorApplication.isUpdating;
         }
 
         private static void StopInternal(bool quitEditor)
@@ -502,7 +571,7 @@ namespace UniFocl.EditorBridge
             {
                 try
                 {
-                    completion.TrySetResult(await workAsync());
+                    completion.TrySetResult(await workAsync().ConfigureAwait(false));
                 }
                 catch (Exception ex)
                 {
@@ -583,6 +652,131 @@ namespace UniFocl.EditorBridge
                     Debug.LogError($"[unifocl] delayed main-thread action failed: {ex.GetType().Name}: {ex.Message}");
                 }
             };
+        }
+
+        internal static void UpdateProjectCommandStage(string stage, string detail = "")
+        {
+            lock (ProjectCommandStatusLock)
+            {
+                _projectCommandStatus.stage = string.IsNullOrWhiteSpace(stage) ? _projectCommandStatus.stage : stage;
+                _projectCommandStatus.detail = detail ?? string.Empty;
+                _projectCommandStatus.lastUpdatedAtUtc = DateTime.UtcNow.ToString("O");
+                _projectCommandStatus.isCompiling = _editorIsCompiling;
+                _projectCommandStatus.isUpdating = _editorIsUpdating;
+                var signature =
+                    $"{_projectCommandStatus.requestId}|{_projectCommandStatus.stage}|{_projectCommandStatus.detail}|compiling={_projectCommandStatus.isCompiling}|updating={_projectCommandStatus.isUpdating}";
+                if (string.IsNullOrWhiteSpace(_projectCommandStatus.requestId)
+                    || _projectCommandStatus.requestId.Equals("not-found", StringComparison.Ordinal)
+                    || signature.Equals(_projectCommandStageLogSignature, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _projectCommandStageLogSignature = signature;
+                Debug.Log(
+                    $"[unifocl] project command stage: requestId={_projectCommandStatus.requestId}, action={_projectCommandStatus.action}, stage={_projectCommandStatus.stage}, detail={_projectCommandStatus.detail}, compiling={_projectCommandStatus.isCompiling}, updating={_projectCommandStatus.isUpdating}");
+            }
+        }
+
+        private static void BeginProjectCommand(string action, string? requestId)
+        {
+            lock (ProjectCommandStatusLock)
+            {
+                var now = DateTime.UtcNow.ToString("O");
+                _projectCommandStatus = new ProjectCommandStatusResponse
+                {
+                    requestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId!,
+                    action = action,
+                    active = true,
+                    success = false,
+                    stage = "received",
+                    detail = string.Empty,
+                    startedAtUtc = now,
+                    lastUpdatedAtUtc = now,
+                    finishedAtUtc = string.Empty,
+                    isCompiling = _editorIsCompiling,
+                    isUpdating = _editorIsUpdating
+                };
+                _projectCommandStageLogSignature = string.Empty;
+            }
+        }
+
+        private static void CompleteProjectCommandFromResponse(string responsePayload)
+        {
+            var ok = false;
+            var detail = "project command completed";
+            try
+            {
+                var parsed = JsonUtility.FromJson<ProjectCommandResponse>(responsePayload);
+                if (parsed is not null)
+                {
+                    ok = parsed.ok;
+                    if (!string.IsNullOrWhiteSpace(parsed.message))
+                    {
+                        detail = parsed.message;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            CompleteProjectCommand(ok, detail);
+        }
+
+        private static void MarkProjectCommandFailed(string detail)
+        {
+            lock (ProjectCommandStatusLock)
+            {
+                if (!_projectCommandStatus.active)
+                {
+                    return;
+                }
+            }
+
+            CompleteProjectCommand(false, detail);
+        }
+
+        private static void CompleteProjectCommand(bool success, string detail)
+        {
+            lock (ProjectCommandStatusLock)
+            {
+                _projectCommandStatus.active = false;
+                _projectCommandStatus.success = success;
+                _projectCommandStatus.stage = success ? "completed" : "failed";
+                _projectCommandStatus.detail = detail ?? string.Empty;
+                _projectCommandStatus.lastUpdatedAtUtc = DateTime.UtcNow.ToString("O");
+                _projectCommandStatus.finishedAtUtc = _projectCommandStatus.lastUpdatedAtUtc;
+                _projectCommandStatus.isCompiling = _editorIsCompiling;
+                _projectCommandStatus.isUpdating = _editorIsUpdating;
+            }
+        }
+
+        private static string GetProjectCommandStatusPayload(string? requestedId)
+        {
+            lock (ProjectCommandStatusLock)
+            {
+                if (!string.IsNullOrWhiteSpace(requestedId)
+                    && !_projectCommandStatus.requestId.Equals(requestedId, StringComparison.Ordinal))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandStatusResponse
+                    {
+                        requestId = requestedId,
+                        action = string.Empty,
+                        active = false,
+                        success = false,
+                        stage = "not-found",
+                        detail = "request id not found in current daemon runtime",
+                        startedAtUtc = string.Empty,
+                        lastUpdatedAtUtc = DateTime.UtcNow.ToString("O"),
+                        finishedAtUtc = string.Empty,
+                        isCompiling = _editorIsCompiling,
+                        isUpdating = _editorIsUpdating
+                    });
+                }
+
+                return JsonUtility.ToJson(_projectCommandStatus);
+            }
         }
 
         internal static void MarkAssetIndexDirty() => DaemonAssetIndexService.MarkDirty();

@@ -6,6 +6,7 @@ internal sealed class ProjectViewRenderer
     private const int DefaultFrameWidth = 78;
     private const int MinFrameWidth = 40;
     private const int CommandRows = 8;
+    private const int MaxExpandedErrorRows = 40;
     private sealed record RenderLine(string Content, bool Highlight);
 
     public IReadOnlyList<string> Render(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
@@ -62,12 +63,13 @@ internal sealed class ProjectViewRenderer
             }
         }
 
+        var transcriptRows = ResolveTranscriptRows(state, contentWidth);
         var rows = state.ExpandTranscriptForUpmList
             ? (wrappedTranscript.Count == 0
                 ? [$"UnityCLI:{cwd} > _"]
                 : wrappedTranscript.Append($"UnityCLI:{cwd} > _").ToList())
             : wrappedTranscript
-                .Skip(Math.Max(0, wrappedTranscript.Count - CommandRows))
+                .Skip(Math.Max(0, wrappedTranscript.Count - transcriptRows))
                 .Append($"UnityCLI:{cwd} > _")
                 .ToList();
         for (var i = 0; i < rows.Count; i++)
@@ -173,6 +175,37 @@ internal sealed class ProjectViewRenderer
         }
 
         return wrapped.Count == 0 ? [string.Empty] : wrapped;
+    }
+
+    private static int ResolveTranscriptRows(ProjectViewState state, int contentWidth)
+    {
+        if (state.CommandTranscript.Count == 0)
+        {
+            return CommandRows;
+        }
+
+        var lastLine = state.CommandTranscript[^1];
+        if (!LooksLikeErrorLine(lastLine))
+        {
+            return CommandRows;
+        }
+
+        var wrappedErrorRows = WrapTranscriptLine(lastLine, contentWidth).Count;
+        // Reserve a few lines for nearby context + prompt while keeping the frame bounded.
+        return Math.Clamp(wrappedErrorRows + 3, CommandRows, MaxExpandedErrorRows);
+    }
+
+    private static bool LooksLikeErrorLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return line.Contains("[x]", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("[red]", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("error", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<string> WrapMarkupLine(string markup, int width)

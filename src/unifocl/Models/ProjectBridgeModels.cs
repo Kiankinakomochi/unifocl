@@ -2,7 +2,8 @@ internal sealed record ProjectCommandRequestDto(
     string Action,
     string? AssetPath,
     string? NewAssetPath,
-    string? Content);
+    string? Content,
+    string? RequestId = null);
 
 internal sealed record ProjectCommandResponseDto(
     bool Ok,
@@ -33,3 +34,16 @@ internal sealed record BuildLogChunkDto(
 internal sealed record BuildLogLineDto(
     string Level,
     string Text);
+
+internal sealed record ProjectCommandStatusDto(
+    string RequestId,
+    string Action,
+    bool Active,
+    bool Success,
+    string Stage,
+    string Detail,
+    string StartedAtUtc,
+    string LastUpdatedAtUtc,
+    string FinishedAtUtc,
+    bool IsCompiling,
+    bool IsUpdating);

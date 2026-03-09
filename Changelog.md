@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2a6 - 2026-03-09
+
+### Changed
+- Adopted development incremental versioning with `aX` suffixes (current CLI version: `0.3.2a6`).
+- Added AGENT build/versioning rule requiring `aX` increments for development builds.
+- Added automatic Bridge restart + one-time retry for UPM install/remove/update when project command times out but daemon ping remains healthy.
+- Added post-timeout state verification for `upm update` to avoid false negatives when Unity applied the update but response completion timed out.
+- Added runtime-restart detection during UPM project commands to stop waiting full timeout when Unity domain reload interrupts the in-flight response.
+- Added daemon project-command status endpoint with runtime step telemetry and requestId tracking, and updated UPM transport to use status polling for early completion/failure detection instead of waiting full timeout.
+- Fixed daemon startup regression by removing non-main-thread `EditorApplication.isUpdating/isCompiling` access and switching status reporting to main-thread-cached flags.
+
 ## 0.3.1 - 2026-03-08
 
 ### Added
