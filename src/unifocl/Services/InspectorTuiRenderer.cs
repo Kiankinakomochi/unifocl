@@ -216,8 +216,8 @@ internal sealed class InspectorTuiRenderer
             ? context.PromptPath
             : context.TargetPath;
         var focusLabel = focusModeEnabled
-            ? " | FOCUS: ON (up/down, tab, enter edit, shift+tab, esc, f7/f8)"
-            : " | Focus Key: F8";
+            ? " | FOCUS: ON (up/down, tab, enter edit, shift+tab, esc, f7)"
+            : " | Focus Key: F7";
         return $"UnityCLI v{CliVersion.SemVer} | MODE: INSPECTOR | Target: {target}{focusLabel}";
     }
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0 - 2026-03-09
+
+### Changed
+- Officialized `0.9.0` by closing the development cycle suffix.
+- Added inspector component-list workflow parity with project mode via `component add` / `component remove`, including fuzzy catalog IntelliSense and `DisallowMultipleComponent` guards in bridge mutations.
+- Standardized focus-mode controls to `F7` as the sole toggle across project/hierarchy/inspector contexts and updated keybind labels/docs accordingly.
+- Fixed inspector TUI resilience around focus-exit transitions:
+  - preserve component-list rendering on first focus-mode exit
+  - remove redundant focus on/off stream logs
+  - cap inspector component IntelliSense to first 10 visible suggestions with overflow indicator
+- Fixed prompt badge markup escaping so literal badges render correctly (`[inspect]`, `[safe]`) instead of leaking raw style tags.
+- Bumped bridge protocol to `v4`; projects must re-run `/init` to refresh embedded bridge payload.
+
+## 0.9.0a2 - 2026-03-09
+
+### Changed
+- Fixed inspector `comp` / `component` IntelliSense candidate duplication by enforcing unique component suggestion entries.
+- Fixed inspector composer prompt badge markup escaping so literal badges render correctly (`[inspect]`, `[safe]`) instead of leaking raw style tags.
+
+## 0.9.0a1 - 2026-03-09
+
+### Changed
+- Started the `0.9.0` development cycle with `a1` suffix versioning.
+- Added inspector component-list workflow parity with project mode via `component add` / `component remove`, including fuzzy catalog IntelliSense and `DisallowMultipleComponent` guards in bridge mutations.
+
 ## 0.8.0 - 2026-03-09
 
 ### Changed

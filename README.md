@@ -392,21 +392,20 @@ Use the `f` or `ff` command to trigger fuzzy search across your project or inspe
 The CLI provides keyboard-driven navigation for interacting with lists and structures without typing out indices.
 
 **Global Keybinds**
-* **`F7`**: Toggle focus for Hierarchy TUI, Project navigator, or Recent projects list.
-* **`F8`**: Toggle focus for Inspector.
+* **`F7`**: Toggle focus for Hierarchy TUI, Project navigator, Recent projects list, and Inspector.
 * **`Esc`**: Dismiss Intellisense, or clear input if already dismissed.
 * **`↑` / `↓`**: Navigate fuzzy/Intellisense candidates.
 * **`Enter`**: Insert selected suggestion or commit input.
 
 **Context-Specific Focus Navigation**
-Once focused (`F7` or `F8`), the arrow keys and tab behave contextually:
+Once focused (`F7`), the arrow keys and tab behave contextually:
 
 | Action | Hierarchy Focus | Project Focus | Inspector Focus |
 | :--- | :--- | :--- | :--- |
 | **`↑` / `↓`** | Move highlighted GameObject | Move highlighted file/folder | Move highlighted component/field |
 | **`Tab`** | Expand selected node | Reveal/open selected entry | Inspect selected component |
 | **`Shift+Tab`**| Collapse selected node | Move to parent folder | Back to component list |
-| **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F8` |
+| **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
 
 ---
 

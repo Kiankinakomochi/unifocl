@@ -163,6 +163,7 @@ namespace UniFocl.EditorBridge
     internal sealed class InspectorMutationResponse
     {
         public bool ok;
+        public string message = string.Empty;
     }
 
     [Serializable]
