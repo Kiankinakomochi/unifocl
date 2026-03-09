@@ -130,7 +130,8 @@ namespace UniFocl.EditorBridge
                     name = iterator.propertyPath,
                     value = FormatPropertyValue(iterator),
                     type = iterator.propertyType.ToString(),
-                    isBoolean = iterator.propertyType == SerializedPropertyType.Boolean
+                    isBoolean = iterator.propertyType == SerializedPropertyType.Boolean,
+                    enumOptions = GetEnumOptions(iterator)
                 });
             }
 
@@ -217,7 +218,7 @@ namespace UniFocl.EditorBridge
                 Undo.RecordObject(behaviour, "unifocl toggle component enabled");
                 behaviour.enabled = !behaviour.enabled;
                 EditorUtility.SetDirty(behaviour);
-                EditorSceneManager.MarkSceneDirty(behaviour.gameObject.scene);
+                PersistComponentSceneChanges(behaviour);
                 return true;
             }
 
@@ -226,7 +227,7 @@ namespace UniFocl.EditorBridge
                 Undo.RecordObject(renderer, "unifocl toggle renderer enabled");
                 renderer.enabled = !renderer.enabled;
                 EditorUtility.SetDirty(renderer);
-                EditorSceneManager.MarkSceneDirty(renderer.gameObject.scene);
+                PersistComponentSceneChanges(renderer);
                 return true;
             }
 
@@ -235,7 +236,7 @@ namespace UniFocl.EditorBridge
                 Undo.RecordObject(collider, "unifocl toggle collider enabled");
                 collider.enabled = !collider.enabled;
                 EditorUtility.SetDirty(collider);
-                EditorSceneManager.MarkSceneDirty(collider.gameObject.scene);
+                PersistComponentSceneChanges(collider);
                 return true;
             }
 
@@ -262,7 +263,7 @@ namespace UniFocl.EditorBridge
             property.boolValue = !property.boolValue;
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(component);
-            EditorSceneManager.MarkSceneDirty(component.gameObject.scene);
+            PersistComponentSceneChanges(component);
             return true;
         }
 
@@ -290,8 +291,23 @@ namespace UniFocl.EditorBridge
 
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(component);
-            EditorSceneManager.MarkSceneDirty(component.gameObject.scene);
+            PersistComponentSceneChanges(component);
             return true;
+        }
+
+        private static void PersistComponentSceneChanges(Component component)
+        {
+            var scene = component.gameObject.scene;
+            if (!scene.IsValid())
+            {
+                return;
+            }
+
+            EditorSceneManager.MarkSceneDirty(scene);
+            if (!EditorSceneManager.SaveScene(scene))
+            {
+                Debug.LogWarning($"[unifocl] Failed to save scene '{scene.name}' (path: '{scene.path}') after inspector mutation.");
+            }
         }
 
         private static Component? ResolveComponent(string? targetPath, int componentIndex, string? componentName)
@@ -444,9 +460,22 @@ namespace UniFocl.EditorBridge
                     name = iterator.propertyPath,
                     value = FormatPropertyValue(iterator),
                     type = iterator.propertyType.ToString(),
-                    isBoolean = iterator.propertyType == SerializedPropertyType.Boolean
+                    isBoolean = iterator.propertyType == SerializedPropertyType.Boolean,
+                    enumOptions = GetEnumOptions(iterator)
                 };
             }
+        }
+
+        private static string[] GetEnumOptions(SerializedProperty property)
+        {
+            if (property.propertyType != SerializedPropertyType.Enum || property.enumDisplayNames is null)
+            {
+                return Array.Empty<string>();
+            }
+
+            return property.enumDisplayNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToArray();
         }
 
         private static SerializedProperty? FindPropertyByNameOrPath(SerializedObject serializedObject, string nameOrPath)
