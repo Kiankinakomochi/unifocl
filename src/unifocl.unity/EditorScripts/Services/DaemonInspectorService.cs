@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -218,7 +217,7 @@ namespace UniFocl.EditorBridge
                 Undo.RecordObject(behaviour, "unifocl toggle component enabled");
                 behaviour.enabled = !behaviour.enabled;
                 EditorUtility.SetDirty(behaviour);
-                PersistComponentSceneChanges(behaviour);
+                DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", behaviour.gameObject.scene);
                 return true;
             }
 
@@ -227,7 +226,7 @@ namespace UniFocl.EditorBridge
                 Undo.RecordObject(renderer, "unifocl toggle renderer enabled");
                 renderer.enabled = !renderer.enabled;
                 EditorUtility.SetDirty(renderer);
-                PersistComponentSceneChanges(renderer);
+                DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", renderer.gameObject.scene);
                 return true;
             }
 
@@ -236,7 +235,7 @@ namespace UniFocl.EditorBridge
                 Undo.RecordObject(collider, "unifocl toggle collider enabled");
                 collider.enabled = !collider.enabled;
                 EditorUtility.SetDirty(collider);
-                PersistComponentSceneChanges(collider);
+                DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", collider.gameObject.scene);
                 return true;
             }
 
@@ -263,7 +262,7 @@ namespace UniFocl.EditorBridge
             property.boolValue = !property.boolValue;
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(component);
-            PersistComponentSceneChanges(component);
+            DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", component.gameObject.scene);
             return true;
         }
 
@@ -291,23 +290,8 @@ namespace UniFocl.EditorBridge
 
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(component);
-            PersistComponentSceneChanges(component);
+            DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", component.gameObject.scene);
             return true;
-        }
-
-        private static void PersistComponentSceneChanges(Component component)
-        {
-            var scene = component.gameObject.scene;
-            if (!scene.IsValid())
-            {
-                return;
-            }
-
-            EditorSceneManager.MarkSceneDirty(scene);
-            if (!EditorSceneManager.SaveScene(scene))
-            {
-                Debug.LogWarning($"[unifocl] Failed to save scene '{scene.name}' (path: '{scene.path}') after inspector mutation.");
-            }
         }
 
         private static Component? ResolveComponent(string? targetPath, int componentIndex, string? componentName)
@@ -335,8 +319,7 @@ namespace UniFocl.EditorBridge
 
         private static GameObject? ResolveTarget(string? targetPath)
         {
-            var scene = SceneManager.GetActiveScene();
-            if (!scene.IsValid())
+            if (!DaemonSceneManager.TryGetActiveScene(out var scene))
             {
                 return null;
             }

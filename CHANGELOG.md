@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 - 2026-03-09
+
+### Changed
+- Added `DaemonScenePersistenceService` as the shared save pipeline for Unity scene persistence operations.
+- Added `DaemonSceneManager` to centralize active-scene resolution and scene load/activation transitions for editor bridge services.
+- Hierarchy and inspector mutation flows now persist scenes through the shared persistence service.
+- Project scene-load flow now runs a shared persistence preflight save path before scene switching.
+- Embedded package payload generation now includes `DaemonSceneManager.cs` and `DaemonScenePersistenceService.cs` so `/init` installs compile-complete bridge sources.
+- Bumped bridge protocol to `v3`; projects must re-run `/init` to refresh embedded bridge payload.
+
 ## 0.5.0 - 2026-03-09
 
 ### Patch Train
