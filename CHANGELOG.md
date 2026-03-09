@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.0 - 2026-03-09
+
+### Changed
+- Officialized `0.7.0` by closing the development cycle suffix.
+- Fixed project mk root-parent validation by accepting `Assets`/`Assets/` as valid creation parent paths in bridge validators.
+- Relaxed project mk IntelliSense/fuzzy candidate gating so type suggestions appear reliably whenever project mode is active with an open project.
+- Updated project mk fuzzy suggestion flow:
+  - type-first suggestions without argument noise during initial selection
+  - usage hints only after type selection/continued typing
+  - full list of matching mk type candidates (no 10-line cap)
+- Added project asset creation name-collision handling with `_x` style suffix increments (`_1`, `_2`, ...).
+- Added project remove bulk range support: `remove <startIdx:endIdx>` (inclusive).
+- Added trackable progress spinner for project asset creation and remove operations.
+- Fixed mk fuzzy suggestion commit behavior so Enter prioritizes suggestion insertion during type-selection phase.
+
+## 0.6.0 - 2026-03-09
+
+### Changed
+- Added typed project-mode asset creation workflow aligned with hierarchy `mk` ergonomics:
+  - `make --type <type> [--count <count>] [--name <name>|-n <name>]`
+  - `mk <type> [count] [--name <name>|-n <name>]`
+- Added project mk type catalog and alias normalization for a broad Unity asset/file set (scene/prefab/script/asmdef/shader/material/animation/UI/render pipeline/addressables/localization/testing and related asset families).
+- Added daemon-side `mk-asset` action for project mode to create typed assets and return created paths.
+- Updated project command hints and command palette entries to advertise typed `mk` usage.
+
 ## 0.5.3 - 2026-03-09
 
 ### Changed

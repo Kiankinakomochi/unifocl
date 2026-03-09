@@ -105,8 +105,8 @@ var projectCommands = new List<CommandSpec>
     new("cd <idx>", "Alias for enter", "cd"),
     new("up", "Navigate up one level in active mode", "up"),
     new("..", "Alias for up", ".."),
-    new("make <type> <name>", "Create item in active mode", "make"),
-    new("mk <type> <name>", "Alias for make", "mk"),
+    new("make --type <type> [--count <count>] [--name <name>] [--parent <idx|name>]", "Create typed asset(s) in project mode", "make"),
+    new("mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]", "Alias for make", "mk"),
     new("load <idx|name>", "Load/open scene or script in project mode", "load"),
     new("remove <idx>", "Remove selected item in active mode", "remove"),
     new("rm <idx>", "Alias for remove", "rm"),
@@ -577,7 +577,8 @@ static string? ReadInteractiveInput(
         switch (key.Key)
         {
             case ConsoleKey.Enter:
-                if (intellisenseSelectionArmed
+                if ((intellisenseSelectionArmed
+                     || ShouldCommitSuggestionOnEnter(input.ToString(), session, candidates))
                     && candidates.Count > 0
                     && selectedIntellisenseCandidateIndex >= 0
                     && selectedIntellisenseCandidateIndex < candidates.Count
@@ -702,6 +703,47 @@ static string? ReadInteractiveInput(
     }
 }
 
+static bool ShouldCommitSuggestionOnEnter(
+    string input,
+    CliSessionState session,
+    IReadOnlyList<(string Label, string? CommitCommand)> candidates)
+{
+    if (candidates.Count == 0)
+    {
+        return false;
+    }
+
+    return IsMkTypeSelectionPhase(input, session);
+}
+
+static bool IsMkTypeSelectionPhase(string input, CliSessionState session)
+{
+    if (session.Inspector is not null
+        || session.Mode != CliMode.Project
+        || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+    {
+        return false;
+    }
+
+    var tokens = TokenizeComposerInput(input.TrimStart());
+    if (tokens.Count == 0)
+    {
+        return false;
+    }
+
+    if (tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
+    {
+        return tokens.Count <= 1;
+    }
+
+    if (tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase))
+    {
+        return !HasConcreteMakeType(tokens);
+    }
+
+    return false;
+}
+
 static int RenderComposerFrame(
     string input,
     List<CommandSpec> commands,
@@ -728,6 +770,11 @@ static int RenderComposerFrame(
         lines.Add(string.Empty);
         lines.AddRange(GetSuggestionLines(input, commands, selectedFuzzyCandidateIndex));
     }
+    else if (TryGetProjectMkTypeIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var mkTypeLines))
+    {
+        lines.Add(string.Empty);
+        lines.AddRange(mkTypeLines);
+    }
     else if (TryGetFuzzyQueryIntellisenseLines(input, session, selectedFuzzyCandidateIndex, out var fuzzyLines))
     {
         lines.Add(string.Empty);
@@ -747,7 +794,7 @@ static int RenderComposerFrame(
     }
     else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        lines.Add("[dim]Project mode: list, enter <idx>, up, f <query>, make script <name>, load <idx|name>, rename <idx> <new>, remove <idx>, move <...>, F7 focus nav[/]");
+        lines.Add("[dim]Project mode: list, enter <idx>, up, f <query>, mk <type> [count] [--name], load <idx|name>, rename <idx> <new>, remove <idx>, move <...>, F7 focus nav[/]");
     }
     else
     {
@@ -1029,6 +1076,12 @@ static bool TryGetComposerIntellisenseCandidates(
         return true;
     }
 
+    if (TryGetProjectMkTypeComposerCandidates(input, session, out var mkTypeCandidates))
+    {
+        candidates = mkTypeCandidates;
+        return true;
+    }
+
     if (input.StartsWith('/'))
     {
         candidates = GetSuggestionMatches(input, commands)
@@ -1049,6 +1102,285 @@ static bool TryGetComposerIntellisenseCandidates(
     }
 
     return false;
+}
+
+static bool TryGetProjectMkTypeIntellisenseLines(
+    string input,
+    CliSessionState session,
+    int selectedSuggestionIndex,
+    out List<string> lines)
+{
+    lines = [];
+    if (!TryGetProjectMkTypeComposerCandidates(input, session, out var candidates))
+    {
+        return false;
+    }
+
+    lines.Add("[grey]mk[/]: type suggestions [dim](fuzzy, up/down + enter to insert)[/]");
+    if (candidates.Count == 0)
+    {
+        lines.Add("[dim]no mk type matches[/]");
+        return true;
+    }
+
+    var selected = Math.Clamp(selectedSuggestionIndex, 0, candidates.Count - 1);
+    for (var i = 0; i < candidates.Count; i++)
+    {
+        var candidate = candidates[i];
+        var selectedLine = i == selected;
+        var prefix = selectedLine
+            ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]>[/]"
+            : "[grey] [/]";
+        var escaped = Markup.Escape(candidate.Label);
+        lines.Add(selectedLine
+            ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escaped}[/]"
+            : $"{prefix} [grey]{escaped}[/]");
+    }
+
+    if (TryBuildMkUsageHint(input, candidates, selected, out var usageHint))
+    {
+        lines.Add(string.Empty);
+        lines.Add($"[dim]{Markup.Escape(usageHint)}[/]");
+    }
+
+    return true;
+}
+
+static bool TryGetProjectMkTypeComposerCandidates(
+    string input,
+    CliSessionState session,
+    out List<(string Label, string? CommitCommand)> candidates)
+{
+    candidates = [];
+    if (session.Inspector is not null
+        || session.Mode != CliMode.Project
+        || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+    {
+        return false;
+    }
+
+    var trimmed = input.TrimStart();
+    if (trimmed.StartsWith('/'))
+    {
+        return false;
+    }
+
+    var tokens = TokenizeComposerInput(trimmed);
+    if (tokens.Count == 0)
+    {
+        return false;
+    }
+
+    var isMk = tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase);
+    var isMake = tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase);
+    if (!isMk && !isMake)
+    {
+        return false;
+    }
+
+    var mkTypeQuery = ResolveProjectMkTypeQuery(tokens, isMake);
+    var matches = new List<(string Type, double Score)>();
+    foreach (var type in ProjectMkCatalog.KnownTypes)
+    {
+        var display = FormatMkTypeDisplay(type);
+        if (string.IsNullOrWhiteSpace(mkTypeQuery))
+        {
+            matches.Add((type, 1d));
+            continue;
+        }
+
+        if (display.Contains(mkTypeQuery, StringComparison.OrdinalIgnoreCase)
+            || type.Contains(mkTypeQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            matches.Add((type, 0.9d));
+            continue;
+        }
+
+        if (FuzzyMatcher.TryScore(mkTypeQuery, display, out var displayScore)
+            || FuzzyMatcher.TryScore(mkTypeQuery, type, out displayScore))
+        {
+            matches.Add((type, displayScore));
+        }
+    }
+
+    var ranked = matches
+        .OrderByDescending(match => match.Score)
+        .ThenBy(match => match.Type, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (ranked.Count == 0)
+    {
+        return true;
+    }
+
+    foreach (var match in ranked)
+    {
+        var display = FormatMkTypeDisplay(match.Type);
+        if (isMake)
+        {
+            candidates.Add((
+                $"make --type {display}",
+                $"make --type {match.Type} "));
+        }
+        else
+        {
+            candidates.Add((
+                $"mk {display}",
+                $"mk {match.Type} "));
+        }
+    }
+
+    return true;
+}
+
+static string ResolveProjectMkTypeQuery(IReadOnlyList<string> tokens, bool isMake)
+{
+    if (!isMake)
+    {
+        return tokens.Count >= 2 ? tokens[1] : string.Empty;
+    }
+
+    for (var i = 1; i < tokens.Count; i++)
+    {
+        var token = tokens[i];
+        if (token.Equals("--type", StringComparison.OrdinalIgnoreCase) || token.Equals("-t", StringComparison.OrdinalIgnoreCase))
+        {
+            return i + 1 < tokens.Count ? tokens[i + 1] : string.Empty;
+        }
+
+        if (token.StartsWith("--type=", StringComparison.OrdinalIgnoreCase))
+        {
+            return token["--type=".Length..];
+        }
+    }
+
+    return string.Empty;
+}
+
+static bool TryBuildMkUsageHint(
+    string input,
+    IReadOnlyList<(string Label, string? CommitCommand)> candidates,
+    int selectedIndex,
+    out string usageHint)
+{
+    usageHint = string.Empty;
+    if (candidates.Count == 0 || selectedIndex < 0 || selectedIndex >= candidates.Count)
+    {
+        return false;
+    }
+
+    var tokens = TokenizeComposerInput(input.TrimStart());
+    if (tokens.Count == 0)
+    {
+        return false;
+    }
+
+    var command = tokens[0].ToLowerInvariant();
+    var showUsage = command switch
+    {
+        "mk" => tokens.Count >= 2,
+        "make" => HasConcreteMakeType(tokens),
+        _ => false
+    };
+    if (!showUsage)
+    {
+        return false;
+    }
+
+    var label = candidates[selectedIndex].Label;
+    if (command == "mk" && label.StartsWith("mk ", StringComparison.OrdinalIgnoreCase))
+    {
+        var typeDisplay = label[3..].Trim();
+        usageHint = $"Usage: mk {typeDisplay} [count] [--name <name>|-n <name>] [--parent <idx|name>]";
+        return true;
+    }
+
+    if (command == "make" && label.StartsWith("make --type ", StringComparison.OrdinalIgnoreCase))
+    {
+        var typeDisplay = label["make --type ".Length..].Trim();
+        usageHint = $"Usage: make --type {typeDisplay} [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>]";
+        return true;
+    }
+
+    return false;
+}
+
+static bool HasConcreteMakeType(IReadOnlyList<string> tokens)
+{
+    for (var i = 1; i < tokens.Count; i++)
+    {
+        var token = tokens[i];
+        if (token.StartsWith("--type=", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.IsNullOrWhiteSpace(token["--type=".Length..]);
+        }
+
+        if (token.Equals("--type", StringComparison.OrdinalIgnoreCase) || token.Equals("-t", StringComparison.OrdinalIgnoreCase))
+        {
+            return i + 1 < tokens.Count && !tokens[i + 1].StartsWith("-", StringComparison.Ordinal);
+        }
+    }
+
+    return false;
+}
+
+static string FormatMkTypeDisplay(string canonicalType)
+{
+    if (string.IsNullOrWhiteSpace(canonicalType))
+    {
+        return canonicalType;
+    }
+
+    var builder = new StringBuilder(canonicalType.Length + 4);
+    for (var i = 0; i < canonicalType.Length; i++)
+    {
+        var ch = canonicalType[i];
+        var isBoundary = i > 0
+                         && char.IsUpper(ch)
+                         && (char.IsLower(canonicalType[i - 1]) || char.IsDigit(canonicalType[i - 1]));
+        if (isBoundary)
+        {
+            builder.Append(' ');
+        }
+
+        builder.Append(ch);
+    }
+
+    return builder.ToString();
+}
+
+static List<string> TokenizeComposerInput(string input)
+{
+    var tokens = new List<string>();
+    var current = new StringBuilder();
+    var inQuotes = false;
+    foreach (var ch in input)
+    {
+        if (ch == '"')
+        {
+            inQuotes = !inQuotes;
+            continue;
+        }
+
+        if (!inQuotes && char.IsWhiteSpace(ch))
+        {
+            if (current.Length > 0)
+            {
+                tokens.Add(current.ToString());
+                current.Clear();
+            }
+
+            continue;
+        }
+
+        current.Append(ch);
+    }
+
+    if (current.Length > 0)
+    {
+        tokens.Add(current.ToString());
+    }
+
+    return tokens;
 }
 
 static bool TryGetUpmComposerCandidates(
@@ -1281,7 +1613,7 @@ static bool TryGetFuzzyComposerCandidates(
         return true;
     }
 
-    if (session.ContextMode != CliContextMode.Project)
+    if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
         modeLabel = "available in project/inspector contexts";
         emptyLabel = "switch context to use fuzzy selection";

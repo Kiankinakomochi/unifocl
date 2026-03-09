@@ -65,12 +65,12 @@ internal sealed class ProjectViewService
         {
             handled = HandleNest(index, session.ProjectView, outputs);
         }
-        else if (tokens.Count >= 3
-                 && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase)
-                 && tokens[1].Equals("script", StringComparison.OrdinalIgnoreCase))
+        else if (tokens.Count >= 2
+                 && (tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase)
+                     || tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase)))
         {
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
-            handled = await HandleMakeScriptViaBridgeAsync(tokens[2], session.CurrentProjectPath, session, outputs);
+            handled = await HandleMkViaBridgeAsync(tokens, session, outputs);
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("load", StringComparison.OrdinalIgnoreCase))
         {
@@ -82,10 +82,10 @@ internal sealed class ProjectViewService
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleRenameViaBridgeAsync(index, tokens[2], session, outputs);
         }
-        else if (tokens.Count >= 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
+        else if (tokens.Count >= 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase))
         {
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
-            handled = await HandleRemoveViaBridgeAsync(index, session, outputs);
+            handled = await HandleRemoveViaBridgeAsync(tokens[1], session, outputs);
         }
         else if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
         {
@@ -592,40 +592,56 @@ internal sealed class ProjectViewService
         return expandedEntry.Index;
     }
 
-    private async Task<bool> HandleMakeScriptViaBridgeAsync(
-        string rawName,
-        string projectPath,
+    private async Task<bool> HandleMkViaBridgeAsync(
+        IReadOnlyList<string> tokens,
         CliSessionState session,
         List<string> outputs)
     {
+        if (!TryParseProjectMkArguments(tokens, out var mkTypeRaw, out var count, out var name, out var parentSelector, out var error))
+        {
+            outputs.Add($"[x] {error}");
+            outputs.Add("[x] usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>]");
+            outputs.Add("[x] usage: mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]");
+            return true;
+        }
+
+        if (!ProjectMkCatalog.TryNormalizeType(mkTypeRaw, out var canonicalType, out var typeError))
+        {
+            outputs.Add($"[x] {typeError}");
+            outputs.Add($"[i] supported mk types: {string.Join(", ", ProjectMkCatalog.KnownTypes)}");
+            return true;
+        }
+
+        if (!TryResolveMkParentPath(session, parentSelector, out var parentPath, out var parentError))
+        {
+            outputs.Add($"[x] {parentError}");
+            return true;
+        }
+
+        if (canonicalType.Equals("CSharpScript", StringComparison.OrdinalIgnoreCase)
+            || canonicalType.Equals("ScriptableObjectScript", StringComparison.OrdinalIgnoreCase))
+        {
+            return await HandleScriptMkViaBridgeAsync(canonicalType, count, name, parentPath, session, outputs);
+        }
+
         var state = session.ProjectView;
-        var typeName = SanitizeTypeName(rawName);
-        if (string.IsNullOrWhiteSpace(typeName))
-        {
-            outputs.Add("[x] invalid script name");
-            return true;
-        }
-
-        var targetRelative = CombineRelative(state.RelativeCwd, $"{typeName}.cs");
-        var targetAbsolute = ResolveAbsolutePath(projectPath, targetRelative);
-        if (File.Exists(targetAbsolute))
-        {
-            outputs.Add($"[x] script already exists: {targetRelative}");
-            return true;
-        }
-
-        var template = ResolveTemplate(projectPath);
         state.DbState = ProjectDbState.LockedImporting;
         try
         {
-            outputs.Add($"[*] template: found '{template.TemplateName}' in {template.TemplateSource}");
-            var response = await ExecuteProjectCommandAsync(
+            var payload = JsonSerializer.Serialize(
+                new MkAssetRequestPayload(canonicalType, count, name),
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var response = await RunTrackableProgressAsync(
                 session,
-                new ProjectCommandRequestDto(
-                    "mk-script",
-                    targetRelative,
-                    null,
-                    template.Content.Replace("#NAME#", typeName)));
+                $"creating {canonicalType} asset(s)",
+                TimeSpan.FromSeconds(12),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    new ProjectCommandRequestDto(
+                        "mk-asset",
+                        parentPath,
+                        null,
+                        payload)));
 
             if (!response.Ok)
             {
@@ -633,7 +649,98 @@ internal sealed class ProjectViewService
                 return true;
             }
 
-            outputs.Add($"[+] created: {targetRelative}");
+            var createdPaths = ParseMkAssetCreatedPaths(response.Content);
+            if (createdPaths.Count == 0)
+            {
+                outputs.Add($"[+] created: {canonicalType}");
+            }
+            else
+            {
+                outputs.Add($"[+] created {createdPaths.Count} {canonicalType} asset(s)");
+                foreach (var path in createdPaths)
+                {
+                    outputs.Add($"    - {path}");
+                }
+            }
+
+            await SyncAssetIndexAsync(session);
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                RefreshTree(session.CurrentProjectPath, state);
+            }
+
+            return true;
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
+    }
+
+    private async Task<bool> HandleScriptMkViaBridgeAsync(
+        string canonicalType,
+        int count,
+        string? name,
+        string parentPath,
+        CliSessionState session,
+        List<string> outputs)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            outputs.Add("[x] no active project");
+            return true;
+        }
+
+        var projectPath = session.CurrentProjectPath!;
+        var state = session.ProjectView;
+        var created = new List<string>();
+        state.DbState = ProjectDbState.LockedImporting;
+        try
+        {
+            var template = ResolveTemplate(projectPath);
+            outputs.Add($"[*] template: found '{template.TemplateName}' in {template.TemplateSource}");
+            for (var i = 0; i < count; i++)
+            {
+                var rawName = ResolveScriptCreateName(canonicalType, name, i, count);
+                var typeName = SanitizeTypeName(rawName);
+                if (string.IsNullOrWhiteSpace(typeName))
+                {
+                    outputs.Add("[x] invalid script name");
+                    return true;
+                }
+
+                var uniqueTypeName = ResolveUniqueScriptTypeName(projectPath, parentPath, typeName);
+                var targetRelative = CombineRelative(parentPath, $"{uniqueTypeName}.cs");
+
+                var content = canonicalType.Equals("ScriptableObjectScript", StringComparison.OrdinalIgnoreCase)
+                    ? BuildScriptableObjectTemplate(uniqueTypeName)
+                    : template.Content.Replace("#NAME#", uniqueTypeName);
+
+                var response = await RunTrackableProgressAsync(
+                    session,
+                    $"creating script {uniqueTypeName}.cs",
+                    TimeSpan.FromSeconds(8),
+                    () => ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto(
+                            "mk-script",
+                            targetRelative,
+                            null,
+                            content)));
+                if (!response.Ok)
+                {
+                    outputs.Add(FormatProjectCommandFailure("create", response.Message));
+                    return true;
+                }
+
+                created.Add(targetRelative);
+            }
+
+            foreach (var path in created)
+            {
+                outputs.Add($"[+] created: {path}");
+            }
+
             await SyncAssetIndexAsync(session);
             RefreshTree(projectPath, state);
             return true;
@@ -644,43 +751,111 @@ internal sealed class ProjectViewService
         }
     }
 
-    private async Task<bool> HandleRemoveViaBridgeAsync(int index, CliSessionState session, List<string> outputs)
+    private async Task<bool> HandleRemoveViaBridgeAsync(string selector, CliSessionState session, List<string> outputs)
     {
         var state = session.ProjectView;
-        var target = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
-        if (target is null)
+        if (string.IsNullOrWhiteSpace(selector))
         {
-            outputs.Add($"[x] invalid index: {index}");
+            outputs.Add("[x] usage: remove <idx|start:end>");
             return true;
         }
 
-        state.DbState = ProjectDbState.LockedImporting;
-        try
+        var targets = new List<ProjectTreeEntry>();
+        if (TryParseRemoveIndexRange(selector, out var startIndex, out var endIndex, out var rangeError))
         {
-            var sourcePath = target.RelativePath;
-            var response = await ExecuteProjectCommandAsync(
-                session,
-                new ProjectCommandRequestDto("remove-asset", sourcePath, null, null));
-            if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+            if (!string.IsNullOrWhiteSpace(rangeError))
             {
-                var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourcePath, allowDirectoryFallback: target.IsDirectory);
-                if (!string.IsNullOrWhiteSpace(fallbackPath)
-                    && !fallbackPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
-                {
-                    sourcePath = fallbackPath;
-                    response = await ExecuteProjectCommandAsync(
-                        session,
-                        new ProjectCommandRequestDto("remove-asset", sourcePath, null, null));
-                }
-            }
-
-            if (!response.Ok)
-            {
-                outputs.Add(FormatProjectCommandFailure("remove", response.Message));
+                outputs.Add($"[x] {rangeError}");
                 return true;
             }
 
-            outputs.Add($"[=] removed: {sourcePath}");
+            var selected = state.VisibleEntries
+                .Where(entry => entry.Index >= startIndex && entry.Index <= endIndex)
+                .OrderByDescending(entry => entry.Index)
+                .ToList();
+            if (selected.Count == 0)
+            {
+                outputs.Add($"[x] no entries in range: {startIndex}:{endIndex}");
+                return true;
+            }
+
+            targets.AddRange(selected);
+        }
+        else if (int.TryParse(selector, out var singleIndex))
+        {
+            var target = state.VisibleEntries.FirstOrDefault(entry => entry.Index == singleIndex);
+            if (target is null)
+            {
+                outputs.Add($"[x] invalid index: {singleIndex}");
+                return true;
+            }
+
+            targets.Add(target);
+        }
+        else
+        {
+            outputs.Add("[x] usage: remove <idx|start:end>");
+            return true;
+        }
+
+        var removedPaths = new List<string>();
+        state.DbState = ProjectDbState.LockedImporting;
+        try
+        {
+            foreach (var target in targets)
+            {
+                var sourcePath = target.RelativePath;
+                var response = await RunTrackableProgressAsync(
+                    session,
+                    $"removing {Path.GetFileName(sourcePath)}",
+                    TimeSpan.FromSeconds(6),
+                    () => ExecuteProjectCommandAsync(
+                        session,
+                        new ProjectCommandRequestDto("remove-asset", sourcePath, null, null)));
+                if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+                {
+                    var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourcePath, allowDirectoryFallback: target.IsDirectory);
+                    if (!string.IsNullOrWhiteSpace(fallbackPath)
+                        && !fallbackPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        sourcePath = fallbackPath;
+                        response = await RunTrackableProgressAsync(
+                            session,
+                            $"removing {Path.GetFileName(sourcePath)}",
+                            TimeSpan.FromSeconds(6),
+                            () => ExecuteProjectCommandAsync(
+                                session,
+                                new ProjectCommandRequestDto("remove-asset", sourcePath, null, null)));
+                    }
+                }
+
+                if (!response.Ok)
+                {
+                    outputs.Add(FormatProjectCommandFailure("remove", response.Message));
+                    if (targets.Count > 1)
+                    {
+                        outputs.Add($"[i] removed {removedPaths.Count}/{targets.Count} before failure");
+                    }
+
+                    return true;
+                }
+
+                removedPaths.Add(sourcePath);
+            }
+
+            if (removedPaths.Count == 1)
+            {
+                outputs.Add($"[=] removed: {removedPaths[0]}");
+            }
+            else
+            {
+                outputs.Add($"[=] removed {removedPaths.Count} assets");
+                foreach (var path in removedPaths)
+                {
+                    outputs.Add($"    - {path}");
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
             {
                 RefreshTree(session.CurrentProjectPath, state);
@@ -693,6 +868,45 @@ internal sealed class ProjectViewService
         {
             state.DbState = ProjectDbState.IdleSafe;
         }
+    }
+
+    private static bool TryParseRemoveIndexRange(
+        string selector,
+        out int startIndex,
+        out int endIndex,
+        out string? error)
+    {
+        startIndex = 0;
+        endIndex = 0;
+        error = null;
+        var trimmed = selector.Trim();
+        var separator = trimmed.IndexOf(':');
+        if (separator < 0)
+        {
+            return false;
+        }
+
+        var startRaw = trimmed[..separator];
+        var endRaw = separator + 1 < trimmed.Length ? trimmed[(separator + 1)..] : string.Empty;
+        if (!int.TryParse(startRaw, out startIndex) || !int.TryParse(endRaw, out endIndex))
+        {
+            error = "range must be numeric: <start:end>";
+            return true;
+        }
+
+        if (startIndex < 0 || endIndex < 0)
+        {
+            error = "range indices must be non-negative";
+            return true;
+        }
+
+        if (startIndex > endIndex)
+        {
+            error = "range start must be <= end";
+            return true;
+        }
+
+        return true;
     }
 
     private async Task<bool> HandleLoadViaBridgeAsync(
@@ -2094,6 +2308,344 @@ internal sealed class ProjectViewService
             requireBridgeMode);
     }
 
+    private static bool TryResolveMkParentPath(
+        CliSessionState session,
+        string? parentSelector,
+        out string parentPath,
+        out string error)
+    {
+        parentPath = "Assets";
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(parentSelector))
+        {
+            return true;
+        }
+
+        var selector = parentSelector.Trim();
+        if (selector.Equals("Assets", StringComparison.OrdinalIgnoreCase)
+            || selector.Equals("/", StringComparison.OrdinalIgnoreCase)
+            || selector.Equals("root", StringComparison.OrdinalIgnoreCase))
+        {
+            parentPath = "Assets";
+            return true;
+        }
+
+        var state = session.ProjectView;
+        var entry = FindEntryBySelector(state, selector);
+        if (entry is not null)
+        {
+            if (!entry.IsDirectory)
+            {
+                error = $"--parent target is not a folder: {selector}";
+                return false;
+            }
+
+            parentPath = entry.RelativePath;
+            return true;
+        }
+
+        var normalized = selector.Replace('\\', '/').Trim('/');
+        var relative = normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : $"Assets/{normalized}";
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            error = $"parent folder not found: {selector}";
+            return false;
+        }
+
+        var absolute = ResolveAbsolutePath(session.CurrentProjectPath!, relative);
+        if (!Directory.Exists(absolute))
+        {
+            error = $"parent folder not found: {selector}";
+            return false;
+        }
+
+        parentPath = relative;
+        return true;
+    }
+
+    private static bool TryParseProjectMkArguments(
+        IReadOnlyList<string> tokens,
+        out string mkType,
+        out int count,
+        out string? name,
+        out string? parent,
+        out string error)
+    {
+        mkType = string.Empty;
+        count = 1;
+        name = null;
+        parent = null;
+        error = "usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>] | mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]";
+        if (tokens.Count == 0)
+        {
+            return false;
+        }
+
+        var isMake = tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase)
+                     || (tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase)
+                         && tokens.Count >= 2
+                         && (tokens[1].StartsWith("--type", StringComparison.OrdinalIgnoreCase)
+                             || tokens[1].StartsWith("-t", StringComparison.OrdinalIgnoreCase)));
+        if (isMake)
+        {
+            if (tokens.Count < 3)
+            {
+                return false;
+            }
+
+            for (var i = 1; i < tokens.Count; i++)
+            {
+                var token = tokens[i];
+                if (token.Equals("--type", StringComparison.OrdinalIgnoreCase) || token.Equals("-t", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count)
+                    {
+                        error = "usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>]";
+                        return false;
+                    }
+
+                    mkType = tokens[++i];
+                    continue;
+                }
+
+                if (token.StartsWith("--type=", StringComparison.OrdinalIgnoreCase))
+                {
+                    mkType = token["--type=".Length..];
+                    continue;
+                }
+
+                if (token.Equals("--count", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count || !int.TryParse(tokens[++i], out count) || count <= 0)
+                    {
+                        error = "count must be a positive integer";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+                {
+                    var raw = token["--count=".Length..];
+                    if (!int.TryParse(raw, out count) || count <= 0)
+                    {
+                        error = "count must be a positive integer";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.StartsWith("--name=", StringComparison.OrdinalIgnoreCase))
+                {
+                    name = token["--name=".Length..].Trim();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        error = "name must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.StartsWith("-n=", StringComparison.OrdinalIgnoreCase))
+                {
+                    name = token["-n=".Length..].Trim();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        error = "name must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.Equals("--name", StringComparison.OrdinalIgnoreCase) || token.Equals("-n", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count)
+                    {
+                        error = "usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>]";
+                        return false;
+                    }
+
+                    name = tokens[++i].Trim();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        error = "name must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.StartsWith("--parent=", StringComparison.OrdinalIgnoreCase))
+                {
+                    parent = token["--parent=".Length..].Trim();
+                    if (string.IsNullOrWhiteSpace(parent))
+                    {
+                        error = "parent must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.Equals("--parent", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count)
+                    {
+                        error = "usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>]";
+                        return false;
+                    }
+
+                    parent = tokens[++i].Trim();
+                    if (string.IsNullOrWhiteSpace(parent))
+                    {
+                        error = "parent must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                error = $"unsupported option: {token}";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(mkType))
+            {
+                error = "missing --type <type>";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (tokens.Count < 2)
+        {
+            error = "usage: mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]";
+            return false;
+        }
+
+        mkType = tokens[1];
+        var countSpecified = false;
+        for (var i = 2; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+            {
+                var raw = token["--count=".Length..];
+                if (!int.TryParse(raw, out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                countSpecified = true;
+                continue;
+            }
+
+            if (token.Equals("--count", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count || !int.TryParse(tokens[++i], out count) || count <= 0)
+                {
+                    error = "count must be a positive integer";
+                    return false;
+                }
+
+                countSpecified = true;
+                continue;
+            }
+
+            if (token.StartsWith("--name=", StringComparison.OrdinalIgnoreCase))
+            {
+                name = token["--name=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.StartsWith("-n=", StringComparison.OrdinalIgnoreCase))
+            {
+                name = token["-n=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+                if (token.Equals("--name", StringComparison.OrdinalIgnoreCase) || token.Equals("-n", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count)
+                    {
+                        error = "usage: mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]";
+                        return false;
+                    }
+
+                name = tokens[++i].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    error = "name must not be empty";
+                    return false;
+                }
+
+                    continue;
+                }
+
+                if (token.StartsWith("--parent=", StringComparison.OrdinalIgnoreCase))
+                {
+                    parent = token["--parent=".Length..].Trim();
+                    if (string.IsNullOrWhiteSpace(parent))
+                    {
+                        error = "parent must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (token.Equals("--parent", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= tokens.Count)
+                    {
+                        error = "usage: mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]";
+                        return false;
+                    }
+
+                    parent = tokens[++i].Trim();
+                    if (string.IsNullOrWhiteSpace(parent))
+                    {
+                        error = "parent must not be empty";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+            if (!countSpecified && int.TryParse(token, out var parsedCount) && parsedCount > 0)
+            {
+                count = parsedCount;
+                countSpecified = true;
+                continue;
+            }
+
+            error = $"unsupported mk argument: {token}";
+            return false;
+        }
+
+        return true;
+    }
+
     private static (string TemplateName, string TemplateSource, string Content) ResolveTemplate(string projectPath)
     {
         var templatesJsonPath = Path.Combine(projectPath, "templates.json");
@@ -2177,6 +2729,66 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
         }
 
         return value;
+    }
+
+    private static string ResolveScriptCreateName(string canonicalType, string? baseName, int index, int count)
+    {
+        var defaultBase = canonicalType.Equals("ScriptableObjectScript", StringComparison.OrdinalIgnoreCase)
+            ? "NewScriptableObject"
+            : "NewScript";
+        var resolvedBase = string.IsNullOrWhiteSpace(baseName) ? defaultBase : baseName.Trim();
+        return count > 1 ? $"{resolvedBase}_{index + 1}" : resolvedBase;
+    }
+
+    private static string ResolveUniqueScriptTypeName(string projectPath, string parentPath, string baseTypeName)
+    {
+        var candidate = baseTypeName;
+        var suffix = 1;
+        while (true)
+        {
+            var candidateRelative = CombineRelative(parentPath, $"{candidate}.cs");
+            var candidateAbsolute = ResolveAbsolutePath(projectPath, candidateRelative);
+            if (!File.Exists(candidateAbsolute))
+            {
+                return candidate;
+            }
+
+            candidate = $"{baseTypeName}_{suffix++}";
+        }
+    }
+
+    private static string BuildScriptableObjectTemplate(string typeName)
+    {
+        return
+$"using UnityEngine;{Environment.NewLine}{Environment.NewLine}[CreateAssetMenu(fileName = \"{typeName}\", menuName = \"ScriptableObjects/{typeName}\")]{Environment.NewLine}public class {typeName} : ScriptableObject{Environment.NewLine}{{{Environment.NewLine}}}{Environment.NewLine}";
+    }
+
+    private static List<string> ParseMkAssetCreatedPaths(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return [];
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<MkAssetResponsePayload>(
+                content,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (parsed?.CreatedPaths is null || parsed.CreatedPaths.Count == 0)
+            {
+                return [];
+            }
+
+            return parsed.CreatedPaths
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => path!)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private async Task SyncAssetIndexAsync(CliSessionState session)
@@ -2310,6 +2922,14 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME
         bool IncludeOutdated,
         bool IncludeBuiltin,
         bool IncludeGit);
+
+    private sealed record MkAssetRequestPayload(
+        string Type,
+        int Count,
+        string? Name);
+
+    private sealed record MkAssetResponsePayload(
+        List<string>? CreatedPaths);
 
     private sealed record UpmInstallRequestPayload(
         string Target);
