@@ -1,5 +1,8 @@
 using Spectre.Console;
+using System.Diagnostics;
+using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 
 var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 if (BuildLogTailService.TryRunFromArgs(launchArgs))
@@ -73,6 +76,7 @@ var commands = new List<CommandSpec>
     new("/update", "Check for CLI updates", "/update"),
     new("/version", "Show CLI and protocol version", "/version"),
     new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
+    new("/dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]", "Dump deterministic mode state for agentic workflows", "/dump"),
     new("/upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "/upm list"),
     new("/upm ls [--outdated] [--builtin] [--git]", "Alias for /upm list", "/upm ls"),
     new("/upm install <target>", "Install Unity package by registry ID, Git URL, or file: path", "/upm install"),
@@ -178,6 +182,33 @@ var projectLifecycleService = new ProjectLifecycleService();
 var projectCommandRouterService = new ProjectCommandRouterService();
 var hierarchyTui = new HierarchyTui();
 var buildCommandService = new BuildCommandService();
+if (TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
+{
+    if (!string.IsNullOrWhiteSpace(execError))
+    {
+        CliTheme.MarkupLine($"[red]{Markup.Escape(execError)}[/]");
+        Environment.ExitCode = 2;
+        return;
+    }
+
+    CliRuntimeState.SuppressConsoleOutput = execOptions!.Agentic;
+    var envelope = await ExecuteOneShotCommandAsync(
+        execOptions,
+        commands,
+        streamLog,
+        session,
+        daemonControlService,
+        daemonRuntime,
+        projectLifecycleService,
+        projectCommandRouterService,
+        hierarchyTui,
+        buildCommandService);
+    var payload = AgenticFormatter.SerializeEnvelope(envelope, execOptions.Format);
+    Console.Out.WriteLine(payload);
+    Environment.ExitCode = envelope.Meta.ExitCode;
+    return;
+}
+
 SeedBootLog(streamLog);
 RenderInitialLog(streamLog);
 
@@ -470,6 +501,14 @@ while (true)
         if (matched.Trigger == "/protocol")
         {
             AppendLog(streamLog, $"[grey]protocol[/]: [white]{Markup.Escape(CliVersion.Protocol)}[/]");
+            AppendLog(streamLog, "[grey]agentic[/]: schema v1, formats=json|yaml, endpoints=/agent/exec,/agent/capabilities,/agent/status,/agent/dump/{hierarchy|project|inspector}");
+            AppendLog(streamLog, "[grey]agentic[/]: exit-codes 0=success, 2=validation, 3=daemon-unavailable, 4=execution-error");
+            continue;
+        }
+
+        if (matched.Trigger == "/dump")
+        {
+            await HandleDumpCommandAsync(input, session, streamLog);
             continue;
         }
 
@@ -1763,6 +1802,857 @@ static bool PassesProjectTypeFilter(string path, string? typeFilter)
     };
 }
 
+static bool TryParseExecLaunchOptions(string[] args, out ExecLaunchOptions? options, out string? error)
+{
+    options = null;
+    error = null;
+    if (args.Length == 0)
+    {
+        return false;
+    }
+
+    var hasAgenticFlag = args.Any(arg => arg.Equals("--agentic", StringComparison.OrdinalIgnoreCase));
+    if (!args[0].Equals("exec", StringComparison.OrdinalIgnoreCase))
+    {
+        if (hasAgenticFlag)
+        {
+            error = "--agentic is supported with 'exec' only. Use: unifocl exec \"<command>\" --agentic";
+            return true;
+        }
+
+        return false;
+    }
+
+    var agentic = false;
+    var format = AgenticOutputFormat.Json;
+    string? projectPath = null;
+    CliContextMode? contextMode = null;
+    int? attachPort = null;
+    string? requestId = null;
+    var commandTokens = new List<string>();
+
+    for (var i = 1; i < args.Length; i++)
+    {
+        var token = args[i];
+        if (token.Equals("--agentic", StringComparison.OrdinalIgnoreCase))
+        {
+            agentic = true;
+            continue;
+        }
+
+        if (token.Equals("--format", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length)
+            {
+                error = "missing value for --format (json|yaml)";
+                return true;
+            }
+
+            var raw = args[++i].Trim().ToLowerInvariant();
+            if (raw == "json")
+            {
+                format = AgenticOutputFormat.Json;
+            }
+            else if (raw == "yaml")
+            {
+                format = AgenticOutputFormat.Yaml;
+            }
+            else
+            {
+                error = "invalid --format value (use json|yaml)";
+                return true;
+            }
+            continue;
+        }
+
+        if (token.Equals("--project", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length)
+            {
+                error = "missing value for --project";
+                return true;
+            }
+
+            projectPath = args[++i];
+            continue;
+        }
+
+        if (token.Equals("--mode", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length)
+            {
+                error = "missing value for --mode";
+                return true;
+            }
+
+            var rawMode = args[++i].Trim().ToLowerInvariant();
+            contextMode = rawMode switch
+            {
+                "project" => CliContextMode.Project,
+                "hierarchy" => CliContextMode.Hierarchy,
+                "inspector" => CliContextMode.Inspector,
+                _ => CliContextMode.None
+            };
+            if (contextMode == CliContextMode.None)
+            {
+                error = "invalid --mode value (use project|hierarchy|inspector)";
+                return true;
+            }
+            continue;
+        }
+
+        if (token.Equals("--attach-port", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length || !int.TryParse(args[++i], out var parsedPort) || parsedPort is < 1 or > 65535)
+            {
+                error = "invalid --attach-port value";
+                return true;
+            }
+
+            attachPort = parsedPort;
+            continue;
+        }
+
+        if (token.Equals("--request-id", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length)
+            {
+                error = "missing value for --request-id";
+                return true;
+            }
+
+            requestId = args[++i];
+            continue;
+        }
+
+        commandTokens.Add(token);
+    }
+
+    if (commandTokens.Count == 0)
+    {
+        error = "exec requires a command text";
+        return true;
+    }
+
+    options = new ExecLaunchOptions(
+        string.Join(' ', commandTokens),
+        agentic,
+        format,
+        projectPath,
+        contextMode,
+        attachPort,
+        requestId);
+    return true;
+}
+
+static async Task<AgenticResponseEnvelope> ExecuteOneShotCommandAsync(
+    ExecLaunchOptions options,
+    List<CommandSpec> commands,
+    List<string> streamLog,
+    CliSessionState session,
+    DaemonControlService daemonControlService,
+    DaemonRuntime daemonRuntime,
+    ProjectLifecycleService projectLifecycleService,
+    ProjectCommandRouterService projectCommandRouterService,
+    HierarchyTui hierarchyTui,
+    BuildCommandService buildCommandService)
+{
+    var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
+    var extraMeta = new Dictionary<string, object?>(StringComparer.Ordinal)
+    {
+        ["command"] = options.CommandText
+    };
+
+    if (!string.IsNullOrWhiteSpace(options.ProjectPath))
+    {
+        session.CurrentProjectPath = Path.GetFullPath(options.ProjectPath!);
+        session.Mode = CliMode.Project;
+        session.ContextMode = options.ContextMode ?? CliContextMode.Project;
+    }
+
+    if (options.AttachPort is not null)
+    {
+        session.AttachedPort = options.AttachPort.Value;
+    }
+
+    if (options.ContextMode is not null)
+    {
+        session.ContextMode = options.ContextMode.Value;
+    }
+
+    if (session.ContextMode == CliContextMode.None
+        && session.Mode == CliMode.Project
+        && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+    {
+        session.ContextMode = CliContextMode.Project;
+    }
+
+    object? data = null;
+    var errors = new List<AgenticError>();
+    var warnings = new List<AgenticWarning>();
+    try
+    {
+        var input = options.CommandText.Trim();
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            errors.Add(new AgenticError("E_PARSE", "empty command text", "pass a command after exec"));
+        }
+        else if (input.StartsWith("/dump", StringComparison.OrdinalIgnoreCase))
+        {
+            var dump = await ExecuteDumpCommandAsync(input, session);
+            if (!dump.Ok)
+            {
+                errors.Add(dump.Error!);
+            }
+            else
+            {
+                data = dump.PayloadData;
+                extraMeta["format"] = dump.Format.ToString().ToLowerInvariant();
+                extraMeta["category"] = $"dump-{dump.Category}";
+            }
+        }
+        else
+        {
+            await ExecuteCommandForOneShotAsync(
+                input,
+                commands,
+                streamLog,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                projectLifecycleService,
+                projectCommandRouterService,
+                hierarchyTui,
+                buildCommandService);
+            var parsed = ParseAgenticIssuesFromLogs(streamLog);
+            errors.AddRange(parsed.Errors);
+            warnings.AddRange(parsed.Warnings);
+            data = new Dictionary<string, object?>
+            {
+                ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
+            };
+        }
+    }
+    catch (Exception ex)
+    {
+        errors.Add(new AgenticError("E_INTERNAL", $"unhandled execution exception: {ex.GetType().Name}: {ex.Message}"));
+    }
+
+    var exitCode = ResolveExitCode(errors);
+    var modeName = session.ContextMode switch
+    {
+        CliContextMode.Project => "project",
+        CliContextMode.Hierarchy => "hierarchy",
+        CliContextMode.Inspector => "inspector",
+        _ => "none"
+    };
+    var action = ExtractActionLabel(options.CommandText);
+
+    return new AgenticResponseEnvelope(
+        errors.Count == 0 ? "success" : "error",
+        requestId,
+        modeName,
+        action,
+        data,
+        errors,
+        warnings,
+        new AgenticMeta(
+            "agentic.v1",
+            CliVersion.Protocol,
+            exitCode,
+            DateTime.UtcNow.ToString("O"),
+            extraMeta));
+}
+
+static async Task ExecuteCommandForOneShotAsync(
+    string input,
+    List<CommandSpec> commands,
+    List<string> streamLog,
+    CliSessionState session,
+    DaemonControlService daemonControlService,
+    DaemonRuntime daemonRuntime,
+    ProjectLifecycleService projectLifecycleService,
+    ProjectCommandRouterService projectCommandRouterService,
+    HierarchyTui hierarchyTui,
+    BuildCommandService buildCommandService)
+{
+    if (input.Equals(":focus-recent", StringComparison.OrdinalIgnoreCase))
+    {
+        await projectLifecycleService.TryHandleRecentSelectionToggleAsync(
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        return;
+    }
+
+    if (!input.StartsWith('/'))
+    {
+        if (TryNormalizeProjectBuildCommand(input, out var normalizedBuildInput))
+        {
+            await buildCommandService.HandleBuildCommandAsync(
+                normalizedBuildInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+            return;
+        }
+
+        var handledProjectCommand = await projectCommandRouterService.TryHandleProjectCommandAsync(
+            input,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        if (!handledProjectCommand)
+        {
+            AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
+        }
+
+        return;
+    }
+
+    if (input == "/")
+    {
+        return;
+    }
+
+    input = NormalizeSlashCommand(input);
+    var matched = MatchCommand(input, commands);
+    if (matched is null)
+    {
+        AppendLog(streamLog, $"[grey]system[/]: unknown command [white]{Markup.Escape(input)}[/]");
+        return;
+    }
+
+    if (matched.Trigger == "/quit")
+    {
+        AppendLog(streamLog, "[grey]Session closed.[/]");
+        return;
+    }
+
+    if (matched.Trigger == "/clear")
+    {
+        streamLog.Clear();
+        return;
+    }
+
+    if (matched.Trigger == "/dump")
+    {
+        await HandleDumpCommandAsync(input, session, streamLog);
+        return;
+    }
+
+    if (matched.Trigger == "/project")
+    {
+        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+            return;
+        }
+
+        session.ContextMode = CliContextMode.Project;
+        session.Inspector = null;
+        await projectCommandRouterService.TryHandleProjectCommandAsync(
+            string.Empty,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        return;
+    }
+
+    if (matched.Trigger == "/inspect")
+    {
+        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+            return;
+        }
+
+        var inspectInput = input.Length > "/inspect".Length
+            ? $"inspect {input["/inspect".Length..].Trim()}"
+            : "inspect";
+        await projectCommandRouterService.TryHandleProjectCommandAsync(
+            inspectInput,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        if (session.Inspector is not null)
+        {
+            session.ContextMode = CliContextMode.Inspector;
+        }
+
+        return;
+    }
+
+    if (matched.Trigger.StartsWith("/upm", StringComparison.Ordinal))
+    {
+        if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+            return;
+        }
+
+        var upmInput = input.Length > "/upm".Length
+            ? $"upm {input["/upm".Length..].Trim()}"
+            : "upm";
+        var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+            upmInput,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        if (!handled)
+        {
+            AppendLog(streamLog, "[yellow]upm[/]: unsupported /upm command");
+        }
+
+        return;
+    }
+
+    if (matched.Trigger.StartsWith("/build", StringComparison.Ordinal))
+    {
+        await buildCommandService.HandleBuildCommandAsync(
+            input,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line));
+        return;
+    }
+
+    if (matched.Trigger is "/version")
+    {
+        var processPath = Environment.ProcessPath ?? AppContext.BaseDirectory;
+        AppendLog(streamLog, $"[grey]version[/]: cli [white]{Markup.Escape(CliVersion.SemVer)}[/], protocol [white]{Markup.Escape(CliVersion.Protocol)}[/]");
+        AppendLog(streamLog, $"[grey]binary[/]: [white]{Markup.Escape(processPath)}[/]");
+        return;
+    }
+
+    if (matched.Trigger is "/protocol")
+    {
+        AppendLog(streamLog, $"[grey]protocol[/]: [white]{Markup.Escape(CliVersion.Protocol)}[/]");
+        AppendLog(streamLog, "[grey]agentic[/]: schema v1, formats=json|yaml, endpoints=/agent/exec,/agent/capabilities,/agent/status,/agent/dump/{hierarchy|project|inspector}");
+        return;
+    }
+
+    AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
+    if (matched.Trigger.StartsWith("/daemon", StringComparison.Ordinal))
+    {
+        await daemonControlService.HandleDaemonCommandAsync(
+            input,
+            matched.Trigger,
+            daemonRuntime,
+            session,
+            line => AppendLog(streamLog, line),
+            streamLog);
+        if (matched.Trigger == "/daemon attach")
+        {
+            await buildCommandService.NotifyAttachedBuildIfAnyAsync(
+                session,
+                line => AppendLog(streamLog, line));
+        }
+
+        return;
+    }
+
+    if (await projectLifecycleService.TryHandleLifecycleCommandAsync(
+            input,
+            matched,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => AppendLog(streamLog, line)))
+    {
+        if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone" || matched.Trigger == "/recent")
+            && session.Mode == CliMode.Project
+            && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            await projectCommandRouterService.TryHandleProjectCommandAsync(
+                string.Empty,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => AppendLog(streamLog, line));
+        }
+
+        return;
+    }
+
+    AppendLog(streamLog, $"[yellow]command[/]: not implemented yet -> {Markup.Escape(matched.Signature)}");
+    AppendLog(streamLog, "[grey]hint[/]: run /help for implemented commands and mode-specific workflows");
+}
+
+static async Task HandleDumpCommandAsync(string input, CliSessionState session, List<string> streamLog)
+{
+    var result = await ExecuteDumpCommandAsync(input, session);
+    if (!result.Ok)
+    {
+        AppendLog(streamLog, $"[red]dump[/]: {Markup.Escape(result.Error?.Message ?? "dump failed")}");
+        return;
+    }
+
+    AppendLog(streamLog, $"[grey]dump[/]: emitted {result.Category} ({result.Format.ToString().ToLowerInvariant()})");
+    if (CliRuntimeState.SuppressConsoleOutput)
+    {
+        return;
+    }
+
+    Console.WriteLine(result.PayloadText);
+}
+
+static async Task<(bool Ok, AgenticOutputFormat Format, string Category, object? PayloadData, string PayloadText, AgenticError? Error)> ExecuteDumpCommandAsync(string input, CliSessionState session)
+{
+    var tokens = TokenizeComposerInput(input);
+    if (tokens.Count < 2)
+    {
+        return (false, AgenticOutputFormat.Json, string.Empty, null, string.Empty, new AgenticError("E_PARSE", "usage: /dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]"));
+    }
+
+    var category = tokens[1].Trim().ToLowerInvariant();
+    var format = AgenticOutputFormat.Json;
+    var depth = 6;
+    var limit = 1000;
+    for (var i = 2; i < tokens.Count; i++)
+    {
+        var token = tokens[i];
+        if (token.Equals("--compact", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        if (token.Equals("--format", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+        {
+            var raw = tokens[++i].Trim().ToLowerInvariant();
+            if (raw == "json")
+            {
+                format = AgenticOutputFormat.Json;
+            }
+            else if (raw == "yaml")
+            {
+                format = AgenticOutputFormat.Yaml;
+            }
+            else
+            {
+                return (false, AgenticOutputFormat.Json, string.Empty, null, string.Empty, new AgenticError("E_PARSE", "invalid --format value for /dump (use json|yaml)"));
+            }
+            continue;
+        }
+
+        if (token.Equals("--depth", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+        {
+            _ = int.TryParse(tokens[++i], out depth);
+            depth = Math.Clamp(depth, 1, 20);
+            continue;
+        }
+
+        if (token.Equals("--limit", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+        {
+            _ = int.TryParse(tokens[++i], out limit);
+            limit = Math.Clamp(limit, 1, 20000);
+            continue;
+        }
+    }
+
+    var recognizedCategory = category is "hierarchy" or "project" or "inspector";
+    if (!recognizedCategory)
+    {
+        return (false, format, category, null, string.Empty, new AgenticError("E_VALIDATION", $"unsupported dump category: {category}", "supported: hierarchy, project, inspector"));
+    }
+
+    object? data = category switch
+    {
+        "hierarchy" => await BuildHierarchyDumpAsync(session),
+        "project" => BuildProjectDump(session, depth, limit),
+        "inspector" => await BuildInspectorDumpAsync(session),
+        _ => null
+    };
+
+    if (data is null)
+    {
+        var hint = category switch
+        {
+            "project" => "set --project or open a project first",
+            "hierarchy" => "attach daemon with --attach-port to fetch hierarchy snapshot",
+            "inspector" => "attach daemon and enter inspector context before dumping inspector",
+            _ => string.Empty
+        };
+        return (false, format, category, null, string.Empty, new AgenticError("E_MODE_INVALID", $"dump {category} is unavailable in current session", hint));
+    }
+
+    var payload = format == AgenticOutputFormat.Yaml
+        ? AgenticFormatter.SerializeYaml(data)
+        : JsonSerializer.Serialize(data, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+    return (true, format, category, data, payload, null);
+}
+
+static async Task<object?> BuildHierarchyDumpAsync(CliSessionState session)
+{
+    if (session.AttachedPort is null)
+    {
+        return null;
+    }
+
+    var client = new HierarchyDaemonClient();
+    var snapshot = await client.GetSnapshotAsync(session.AttachedPort.Value);
+    return snapshot;
+}
+
+static object? BuildProjectDump(CliSessionState session, int depth, int limit)
+{
+    if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+    {
+        return null;
+    }
+
+    var root = Path.Combine(session.CurrentProjectPath!, "Assets");
+    if (!Directory.Exists(root))
+    {
+        return new { root = "Assets", entries = Array.Empty<object>() };
+    }
+
+    var entries = new List<object>();
+    var count = 0;
+    var stack = new Stack<(string AbsolutePath, string RelativePath, int Depth)>();
+    stack.Push((root, "Assets", 0));
+
+    while (stack.Count > 0 && count < limit)
+    {
+        var current = stack.Pop();
+        if (current.Depth > depth)
+        {
+            continue;
+        }
+
+        var directories = Directory.GetDirectories(current.AbsolutePath)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var files = Directory.GetFiles(current.AbsolutePath)
+            .Where(path => !path.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var file in files)
+        {
+            if (count >= limit)
+            {
+                break;
+            }
+
+            var rel = CombineDumpRelative(current.RelativePath, Path.GetFileName(file));
+            entries.Add(new { path = rel, kind = "file" });
+            count++;
+        }
+
+        for (var i = directories.Count - 1; i >= 0; i--)
+        {
+            if (count >= limit)
+            {
+                break;
+            }
+
+            var dir = directories[i];
+            var rel = CombineDumpRelative(current.RelativePath, Path.GetFileName(dir));
+            entries.Add(new { path = rel, kind = "directory" });
+            count++;
+            stack.Push((dir, rel, current.Depth + 1));
+        }
+    }
+
+    return new { root = "Assets", entries };
+}
+
+static string CombineDumpRelative(string basePath, string name)
+{
+    var normalizedBase = basePath.Replace('\\', '/').TrimEnd('/');
+    var normalizedName = name.Replace('\\', '/').Trim('/');
+    if (string.IsNullOrWhiteSpace(normalizedBase))
+    {
+        return normalizedName;
+    }
+
+    return string.IsNullOrWhiteSpace(normalizedName)
+        ? normalizedBase
+        : $"{normalizedBase}/{normalizedName}";
+}
+
+static async Task<object?> BuildInspectorDumpAsync(CliSessionState session)
+{
+    if (session.AttachedPort is null)
+    {
+        return null;
+    }
+
+    var targetPath = session.Inspector?.PromptPath ?? "/";
+    using var http = new HttpClient();
+    var listPayload = JsonSerializer.Serialize(new
+    {
+        action = "list-components",
+        targetPath,
+        componentIndex = -1,
+        componentName = "",
+        fieldName = "",
+        value = "",
+        query = ""
+    });
+    using var listResponse = await http.PostAsync(
+        $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
+        new StringContent(listPayload, Encoding.UTF8, "application/json"));
+    if (!listResponse.IsSuccessStatusCode)
+    {
+        return null;
+    }
+
+    var listBody = await listResponse.Content.ReadAsStringAsync();
+    using var listDoc = JsonDocument.Parse(listBody);
+    if (!listDoc.RootElement.TryGetProperty("components", out var components))
+    {
+        return new { targetPath, components = Array.Empty<object>() };
+    }
+
+    var expanded = new List<object>();
+    foreach (var component in components.EnumerateArray())
+    {
+        var index = component.TryGetProperty("index", out var indexProp) ? indexProp.GetInt32() : -1;
+        var name = component.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+        var fieldsPayload = JsonSerializer.Serialize(new
+        {
+            action = "list-fields",
+            targetPath,
+            componentIndex = index,
+            componentName = name,
+            fieldName = "",
+            value = "",
+            query = ""
+        });
+        using var fieldResponse = await http.PostAsync(
+            $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
+            new StringContent(fieldsPayload, Encoding.UTF8, "application/json"));
+        var fields = Array.Empty<object>();
+        if (fieldResponse.IsSuccessStatusCode)
+        {
+            var fieldsBody = await fieldResponse.Content.ReadAsStringAsync();
+            using var fieldsDoc = JsonDocument.Parse(fieldsBody);
+            if (fieldsDoc.RootElement.TryGetProperty("fields", out var fieldsElement))
+            {
+                fields = fieldsElement.EnumerateArray().Select(field => new
+                {
+                    name = field.TryGetProperty("name", out var n) ? n.GetString() : null,
+                    value = field.TryGetProperty("value", out var v) ? v.GetString() : null,
+                    type = field.TryGetProperty("type", out var t) ? t.GetString() : null,
+                    isBoolean = field.TryGetProperty("isBoolean", out var b) && b.GetBoolean()
+                }).Cast<object>().ToArray();
+            }
+        }
+
+        expanded.Add(new
+        {
+            index,
+            name,
+            enabled = component.TryGetProperty("enabled", out var enabledProp) && enabledProp.GetBoolean(),
+            fields
+        });
+    }
+
+    return new
+    {
+        targetPath,
+        components = expanded
+    };
+}
+
+static (List<AgenticError> Errors, List<AgenticWarning> Warnings) ParseAgenticIssuesFromLogs(List<string> streamLog)
+{
+    var errors = new List<AgenticError>();
+    var warnings = new List<AgenticWarning>();
+    foreach (var raw in streamLog)
+    {
+        var line = AgenticFormatter.StripMarkup(raw);
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            continue;
+        }
+
+        var lower = line.ToLowerInvariant();
+        if (lower.StartsWith("error") || lower.Contains("failed") || lower.StartsWith("x "))
+        {
+            errors.Add(new AgenticError(GuessErrorCode(lower), line));
+            continue;
+        }
+
+        if (lower.StartsWith("warning") || lower.StartsWith("note") || lower.Contains("yellow"))
+        {
+            warnings.Add(new AgenticWarning("W_GENERIC", line));
+        }
+    }
+
+    return (errors, warnings);
+}
+
+static string GuessErrorCode(string normalizedLine)
+{
+    if (normalizedLine.Contains("usage") || normalizedLine.Contains("invalid"))
+    {
+        return "E_PARSE";
+    }
+
+    if (normalizedLine.Contains("open a project first") || normalizedLine.Contains("mode"))
+    {
+        return "E_MODE_INVALID";
+    }
+
+    if (normalizedLine.Contains("not found"))
+    {
+        return "E_NOT_FOUND";
+    }
+
+    if (normalizedLine.Contains("timeout") || normalizedLine.Contains("unreachable"))
+    {
+        return "E_TIMEOUT";
+    }
+
+    if (normalizedLine.Contains("daemon"))
+    {
+        return "E_UNITY_API";
+    }
+
+    return "E_VALIDATION";
+}
+
+static int ResolveExitCode(List<AgenticError> errors)
+{
+    if (errors.Count == 0)
+    {
+        return 0;
+    }
+
+    if (errors.Any(error => error.Code is "E_PARSE" or "E_VALIDATION" or "E_MODE_INVALID" or "E_NOT_FOUND"))
+    {
+        return 2;
+    }
+
+    if (errors.Any(error => error.Code is "E_TIMEOUT" or "E_UNITY_API"))
+    {
+        return 3;
+    }
+
+    return 4;
+}
+
+static string ExtractActionLabel(string commandText)
+{
+    var tokens = TokenizeComposerInput(commandText);
+    if (tokens.Count == 0)
+    {
+        return "unknown";
+    }
+
+    return tokens[0].TrimStart('/').ToLowerInvariant();
+}
+
 static string NormalizeSlashCommand(string input)
 {
     if (!input.StartsWith('/'))
@@ -1840,7 +2730,10 @@ static bool TryNormalizeProjectBuildCommand(string input, out string normalizedB
 static void AppendLog(List<string> streamLog, string line)
 {
     streamLog.Add(line);
-    CliTheme.MarkupLine(line);
+    if (!CliRuntimeState.SuppressConsoleOutput)
+    {
+        CliTheme.MarkupLine(line);
+    }
 }
 
 static void LogUnhandledException(List<string> streamLog, Exception ex, string phase)

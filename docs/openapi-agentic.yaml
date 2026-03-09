@@ -1,0 +1,167 @@
+openapi: 3.0.3
+info:
+  title: unifocl Agentic API
+  version: "1.0.0"
+  description: |
+    Agent-facing local API for deterministic command execution and dump serialization.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /agent/capabilities:
+    get:
+      summary: Get agentic capability metadata
+      responses:
+        "200":
+          description: Capabilities payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgenticCapabilities"
+  /agent/status:
+    get:
+      summary: Get request status metadata
+      parameters:
+        - in: query
+          name: requestId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Status envelope
+  /agent/exec:
+    post:
+      summary: Execute one-shot command through agentic envelope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgenticExecutionRequest"
+      responses:
+        "200":
+          description: Agentic command response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgenticResponseEnvelope"
+  /agent/dump/{category}:
+    get:
+      summary: Dump deterministic mode state
+      parameters:
+        - in: path
+          name: category
+          required: true
+          schema:
+            type: string
+            enum: [hierarchy, project, inspector]
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [json, yaml]
+      responses:
+        "200":
+          description: Agentic dump response envelope
+components:
+  schemas:
+    AgenticExecutionRequest:
+      type: object
+      required: [commandText, contextMode, outputMode, requestId]
+      properties:
+        commandText:
+          type: string
+        contextMode:
+          type: string
+          enum: [project, hierarchy, inspector]
+        sessionSeed:
+          type: string
+        outputMode:
+          type: string
+          enum: [json, yaml]
+        requestId:
+          type: string
+    AgenticError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        hint:
+          type: string
+          nullable: true
+    AgenticWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    AgenticMeta:
+      type: object
+      required: [schemaVersion, protocol, exitCode, timestampUtc]
+      properties:
+        schemaVersion:
+          type: string
+        protocol:
+          type: string
+        exitCode:
+          type: integer
+        timestampUtc:
+          type: string
+        extra:
+          type: object
+          additionalProperties: true
+    AgenticResponseEnvelope:
+      type: object
+      required: [status, requestId, mode, action, errors, warnings, meta]
+      properties:
+        status:
+          type: string
+          enum: [success, error]
+        requestId:
+          type: string
+        mode:
+          type: string
+        action:
+          type: string
+        data:
+          nullable: true
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgenticError"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgenticWarning"
+        meta:
+          $ref: "#/components/schemas/AgenticMeta"
+    AgenticCapabilities:
+      type: object
+      required: [schemaVersion, protocol, formats, modes, endpoints]
+      properties:
+        schemaVersion:
+          type: string
+        protocol:
+          type: string
+        formats:
+          type: array
+          items:
+            type: string
+        modes:
+          type: array
+          items:
+            type: string
+        endpoints:
+          type: array
+          items:
+            type: string
+        worktreeTools:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string

@@ -66,6 +66,180 @@ dotnet build -c Release
 
 ---
 
+## Agentic Mode (Machine-Oriented Workflows)
+
+unifocl supports an **agentic execution path** for LLMs, automations, and tool wrappers that need deterministic I/O instead of interactive TUI behavior.
+
+Core principles:
+* Structured response envelope for every command.
+* No Spectre/TUI rendering in agentic one-shot mode.
+* Standardized error taxonomy and process exit codes.
+* Explicit state serialization commands for context hydration.
+
+### 1. One-Shot CLI for Agents
+
+Use `exec` to run a single command and exit:
+
+```bash
+unifocl exec "<command>" [--agentic] [--format json|yaml] [--project <path>] [--mode <project|hierarchy|inspector>] [--attach-port <port>] [--request-id <id>]
+```
+
+Examples:
+
+```bash
+unifocl exec "/version" --agentic --format json
+unifocl exec "/protocol" --agentic --format yaml
+unifocl exec "/dump project --format json --depth 2 --limit 5000" --agentic --project /path/to/UnityProject
+unifocl exec "upm list --outdated" --agentic --project /path/to/UnityProject --mode project
+```
+
+Notes:
+* `--agentic` enables machine output (single response payload).
+* `--format` controls payload encoding (`json` or `yaml`).
+* `--project`, `--mode`, and `--attach-port` seed runtime context so commands can execute without interactive setup.
+
+### 2. Unified Agentic Envelope
+
+`--agentic` responses use one schema:
+
+```json
+{
+  "status": "success|error",
+  "requestId": "string",
+  "mode": "project|hierarchy|inspector|none",
+  "action": "string",
+  "data": {},
+  "errors": [{ "code": "E_*", "message": "string", "hint": "string|null" }],
+  "warnings": [{ "code": "W_*", "message": "string" }],
+  "meta": {
+    "schemaVersion": "agentic.v1",
+    "protocol": "v3",
+    "exitCode": 0,
+    "timestampUtc": "ISO-8601 UTC",
+    "extra": {}
+  }
+}
+```
+
+Field semantics:
+* `status`: high-level outcome (`success` or `error`).
+* `requestId`: caller-supplied correlation id (or generated if omitted).
+* `mode`: effective runtime context after command execution.
+* `action`: normalized command family (e.g. `version`, `dump`, `upm`).
+* `data`: command payload (shape varies by action).
+* `errors`: deterministic machine errors (empty on success).
+* `warnings`: non-fatal issues.
+* `meta`: schema/protocol/exit metadata plus optional command-specific extras.
+
+### 3. Agentic Exit Codes
+
+| Exit Code | Meaning |
+| :--- | :--- |
+| `0` | Success |
+| `2` | Validation / parse / context-state error |
+| `3` | Daemon/bridge availability or timeout class failure |
+| `4` | Internal execution error |
+
+### 4. `/dump` State Serialization
+
+`/dump` is designed for context-window transfer and deterministic snapshots:
+
+```bash
+/dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]
+```
+
+Current behavior:
+* `hierarchy`: fetches hierarchy snapshot from attached daemon.
+* `project`: serializes deterministic `Assets` tree entries.
+* `inspector`: serializes inspector components/fields from attached bridge path.
+
+Context handling:
+* If required runtime state is missing (for example no attached daemon for `hierarchy`), response returns `E_MODE_INVALID` with a corrective hint.
+* Unsupported category returns `E_VALIDATION`.
+
+### 5. Daemon Agentic HTTP Endpoints
+
+Daemon service mode exposes agent endpoints on localhost:
+* `POST /agent/exec`
+* `GET /agent/capabilities`
+* `GET /agent/status?requestId=...`
+* `GET /agent/dump/{hierarchy|project|inspector}?format=json|yaml`
+
+Example:
+
+```bash
+curl -X POST "http://127.0.0.1:8080/agent/exec" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "commandText": "/version",
+    "contextMode": "project",
+    "sessionSeed": "",
+    "outputMode": "json",
+    "requestId": "req-001"
+  }'
+```
+
+The daemon-side agent endpoint delegates to the same `exec --agentic` pathway so CLI and HTTP machine outputs remain contract-consistent.
+
+### 6. Error Taxonomy
+
+| Error Code | Meaning |
+| :--- | :--- |
+| `E_PARSE` | Command parse/payload syntax failure |
+| `E_MODE_INVALID` | Command cannot run in current context |
+| `E_NOT_FOUND` | Requested object/asset/component not found |
+| `E_TIMEOUT` | Operation timed out |
+| `E_UNITY_API` | Daemon/bridge Unity execution path failure |
+| `E_VALIDATION` | Semantic validation failed |
+| `E_INTERNAL` | Unhandled runtime error |
+
+### 7. Capability Discovery and OpenAPI
+
+Runtime capability discovery:
+
+```bash
+unifocl exec "/protocol" --agentic --format json
+curl "http://127.0.0.1:8080/agent/capabilities"
+```
+
+Static OpenAPI contract:
+* `docs/openapi-agentic.yaml`
+
+### 8. Concurrent Worktree Integration (Parallel Agents)
+
+Agentic mode is designed to run safely across multiple autonomous agents by isolating each agent in its own worktree and daemon port.
+
+Use the built-in orchestration scripts:
+* Bash: `src/unifocl/scripts/agent-worktree.sh`
+* PowerShell: `src/unifocl/scripts/agent-worktree.ps1`
+
+Recommended flow (bash example):
+
+```bash
+# 1) Provision isolated worktree + branch from origin/main
+src/unifocl/scripts/agent-worktree.sh provision \
+  --repo-root . \
+  --worktree-path ../unifocl-agent-a \
+  --branch codex/agent-a
+
+# 2) Start daemon on dynamically selected open port for that worktree/project
+src/unifocl/scripts/agent-worktree.sh start-daemon \
+  --worktree-path ../unifocl-agent-a \
+  --project-path ../unifocl-agent-a
+
+# 3) Execute deterministic machine command in that isolated workspace
+cd ../unifocl-agent-a
+dotnet run --project src/unifocl/unifocl.csproj -- \
+  exec "/dump project --format json --depth 2 --limit 2000" \
+  --agentic --project "$(pwd)" --mode project
+```
+
+Concurrency safeguards:
+* one agent = one branch + one worktree.
+* one worktree = one daemon port.
+* never let multiple agents mutate the same worktree concurrently.
+* tear down completed worktrees via script (`teardown`) or `git worktree remove --force`.
+
 ## Command & Feature Guide
 
 When you launch unifocl, you will be greeted by a boot screen. From here, the CLI operates as an interactive shell using **slash commands** (e.g., `/open`) for system and lifecycle operations, and **standard commands** (e.g., `ls`, `cd`) for contextual project operations.

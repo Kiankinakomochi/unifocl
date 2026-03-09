@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.2 - 2026-03-09
+
+### Changed
+- Officialized `0.7.2` by closing the development cycle suffix.
+- Added agentic one-shot execution entrypoint: `unifocl exec "<command>" --agentic [--format json|yaml]` with deterministic response envelopes and standardized exit codes.
+- Added deterministic `/dump` command family (`/dump hierarchy|project|inspector`) with JSON/YAML serialization for LLM context snapshots.
+- Added daemon-side agentic HTTP surface (`/agent/exec`, `/agent/capabilities`, `/agent/status`, `/agent/dump/{category}`) aligned to the new envelope contract.
+- Integrated concurrent worktree orchestration into the agentic workflow:
+  - agent-capability discovery and OpenAPI docs now cover agent endpoints and machine-format contracts.
+  - README agentic guidance now cross-links isolated worktree provisioning + dynamic daemon startup scripts for parallel agents.
+
 ## 0.7.1 - 2026-03-09
 
 ### Changed
