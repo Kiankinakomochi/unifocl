@@ -1,16 +1,18 @@
 # Changelog
 
-## 0.5.2a2 - 2026-03-09
+## 0.5.3a1 - 2026-03-09
 
 ### Changed
 - Fixed project-context empty-input routing so redraw requests execute `ProjectViewService` rendering instead of returning early from the router.
-- This resolves missing Project TUI frame after hierarchy `quit`/exit transitions when prompt context has already returned to Project mode.
-
-## 0.5.2a1 - 2026-03-09
-
-### Changed
 - Fixed project-mode rendering transition after hierarchy exit by forcing a project frame refresh when returning from `/hierarchy` without entering inspector mode.
 - Applied the same redraw guard to hierarchy auto-enter return paths triggered by scene load transitions.
+
+## 0.5.2 - 2026-03-09
+
+### Changed
+- Officialized `0.5.2` by closing the development cycle suffix.
+- Refactored TUI progress visuals into a shared `TuiTrackableProgress` renderer for spinner and progress-bar output across build and project UPM flows.
+- Added active progress feedback during `/recent` and `/init` execution, and scene loading (`load <scene>`) in project mode.
 
 ## 0.5.1 - 2026-03-09
 
