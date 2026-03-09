@@ -1,11 +1,21 @@
 # Changelog
 
-## 0.5.1a1 - 2026-03-09
+## 0.5.2a1 - 2026-03-09
 
 ### Changed
-- Started the `0.5.1` development cycle (`a1`) after the `0.5.0` release.
+- Started the `0.5.2` development cycle (`a1`) on top of `0.5.1`.
 - Refactored TUI progress visuals into a shared `TuiTrackableProgress` renderer for spinner and progress-bar output across build and project UPM flows.
 - Added active progress feedback during `/recent` and `/init` execution, and scene loading (`load <scene>`) in project mode.
+
+## 0.5.1 - 2026-03-09
+
+### Changed
+- Added `DaemonScenePersistenceService` as the shared save pipeline for Unity scene persistence operations.
+- Added `DaemonSceneManager` to centralize active-scene resolution and scene load/activation transitions for editor bridge services.
+- Hierarchy and inspector mutation flows now persist scenes through the shared persistence service.
+- Project scene-load flow now runs a shared persistence preflight save path before scene switching.
+- Embedded package payload generation now includes `DaemonSceneManager.cs` and `DaemonScenePersistenceService.cs` so `/init` installs compile-complete bridge sources.
+- Bumped bridge protocol to `v3`; projects must re-run `/init` to refresh embedded bridge payload.
 
 ## 0.5.0 - 2026-03-09
 

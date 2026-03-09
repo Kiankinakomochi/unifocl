@@ -258,28 +258,19 @@ namespace UniFocl.EditorBridge
 
                 try
                 {
-                    var loadedScene = EditorSceneManager.OpenScene(requestedScenePath, OpenSceneMode.Single);
-                    if (!loadedScene.IsValid() || !loadedScene.isLoaded)
+                    if (DaemonSceneManager.TryGetActiveScene(out var activeScene))
                     {
-                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"scene load failed: {requestedScenePath}" });
+                        DaemonScenePersistenceService.SaveScenesWithoutMarkDirty(
+                            "project scene-switch preflight",
+                            activeScene);
                     }
 
-                    var loadedScenePath = loadedScene.path.Replace('\\', '/');
-                    if (!loadedScenePath.Equals(requestedScenePath, StringComparison.OrdinalIgnoreCase))
+                    if (!DaemonSceneManager.TryLoadSceneSingleAndActivate(requestedScenePath, out _, out var loadError))
                     {
                         return JsonUtility.ToJson(new ProjectCommandResponse
                         {
                             ok = false,
-                            message = $"scene load failed: requested '{requestedScenePath}', loaded '{loadedScenePath}'"
-                        });
-                    }
-
-                    if (!TryEnsureActiveScene(loadedScene, requestedScenePath))
-                    {
-                        return JsonUtility.ToJson(new ProjectCommandResponse
-                        {
-                            ok = false,
-                            message = $"scene load failed: unable to activate scene '{requestedScenePath}'"
+                            message = loadError ?? $"scene load failed: {requestedScenePath}"
                         });
                     }
 
@@ -2228,44 +2219,6 @@ namespace UniFocl.EditorBridge
             return !string.IsNullOrWhiteSpace(assetPath)
                    && assetPath.StartsWith("Assets/", StringComparison.Ordinal)
                    && !assetPath.Contains("..", StringComparison.Ordinal);
-        }
-
-        private static bool TryEnsureActiveScene(Scene loadedScene, string requestedScenePath)
-        {
-            if (!loadedScene.IsValid() || !loadedScene.isLoaded)
-            {
-                return false;
-            }
-
-            if (IsRequestedSceneActive(requestedScenePath))
-            {
-                return true;
-            }
-
-            if (SceneManager.SetActiveScene(loadedScene) && IsRequestedSceneActive(requestedScenePath))
-            {
-                return true;
-            }
-
-            if (EditorSceneManager.SetActiveScene(loadedScene) && IsRequestedSceneActive(requestedScenePath))
-            {
-                return true;
-            }
-
-            // Opening with OpenSceneMode.Single usually makes the scene active already.
-            return IsRequestedSceneActive(requestedScenePath);
-        }
-
-        private static bool IsRequestedSceneActive(string requestedScenePath)
-        {
-            var activeScene = SceneManager.GetActiveScene();
-            if (!activeScene.IsValid() || !activeScene.isLoaded)
-            {
-                return false;
-            }
-
-            return activeScene.path.Replace('\\', '/')
-                .Equals(requestedScenePath, StringComparison.OrdinalIgnoreCase);
         }
 
         private static string GetProjectRoot()

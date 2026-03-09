@@ -20,6 +20,7 @@ The agent must treat the following as **non-negotiable principles**:
 - **Contract Pipeline Strategy (Primary):** Shared transport contracts must be defined in protobuf `.proto` files under the `external/unifocl-protobuf` submodule and consumed via generated C# classes (`Unifocl.Shared`). CLI code must reference only generated protobuf DTOs for transport boundaries; Unity bridge code maps Unity types to/from these stable protobuf contracts.
 - **Plugin Sync:** After protobuf contract updates, run `./scripts/sync-protobuf-unity-plugin.sh` to rebuild `Unifocl.Shared.dll` and copy it into `src/unifocl.unity/EditorScripts/Plugins/`.
 - **Build Versioning Rule:** Development builds must use `aX` incremental suffixes in `CliVersion.SemVer` (for example: `0.3.2a1` -> `0.3.2a2`)
+- **Bridge Protocol Rule:** If a change requires users to re-run `/init` (for example editor payload/package content changes), bump `CliVersion.Protocol` and include `/init` re-run guidance in the task summary/PR description.
 - **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in English
 - **Mainline Sync Rule:** Before finalizing work (push/PR), merge latest `main` (or `origin/main`) to detect upstream leading changes early and resolve any conflicts before continuing
 - **Deployment:** NEVER deploy or publish artifacts without permission

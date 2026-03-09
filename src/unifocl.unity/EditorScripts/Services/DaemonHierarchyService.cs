@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
@@ -140,8 +139,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteCreate(HierarchyCommandRequest request)
         {
-            var activeScene = SceneManager.GetActiveScene();
-            if (!activeScene.IsValid())
+            if (!DaemonSceneManager.TryGetActiveScene(out var activeScene))
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "active scene is not valid" });
             }
@@ -190,7 +188,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk did not create any objects" });
             }
 
-            PersistSceneChanges(lastCreated.scene);
+            DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", lastCreated.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -548,7 +546,7 @@ namespace UniFocl.EditorBridge
 
             Undo.RecordObject(target, "unifocl toggle hierarchy active");
             target.SetActive(!target.activeSelf);
-            PersistSceneChanges(target.scene);
+            DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", target.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -577,7 +575,7 @@ namespace UniFocl.EditorBridge
             Undo.DestroyObjectImmediate(target);
             if (scene.IsValid())
             {
-                PersistSceneChanges(scene);
+                DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", scene);
             }
 
             _snapshotVersion++;
@@ -611,7 +609,7 @@ namespace UniFocl.EditorBridge
 
             Undo.RecordObject(target, "unifocl rename hierarchy object");
             target.name = request.name.Trim();
-            PersistSceneChanges(target.scene);
+            DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", target.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -644,8 +642,7 @@ namespace UniFocl.EditorBridge
 
             if (nextParentId == SceneRootNodeId)
             {
-                var activeScene = SceneManager.GetActiveScene();
-                if (!activeScene.IsValid())
+                if (!DaemonSceneManager.TryGetActiveScene(out var activeScene))
                 {
                     return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "active scene is not valid" });
                 }
@@ -653,7 +650,7 @@ namespace UniFocl.EditorBridge
                 Undo.SetTransformParent(target.transform, null, "unifocl move hierarchy object");
                 var previousScene = target.scene;
                 SceneManager.MoveGameObjectToScene(target, activeScene);
-                PersistSceneChanges(previousScene, activeScene);
+                DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", previousScene, activeScene);
                 _snapshotVersion++;
                 return JsonUtility.ToJson(new HierarchyCommandResponse
                 {
@@ -684,7 +681,7 @@ namespace UniFocl.EditorBridge
             var previousParentScene = target.scene;
             Undo.SetTransformParent(target.transform, parentObject.transform, "unifocl move hierarchy object");
             SceneManager.MoveGameObjectToScene(target, parentObject.scene);
-            PersistSceneChanges(previousParentScene, parentObject.scene);
+            DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", previousParentScene, parentObject.scene);
             _snapshotVersion++;
 
             return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -696,29 +693,11 @@ namespace UniFocl.EditorBridge
             });
         }
 
-        private static void PersistSceneChanges(params Scene[] scenes)
-        {
-            var seen = new HashSet<int>();
-            foreach (var scene in scenes)
-            {
-                if (!scene.IsValid() || !seen.Add(scene.handle))
-                {
-                    continue;
-                }
-
-                EditorSceneManager.MarkSceneDirty(scene);
-                if (!EditorSceneManager.SaveScene(scene))
-                {
-                    Debug.LogWarning($"[unifocl] Failed to save scene '{scene.name}' (path: '{scene.path}') after hierarchy mutation.");
-                }
-            }
-        }
-
         private static HierarchySnapshotResponse BuildSnapshot()
         {
-            var scene = SceneManager.GetActiveScene();
+            var hasActiveScene = DaemonSceneManager.TryGetActiveScene(out var scene);
             var sceneName = ResolveSceneName(scene);
-            var children = scene.IsValid()
+            var children = hasActiveScene
                 ? scene.GetRootGameObjects()
                     .Select(ToDto)
                     .OrderBy(node => node.name, StringComparer.OrdinalIgnoreCase)
