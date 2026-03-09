@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.12.0 - 2026-03-10
+
+### Changed
+- Officialized `0.12.0` by closing the development cycle suffix.
+- Added project-mode fuzzy `--type`/`-t` argument support (in addition to existing `t:<type>`) for type-scoped fuzzy queries.
+- Refactored project mk catalog usage so fuzzy-type parsing/filtering and mk type extension resolution now share `ProjectMkCatalog` as the common source of truth.
+- Added inspector ObjectReference search workflow via `set <field> --search <query> [--scene|--project]` and indexed assignment via `set <field> @<index>`.
+- Added inspector reference search scope flags:
+  - `--scene`: only search scene references
+  - `--project`: only search project asset references
+  - omitted flags search both scopes.
+- Added bridge-side `find-reference` inspector action and ObjectReference assignment support for:
+  - `scene:/...` and `scene:/...#Component`
+  - `asset:Assets/...` and direct `Assets/...` asset path
+  - `null` to clear reference fields.
+- Enabled interactive focus-mode editing for inspector `ObjectReference` fields:
+  - `Enter` on an `ObjectReference` field now opens a fuzzy reference picker.
+  - Supports live query typing, Up/Down selection, Enter apply, Esc cancel, and `Tab` scope cycle (`scene` / `project` / `all`).
+- Reworked inspector interactive `ObjectReference` fuzzy picker UI to render in the inspector stream pane (below the main TUI body).
+- Hardened ObjectReference type restriction in bridge reference search by resolving expected reference types from serialized property metadata (`PPtr<...>`) when reflection cannot resolve the backing field.
+- Reference suggestions for typed fields (for example animation controller references) are now filtered to compatible reference types instead of broad `UnityEngine.Object` matches.
+- Styled the selected row in inspector ObjectReference fuzzy picker preview with theme cursor highlight colors and fixed bracket-cell markup escaping for reliable Spectre rendering.
+- Bumped bridge protocol to `v6`; projects must re-run `/init` to refresh embedded bridge payload.
+
+## 0.12.0a6 - 2026-03-10
+
+### Changed
+- Fixed inspector reference-picker preview markup rendering by escaping literal bracket cells (`[index]`, `[scope]`) and using valid Spectre markup tags for styled rows.
+
+## 0.12.0a5 - 2026-03-10
+
+### Changed
+- Styled the selected row in inspector ObjectReference fuzzy picker preview with theme cursor highlight colors to improve visual focus and readability.
+
+## 0.12.0a4 - 2026-03-10
+
+### Changed
+- Reworked inspector interactive `ObjectReference` fuzzy picker UI to render in the inspector stream pane (below the main TUI body), removing the in-body overlay for this flow.
+- Hardened ObjectReference type restriction in bridge reference search by resolving expected reference types from serialized property metadata (`PPtr<...>`) when reflection cannot resolve the backing field.
+- Reference suggestions for typed fields (for example animation controller references) are now filtered to compatible reference types instead of broad `UnityEngine.Object` matches.
+
+## 0.12.0a3 - 2026-03-10
+
+### Changed
+- Enabled interactive focus-mode editing for inspector `ObjectReference` fields:
+  - `Enter` on an `ObjectReference` field now opens a fuzzy reference picker instead of showing "interactive edit not available".
+  - Supports live query typing, Up/Down selection, Enter apply, Esc cancel, and `Tab` scope cycle (`scene` / `project` / `all`).
+
+## 0.12.0a2 - 2026-03-10
+
+### Changed
+- Added inspector ObjectReference search workflow via `set <field> --search <query> [--scene|--project]` and indexed assignment via `set <field> @<index>`.
+- Added inspector reference search scope flags:
+  - `--scene`: only search scene references
+  - `--project`: only search project asset references
+  - omitted flags search both scopes.
+- Added bridge-side `find-reference` inspector action and ObjectReference assignment support for:
+  - `scene:/...` and `scene:/...#Component`
+  - `asset:Assets/...` and direct `Assets/...` asset path
+  - `null` to clear reference fields.
+
+## 0.12.0a1 - 2026-03-10
+
+### Changed
+- Started the `0.12.0` development cycle with `a1` suffix versioning.
+- Added project-mode fuzzy `--type`/`-t` argument support (in addition to existing `t:<type>`) for type-scoped fuzzy queries.
+- Refactored project mk catalog usage so fuzzy-type parsing/filtering and mk type extension resolution now share `ProjectMkCatalog` as the common source of truth.
+
 ## 0.11.0 - 2026-03-10
 
 ### Changed

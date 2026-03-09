@@ -383,10 +383,10 @@ unifocl features a composer with Intellisense.
 * Type any standard text to receive project-mode suggestions.
 
 **Fuzzy Finding:**
-Use the `f` or `ff` command to trigger fuzzy search across your project or inspector. You can scope searches using the `t:<type>` filter.
-* **Syntax:** `f t:<type> <query>`
+Use the `f` or `ff` command to trigger fuzzy search across your project or inspector. In project mode, you can scope searches using `--type`/`-t` or `t:<type>`.
+* **Syntax:** `f [--type <type>|-t <type>|t:<type>] <query>`
 * **Supported Types:** `script`, `scene`, `prefab`, `material`, `animation`
-* **Example:** `f t:script PlayerController`
+* **Example:** `f --type script PlayerController`
 
 ### 6. Keybindings & Focus Modes
 The CLI provides keyboard-driven navigation for interacting with lists and structures without typing out indices.

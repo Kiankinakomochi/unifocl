@@ -108,6 +108,8 @@ namespace UniFocl.EditorBridge
         public string fieldName = string.Empty;
         public string value = string.Empty;
         public string query = string.Empty;
+        public bool includeSceneReferences = true;
+        public bool includeProjectReferences = true;
     }
 
     [Serializable]
@@ -136,6 +138,7 @@ namespace UniFocl.EditorBridge
         public string name = string.Empty;
         public string path = string.Empty;
         public double score;
+        public string valueToken = string.Empty;
     }
 
     [Serializable]

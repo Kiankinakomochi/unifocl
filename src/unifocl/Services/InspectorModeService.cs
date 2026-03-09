@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Globalization;
+using Spectre.Console;
 
 internal sealed class InspectorModeService
 {
@@ -560,12 +561,13 @@ internal sealed class InspectorModeService
         {
             AddStream(context, $"{context.PromptLabel} > {input}");
             AddStream(context, "[!] usage: set <field> <value...>");
+            AddStream(context, "[!] usage (ObjectReference): set <field> --search <query> [--scene|--project]");
             _renderer.Render(context);
             return;
         }
 
         var fieldName = tokens[1];
-        var newValue = string.Join(' ', tokens.Skip(2));
+        var valueTokens = tokens.Skip(2).ToList();
 
         if (context.Depth != InspectorDepth.ComponentFields)
         {
@@ -609,32 +611,16 @@ internal sealed class InspectorModeService
                 return;
             }
 
-            var rootMutationOk = await TrySendInspectorMutationAsync(
+            await ApplySetFieldAsync(
+                input,
                 session,
-                new InspectorBridgeRequest(
-                    "set-field",
-                    context.TargetPath,
-                    component.Index,
-                    component.Name,
-                    rootField.Name,
-                    newValue,
-                    null));
-
-            AddStream(context, $"{context.PromptLabel} > {input}");
-            if (rootMutationOk)
-            {
-                var refreshedFields = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, component.Index);
-                var appliedValue = refreshedFields?
-                    .FirstOrDefault(f => f.Name.Equals(rootField.Name, StringComparison.OrdinalIgnoreCase))
-                    ?.Value ?? newValue;
-                AddStream(context, $"[=] ok: {component.Name}.{rootField.Name} updated to {appliedValue}");
-            }
-            else
-            {
-                AddStream(context, "[!] failed to set field in Bridge mode");
-            }
-
-            _renderer.Render(context);
+                context,
+                component.Index,
+                component.Name,
+                rootField,
+                valueTokens,
+                successLabel: $"{component.Name}.{rootField.Name}",
+                updateSelectedComponentFields: false);
             return;
         }
 
@@ -647,32 +633,278 @@ internal sealed class InspectorModeService
             return;
         }
 
+        await ApplySetFieldAsync(
+            input,
+            session,
+            context,
+            context.SelectedComponentIndex!.Value,
+            context.SelectedComponentName ?? string.Empty,
+            field,
+            valueTokens,
+            successLabel: field.Name,
+            updateSelectedComponentFields: true);
+    }
+
+    private async Task ApplySetFieldAsync(
+        string input,
+        CliSessionState session,
+        InspectorContext context,
+        int componentIndex,
+        string componentName,
+        InspectorFieldEntry field,
+        IReadOnlyList<string> valueTokens,
+        string successLabel,
+        bool updateSelectedComponentFields)
+    {
+        if (valueTokens.Count == 0)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: set <field> <value...>");
+            _renderer.Render(context);
+            return;
+        }
+
+        if (IsObjectReferenceField(field)
+            && TryParseReferenceSearchArguments(valueTokens, out var query, out var includeScene, out var includeProject, out var searchError))
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            if (!string.IsNullOrWhiteSpace(searchError))
+            {
+                AddStream(context, $"[!] {searchError}");
+                _renderer.Render(context);
+                return;
+            }
+
+            await SearchReferenceCandidatesAsync(
+                context,
+                session,
+                componentIndex,
+                componentName,
+                field.Name,
+                query,
+                includeScene,
+                includeProject);
+            _renderer.Render(context);
+            return;
+        }
+
+        var newValue = string.Join(' ', valueTokens).Trim();
+        if (IsObjectReferenceField(field)
+            && TryResolveReferenceSelectionValue(newValue, context.LastReferenceSearchResults, out var resolvedValue, out var selectionError))
+        {
+            if (!string.IsNullOrWhiteSpace(selectionError))
+            {
+                AddStream(context, $"{context.PromptLabel} > {input}");
+                AddStream(context, $"[!] {selectionError}");
+                _renderer.Render(context);
+                return;
+            }
+
+            newValue = resolvedValue;
+        }
+
         var mutationOk = await TrySendInspectorMutationAsync(
             session,
             new InspectorBridgeRequest(
                 "set-field",
                 context.TargetPath,
-                context.SelectedComponentIndex,
-                context.SelectedComponentName,
+                componentIndex,
+                componentName,
                 field.Name,
                 newValue,
                 null));
 
         AddStream(context, $"{context.PromptLabel} > {input}");
-        if (mutationOk)
+        if (!mutationOk)
         {
-            await PopulateFieldsAsync(context, session, context.SelectedComponentIndex!.Value, forceRefresh: true);
+            AddStream(context, "[!] failed to set field in Bridge mode");
+            _renderer.Render(context);
+            return;
+        }
+
+        if (updateSelectedComponentFields)
+        {
+            await PopulateFieldsAsync(context, session, componentIndex, forceRefresh: true);
             var appliedValue = context.Fields
                 .FirstOrDefault(f => f.Name.Equals(field.Name, StringComparison.OrdinalIgnoreCase))
                 ?.Value ?? newValue;
-            AddStream(context, $"[=] ok: {field.Name} updated to {appliedValue}");
-        }
-        else
-        {
-            AddStream(context, "[!] failed to set field in Bridge mode");
+            AddStream(context, $"[=] ok: {successLabel} updated to {appliedValue}");
+            _renderer.Render(context);
+            return;
         }
 
+        var refreshedFields = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, componentIndex);
+        var refreshedValue = refreshedFields?
+            .FirstOrDefault(f => f.Name.Equals(field.Name, StringComparison.OrdinalIgnoreCase))
+            ?.Value ?? newValue;
+        AddStream(context, $"[=] ok: {successLabel} updated to {refreshedValue}");
         _renderer.Render(context);
+    }
+
+    private async Task SearchReferenceCandidatesAsync(
+        InspectorContext context,
+        CliSessionState session,
+        int componentIndex,
+        string componentName,
+        string fieldName,
+        string query,
+        bool includeScene,
+        bool includeProject)
+    {
+        var payload = new InspectorBridgeRequest(
+            "find-reference",
+            context.TargetPath,
+            componentIndex,
+            componentName,
+            fieldName,
+            null,
+            query,
+            includeScene,
+            includeProject);
+        var responseJson = await SendBridgeRequestAsync(payload, session);
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            AddStream(context, "[!] failed to query reference candidates from Bridge mode");
+            return;
+        }
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<InspectorBridgeSearchResponse>(responseJson, _jsonOptions);
+            if (response?.Ok != true || response.Results is null)
+            {
+                AddStream(context, "[!] failed to query reference candidates from Bridge mode");
+                return;
+            }
+
+            var referenceResults = response.Results
+                .Where(result => !string.IsNullOrWhiteSpace(result.Path) && !string.IsNullOrWhiteSpace(result.ValueToken))
+                .Select(result => new InspectorReferenceSearchEntry(
+                    string.IsNullOrWhiteSpace(result.Scope) ? "reference" : result.Scope,
+                    result.Path,
+                    result.ValueToken!))
+                .ToList();
+
+            context.LastReferenceSearchResults.Clear();
+            context.LastReferenceSearchResults.AddRange(referenceResults);
+            AppendInspectorReferenceSearchResults(context, query, includeScene, includeProject, referenceResults);
+        }
+        catch
+        {
+            AddStream(context, "[!] failed to parse reference candidates from Bridge mode");
+        }
+    }
+
+    private static bool TryParseReferenceSearchArguments(
+        IReadOnlyList<string> valueTokens,
+        out string query,
+        out bool includeScene,
+        out bool includeProject,
+        out string? error)
+    {
+        query = string.Empty;
+        includeScene = false;
+        includeProject = false;
+        error = null;
+        if (valueTokens.Count == 0
+            || !valueTokens[0].Equals("--search", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var queryTokens = new List<string>();
+        for (var i = 1; i < valueTokens.Count; i++)
+        {
+            var token = valueTokens[i];
+            if (token.Equals("--scene", StringComparison.OrdinalIgnoreCase))
+            {
+                includeScene = true;
+                continue;
+            }
+
+            if (token.Equals("--project", StringComparison.OrdinalIgnoreCase))
+            {
+                includeProject = true;
+                continue;
+            }
+
+            queryTokens.Add(token);
+        }
+
+        if (!includeScene && !includeProject)
+        {
+            includeScene = true;
+            includeProject = true;
+        }
+
+        query = string.Join(' ', queryTokens).Trim();
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            error = "usage: set <field> --search <query> [--scene|--project]";
+        }
+
+        return true;
+    }
+
+    private static bool TryResolveReferenceSelectionValue(
+        string rawValue,
+        IReadOnlyList<InspectorReferenceSearchEntry> searchResults,
+        out string resolvedValue,
+        out string? error)
+    {
+        resolvedValue = rawValue;
+        error = null;
+        if (!rawValue.StartsWith("@", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!int.TryParse(rawValue[1..], out var index) || index < 0 || index >= searchResults.Count)
+        {
+            error = "invalid reference index; run set <field> --search <query> first, then use @<index>";
+            return true;
+        }
+
+        resolvedValue = searchResults[index].ValueToken;
+        return true;
+    }
+
+    private static bool IsObjectReferenceField(InspectorFieldEntry field)
+        => field.Type.Equals("ObjectReference", StringComparison.OrdinalIgnoreCase);
+
+    private static void AppendInspectorReferenceSearchResults(
+        InspectorContext context,
+        string query,
+        bool includeScene,
+        bool includeProject,
+        IReadOnlyList<InspectorReferenceSearchEntry> results)
+    {
+        if (results.Count == 0)
+        {
+            AddStream(context, $"[x] no reference results for: {query}");
+            return;
+        }
+
+        var scopeLabel = includeScene && includeProject
+            ? "scene+project"
+            : includeScene
+                ? "scene"
+                : "project";
+        const int maxLines = 10;
+        AddStream(context, $"[*] reference results ({scopeLabel}) for: {query}");
+        var shown = Math.Min(maxLines, results.Count);
+        for (var i = 0; i < shown; i++)
+        {
+            var result = results[i];
+            AddStream(context, $"[{i}] [{result.Scope}] {result.Path}");
+        }
+
+        if (results.Count > shown)
+        {
+            AddStream(context, $"[i] showing first {shown}/{results.Count} results");
+        }
+
+        AddStream(context, "[i] use set <field> @<index> to assign a listed reference");
     }
 
     private async Task HandleFuzzyFindAsync(
@@ -1239,6 +1471,7 @@ internal sealed class InspectorModeService
         context.BodyScrollOffset = 0;
         context.FollowStreamScroll = true;
         context.StreamScrollOffset = int.MaxValue;
+        context.LastReferenceSearchResults.Clear();
         session.ContextMode = CliContextMode.Inspector;
         session.FocusPath = targetPath;
         await PopulateComponentsAsync(context, session, forceRefresh: true);
@@ -1275,6 +1508,7 @@ internal sealed class InspectorModeService
         context.BodyScrollOffset = 0;
         context.FollowStreamScroll = true;
         context.StreamScrollOffset = int.MaxValue;
+        context.LastReferenceSearchResults.Clear();
         await PopulateFieldsAsync(context, session, componentIndex, forceRefresh: true);
         AddStream(context, $"UnityCLI:{context.TargetPath} [[inspect]] > {rawCommand}");
         AddStream(context, $"[i] inspecting component: {component.Name}");
@@ -1347,6 +1581,12 @@ internal sealed class InspectorModeService
             return;
         }
 
+        if (IsObjectReferenceField(field))
+        {
+            await RunObjectReferenceFieldEditAsync(context, session, field);
+            return;
+        }
+
         if (IsNumericFieldType(field.Type))
         {
             await RunNumericFieldEditAsync(context, session, field);
@@ -1368,6 +1608,240 @@ internal sealed class InspectorModeService
 
         AddStream(context, $"[i] interactive edit not available for {field.Type}; use set/edit command");
         _renderer.Render(context, null, field.Name, focusModeEnabled: true);
+    }
+
+    private async Task RunObjectReferenceFieldEditAsync(
+        InspectorContext context,
+        CliSessionState session,
+        InspectorFieldEntry field)
+    {
+        if (context.SelectedComponentIndex is null || string.IsNullOrWhiteSpace(context.SelectedComponentName))
+        {
+            AddStream(context, "[!] no selected component for reference edit");
+            _renderer.Render(context, null, field.Name, focusModeEnabled: true);
+            return;
+        }
+
+        var query = string.Empty;
+        var includeScene = true;
+        var includeProject = true;
+        var selectedIndex = 0;
+        AddStream(context, "[i] reference edit: type query, Up/Down select, Enter apply, Tab scope(scene/project/all), Esc cancel");
+        BeginInteractiveEdit(context, field.Name, "reference", 0, 0);
+
+        try
+        {
+            while (true)
+            {
+                var results = await FetchReferenceSearchEntriesAsync(
+                    context,
+                    session,
+                    context.SelectedComponentIndex.Value,
+                    context.SelectedComponentName,
+                    field.Name,
+                    query,
+                    includeScene,
+                    includeProject);
+
+                context.LastReferenceSearchResults.Clear();
+                context.LastReferenceSearchResults.AddRange(results);
+                selectedIndex = results.Count == 0
+                    ? 0
+                    : Math.Clamp(selectedIndex, 0, Math.Min(7, results.Count - 1));
+                context.InteractiveSearchPreviewRows.Clear();
+                context.InteractiveSearchPreviewRows.AddRange(
+                    BuildReferencePreviewRows(query, includeScene, includeProject, results, selectedIndex));
+                _renderer.Render(context, null, field.Name, focusModeEnabled: true);
+
+                var key = Console.ReadKey(intercept: true);
+                switch (key.Key)
+                {
+                    case ConsoleKey.Escape:
+                        context.InteractiveSearchPreviewRows.Clear();
+                        AddStream(context, "[i] reference edit cancelled");
+                        _renderer.Render(context, null, field.Name, focusModeEnabled: true);
+                        return;
+
+                    case ConsoleKey.Enter:
+                        if (results.Count == 0)
+                        {
+                            AddStream(context, "[!] no reference result selected");
+                            continue;
+                        }
+
+                        var selected = results[Math.Clamp(selectedIndex, 0, results.Count - 1)];
+                        if (await ApplyInteractiveFieldValueAsync(context, session, field, selected.ValueToken))
+                        {
+                            context.InteractiveSearchPreviewRows.Clear();
+                            return;
+                        }
+
+                        context.InteractiveSearchPreviewRows.Clear();
+                        _renderer.Render(context, null, field.Name, focusModeEnabled: true);
+                        return;
+
+                    case ConsoleKey.UpArrow:
+                        if (results.Count > 0)
+                        {
+                            var cap = Math.Min(8, results.Count);
+                            selectedIndex = selectedIndex <= 0 ? cap - 1 : selectedIndex - 1;
+                        }
+
+                        break;
+
+                    case ConsoleKey.DownArrow:
+                        if (results.Count > 0)
+                        {
+                            var cap = Math.Min(8, results.Count);
+                            selectedIndex = (selectedIndex + 1) % cap;
+                        }
+
+                        break;
+
+                    case ConsoleKey.Tab:
+                        if (includeScene && includeProject)
+                        {
+                            includeScene = true;
+                            includeProject = false;
+                        }
+                        else if (includeScene)
+                        {
+                            includeScene = false;
+                            includeProject = true;
+                        }
+                        else
+                        {
+                            includeScene = true;
+                            includeProject = true;
+                        }
+
+                        selectedIndex = 0;
+                        break;
+
+                    case ConsoleKey.Backspace:
+                        if (query.Length > 0)
+                        {
+                            query = query[..^1];
+                            selectedIndex = 0;
+                        }
+
+                        break;
+
+                    default:
+                        if (!char.IsControl(key.KeyChar))
+                        {
+                            query += key.KeyChar;
+                            selectedIndex = 0;
+                        }
+
+                        break;
+                }
+            }
+        }
+        finally
+        {
+            context.InteractiveSearchPreviewRows.Clear();
+            EndInteractiveEdit(context);
+        }
+    }
+
+    private async Task<List<InspectorReferenceSearchEntry>> FetchReferenceSearchEntriesAsync(
+        InspectorContext context,
+        CliSessionState session,
+        int componentIndex,
+        string componentName,
+        string fieldName,
+        string query,
+        bool includeScene,
+        bool includeProject)
+    {
+        var payload = new InspectorBridgeRequest(
+            "find-reference",
+            context.TargetPath,
+            componentIndex,
+            componentName,
+            fieldName,
+            null,
+            query,
+            includeScene,
+            includeProject);
+        var responseJson = await SendBridgeRequestAsync(payload, session);
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<InspectorBridgeSearchResponse>(responseJson, _jsonOptions);
+            if (response?.Ok != true || response.Results is null)
+            {
+                return [];
+            }
+
+            return response.Results
+                .Where(result => !string.IsNullOrWhiteSpace(result.Path) && !string.IsNullOrWhiteSpace(result.ValueToken))
+                .Select(result => new InspectorReferenceSearchEntry(
+                    string.IsNullOrWhiteSpace(result.Scope) ? "reference" : result.Scope,
+                    result.Path,
+                    result.ValueToken!))
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<string> BuildReferencePreviewRows(
+        string query,
+        bool includeScene,
+        bool includeProject,
+        IReadOnlyList<InspectorReferenceSearchEntry> results,
+        int selectedIndex)
+    {
+        var scopeLabel = includeScene && includeProject
+            ? "all"
+            : includeScene
+                ? "scene"
+                : "project";
+        var lines = new List<string>
+        {
+            $"[grey]reference fuzzy[/] | query: {Markup.Escape(query)} | scope: {Markup.Escape(scopeLabel)}"
+        };
+
+        if (results.Count == 0)
+        {
+            lines.Add("no matches");
+            lines.Add("[grey]type to search references[/]");
+            return lines;
+        }
+
+        var shown = Math.Min(8, results.Count);
+        for (var i = 0; i < shown; i++)
+        {
+            var result = results[i];
+            var indexCell = Markup.Escape($"[{i}]");
+            var scopeCell = Markup.Escape($"[{result.Scope}]");
+            var escapedScope = Markup.Escape(result.Scope);
+            var escapedPath = Markup.Escape(result.Path);
+            if (i == selectedIndex)
+            {
+                lines.Add(
+                    $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]▸ {indexCell} {scopeCell} {escapedPath}[/]");
+                continue;
+            }
+
+            lines.Add($"[grey] {indexCell} {scopeCell} {escapedPath}[/]");
+        }
+
+        if (results.Count > shown)
+        {
+            lines.Add($"... {results.Count - shown} more");
+        }
+
+        lines.Add("[grey]Enter apply | Tab scope | Esc cancel[/]");
+        return lines;
     }
 
     private async Task RunVectorFieldEditAsync(
@@ -1701,6 +2175,7 @@ internal sealed class InspectorModeService
         context.InteractiveOverlayActive = false;
         context.InteractiveOverlayTitle = null;
         context.InteractiveOverlayValue = null;
+        context.InteractiveSearchPreviewRows.Clear();
     }
 
     private static void SetInteractiveOverlay(InspectorContext context, string title, string value)
@@ -2373,7 +2848,9 @@ internal sealed class InspectorModeService
         string? ComponentName,
         string? FieldName,
         string? Value,
-        string? Query);
+        string? Query,
+        bool IncludeSceneReferences = true,
+        bool IncludeProjectReferences = true);
 
     private sealed record InspectorBridgeComponentsResponse(bool Ok, List<InspectorBridgeComponent>? Components);
     private sealed record InspectorBridgeFieldsResponse(bool Ok, List<InspectorBridgeField>? Fields);

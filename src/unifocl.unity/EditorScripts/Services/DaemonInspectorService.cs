@@ -30,6 +30,7 @@ namespace UniFocl.EditorBridge
         }
 
         private static readonly Dictionary<string, Type> ComponentTypeLookup = BuildComponentTypeLookup();
+        private static readonly Dictionary<string, Type> ObjectReferenceTypeLookup = BuildObjectReferenceTypeLookup();
 
         public static string Execute(string payload)
         {
@@ -69,6 +70,20 @@ namespace UniFocl.EditorBridge
                     {
                         ok = true,
                         results = Find(request.targetPath, request.query, request.componentName)
+                    });
+
+                case "find-reference":
+                    return JsonUtility.ToJson(new InspectorSearchResponse
+                    {
+                        ok = true,
+                        results = FindReference(
+                            request.targetPath,
+                            request.componentIndex,
+                            request.componentName,
+                            request.fieldName,
+                            request.query,
+                            request.includeSceneReferences,
+                            request.includeProjectReferences)
                     });
 
                 case "add-component":
@@ -237,6 +252,222 @@ namespace UniFocl.EditorBridge
                 .ThenBy(result => result.path, StringComparer.OrdinalIgnoreCase)
                 .Take(20)
                 .ToArray();
+        }
+
+        private static InspectorSearchResult[] FindReference(
+            string? targetPath,
+            int componentIndex,
+            string? componentName,
+            string? fieldName,
+            string? query,
+            bool includeSceneReferences,
+            bool includeProjectReferences)
+        {
+            var normalizedQuery = (query ?? string.Empty).Trim();
+            if (!includeSceneReferences && !includeProjectReferences)
+            {
+                includeSceneReferences = true;
+                includeProjectReferences = true;
+            }
+
+            var component = ResolveComponent(targetPath, componentIndex, componentName);
+            if (component is null || string.IsNullOrWhiteSpace(fieldName))
+            {
+                return Array.Empty<InspectorSearchResult>();
+            }
+
+            var serializedObject = new SerializedObject(component);
+            var property = FindPropertyByNameOrPath(serializedObject, fieldName);
+            if (property is null || property.propertyType != SerializedPropertyType.ObjectReference)
+            {
+                return Array.Empty<InspectorSearchResult>();
+            }
+
+            var expectedType = ResolveObjectReferenceExpectedType(property);
+            var results = new List<InspectorSearchResult>();
+            var seenTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (includeSceneReferences)
+            {
+                CollectSceneReferenceCandidates(expectedType, normalizedQuery, results, seenTokens);
+            }
+
+            if (includeProjectReferences)
+            {
+                CollectProjectReferenceCandidates(expectedType, normalizedQuery, results, seenTokens);
+            }
+
+            return results
+                .OrderByDescending(result => result.score)
+                .ThenBy(result => result.path, StringComparer.OrdinalIgnoreCase)
+                .Take(20)
+                .ToArray();
+        }
+
+        private static void CollectSceneReferenceCandidates(
+            Type expectedType,
+            string query,
+            List<InspectorSearchResult> results,
+            HashSet<string> seenTokens)
+        {
+            if (!DaemonSceneManager.TryGetActiveScene(out var scene) || !scene.IsValid())
+            {
+                return;
+            }
+
+            foreach (var gameObject in EnumerateSceneGameObjects(scene))
+            {
+                var scenePath = BuildScenePath(gameObject.transform);
+                if (IsSceneGameObjectCompatible(expectedType))
+                {
+                    TryAppendReferenceCandidate(results, seenTokens, "scene", scenePath, $"scene:{scenePath}", query);
+                }
+
+                if (!typeof(Component).IsAssignableFrom(expectedType))
+                {
+                    continue;
+                }
+
+                foreach (var component in gameObject.GetComponents<Component>())
+                {
+                    if (component is null)
+                    {
+                        continue;
+                    }
+
+                    if (!expectedType.IsAssignableFrom(component.GetType()))
+                    {
+                        continue;
+                    }
+
+                    var path = $"{scenePath}#{component.GetType().Name}";
+                    TryAppendReferenceCandidate(results, seenTokens, "scene", path, $"scene:{path}", query);
+                }
+            }
+        }
+
+        private static void CollectProjectReferenceCandidates(
+            Type expectedType,
+            string query,
+            List<InspectorSearchResult> results,
+            HashSet<string> seenTokens)
+        {
+            foreach (var assetPath in AssetDatabase.GetAllAssetPaths())
+            {
+                if (!assetPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var assetType = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
+                if (!IsProjectAssetCompatible(expectedType, assetType))
+                {
+                    continue;
+                }
+
+                TryAppendReferenceCandidate(results, seenTokens, "project", assetPath, $"asset:{assetPath}", query);
+            }
+        }
+
+        private static void TryAppendReferenceCandidate(
+            List<InspectorSearchResult> results,
+            HashSet<string> seenTokens,
+            string scope,
+            string displayPath,
+            string valueToken,
+            string query)
+        {
+            if (!seenTokens.Add(valueToken))
+            {
+                return;
+            }
+
+            var score = 1d;
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                var name = System.IO.Path.GetFileName(displayPath);
+                var scored = TryScore(query, displayPath, out score)
+                    || TryScore(query, name, out score);
+                if (!scored)
+                {
+                    return;
+                }
+            }
+
+            results.Add(new InspectorSearchResult
+            {
+                scope = scope,
+                componentIndex = -1,
+                name = displayPath,
+                path = displayPath,
+                score = score,
+                valueToken = valueToken
+            });
+        }
+
+        private static IEnumerable<GameObject> EnumerateSceneGameObjects(Scene scene)
+        {
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                if (root is null)
+                {
+                    continue;
+                }
+
+                foreach (var item in EnumerateGameObjectsRecursive(root.transform))
+                {
+                    yield return item;
+                }
+            }
+        }
+
+        private static IEnumerable<GameObject> EnumerateGameObjectsRecursive(Transform node)
+        {
+            yield return node.gameObject;
+            for (var i = 0; i < node.childCount; i++)
+            {
+                foreach (var child in EnumerateGameObjectsRecursive(node.GetChild(i)))
+                {
+                    yield return child;
+                }
+            }
+        }
+
+        private static string BuildScenePath(Transform node)
+        {
+            var segments = new Stack<string>();
+            for (var current = node; current is not null; current = current.parent)
+            {
+                segments.Push(current.name);
+            }
+
+            return "/" + string.Join("/", segments);
+        }
+
+        private static bool IsSceneGameObjectCompatible(Type expectedType)
+        {
+            return expectedType == typeof(UnityEngine.Object)
+                   || expectedType.IsAssignableFrom(typeof(GameObject));
+        }
+
+        private static bool IsProjectAssetCompatible(Type expectedType, Type? assetType)
+        {
+            if (assetType is null)
+            {
+                return false;
+            }
+
+            if (expectedType == typeof(UnityEngine.Object))
+            {
+                return true;
+            }
+
+            if (typeof(Component).IsAssignableFrom(expectedType) && typeof(GameObject).IsAssignableFrom(assetType))
+            {
+                return true;
+            }
+
+            return expectedType.IsAssignableFrom(assetType);
         }
 
         private static bool ToggleComponent(string? targetPath, int componentIndex, string? componentName)
@@ -731,9 +962,198 @@ namespace UniFocl.EditorBridge
                         return false;
                     }
 
+                case SerializedPropertyType.ObjectReference:
+                    if (TryResolveObjectReferenceValue(property, rawValue, out var objectReference))
+                    {
+                        property.objectReferenceValue = objectReference;
+                        return true;
+                    }
+
+                    return false;
+
                 default:
                     return false;
             }
+        }
+
+        private static bool TryResolveObjectReferenceValue(SerializedProperty property, string rawValue, out UnityEngine.Object? resolved)
+        {
+            resolved = null;
+            var value = rawValue.Trim();
+            if (string.IsNullOrWhiteSpace(value) || value.Equals("null", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var expectedType = ResolveObjectReferenceExpectedType(property);
+            if (value.StartsWith("asset:", StringComparison.OrdinalIgnoreCase))
+            {
+                resolved = ResolveProjectReference(value["asset:".Length..], expectedType);
+                return resolved is not null;
+            }
+
+            if (value.StartsWith("scene:", StringComparison.OrdinalIgnoreCase))
+            {
+                resolved = ResolveSceneReference(value["scene:".Length..], expectedType);
+                return resolved is not null;
+            }
+
+            if (value.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+            {
+                resolved = ResolveProjectReference(value, expectedType);
+                return resolved is not null;
+            }
+
+            if (value.StartsWith("/", StringComparison.Ordinal))
+            {
+                resolved = ResolveSceneReference(value, expectedType);
+                return resolved is not null;
+            }
+
+            return false;
+        }
+
+        private static Type ResolveObjectReferenceExpectedType(SerializedProperty property)
+        {
+            var fieldType = ResolveElementType(ResolveFieldInfo(property)?.FieldType);
+            if (fieldType is not null
+                && typeof(UnityEngine.Object).IsAssignableFrom(fieldType)
+                && fieldType != typeof(UnityEngine.Object))
+            {
+                return fieldType;
+            }
+
+            if (TryResolveSerializedReferenceType(property, out var serializedType))
+            {
+                return serializedType;
+            }
+
+            if (property.objectReferenceValue is not null)
+            {
+                return property.objectReferenceValue.GetType();
+            }
+
+            return typeof(UnityEngine.Object);
+        }
+
+        private static Type? ResolveElementType(Type? fieldType)
+        {
+            if (fieldType is null)
+            {
+                return null;
+            }
+
+            if (fieldType.IsArray)
+            {
+                return fieldType.GetElementType();
+            }
+
+            if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>))
+            {
+                return fieldType.GetGenericArguments()[0];
+            }
+
+            return fieldType;
+        }
+
+        private static bool TryResolveSerializedReferenceType(SerializedProperty property, out Type resolvedType)
+        {
+            resolvedType = typeof(UnityEngine.Object);
+            var rawType = property.type?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(rawType))
+            {
+                return false;
+            }
+
+            var normalized = rawType;
+            if (normalized.StartsWith("PPtr<", StringComparison.Ordinal) && normalized.EndsWith(">", StringComparison.Ordinal))
+            {
+                normalized = normalized["PPtr<".Length..^1];
+            }
+
+            if (normalized.StartsWith("$", StringComparison.Ordinal))
+            {
+                normalized = normalized[1..];
+            }
+
+            if (ObjectReferenceTypeLookup.TryGetValue(normalized, out var exact))
+            {
+                resolvedType = exact;
+                return true;
+            }
+
+            var key = NormalizeTypeLookupKey(normalized);
+            if (ObjectReferenceTypeLookup.TryGetValue(key, out var matched))
+            {
+                resolvedType = matched;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static UnityEngine.Object? ResolveProjectReference(string rawPath, Type expectedType)
+        {
+            var path = rawPath.Trim();
+            if (!path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (typeof(Component).IsAssignableFrom(expectedType))
+            {
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                return prefab is null ? null : prefab.GetComponent(expectedType);
+            }
+
+            if (expectedType == typeof(UnityEngine.Object))
+            {
+                return AssetDatabase.LoadMainAssetAtPath(path);
+            }
+
+            return AssetDatabase.LoadAssetAtPath(path, expectedType);
+        }
+
+        private static UnityEngine.Object? ResolveSceneReference(string token, Type expectedType)
+        {
+            var normalized = token.Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            var separator = normalized.IndexOf('#');
+            var targetPath = separator >= 0 ? normalized[..separator] : normalized;
+            var componentToken = separator >= 0 ? normalized[(separator + 1)..] : null;
+            var gameObject = ResolveTarget(targetPath);
+            if (gameObject is null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(componentToken))
+            {
+                var component = gameObject.GetComponents<Component>()
+                    .FirstOrDefault(candidate =>
+                        candidate is not null
+                        && (candidate.GetType().Name.Equals(componentToken, StringComparison.OrdinalIgnoreCase)
+                            || (candidate.GetType().FullName?.Equals(componentToken, StringComparison.OrdinalIgnoreCase) ?? false)));
+                return component is not null && expectedType.IsAssignableFrom(component.GetType())
+                    ? component
+                    : null;
+            }
+
+            if (expectedType == typeof(UnityEngine.Object) || expectedType.IsAssignableFrom(typeof(GameObject)))
+            {
+                return gameObject;
+            }
+
+            if (typeof(Component).IsAssignableFrom(expectedType))
+            {
+                return gameObject.GetComponent(expectedType);
+            }
+
+            return null;
         }
 
         private static string FormatPropertyValue(SerializedProperty property)
@@ -816,6 +1236,45 @@ namespace UniFocl.EditorBridge
                 foreach (var type in types)
                 {
                     if (type.IsAbstract || !typeof(Component).IsAssignableFrom(type))
+                    {
+                        continue;
+                    }
+
+                    lookup[type.FullName ?? type.Name] = type;
+                    lookup[type.Name] = type;
+                    lookup[NormalizeTypeLookupKey(type.Name)] = type;
+                    if (!string.IsNullOrWhiteSpace(type.FullName))
+                    {
+                        lookup[NormalizeTypeLookupKey(type.FullName)] = type;
+                    }
+                }
+            }
+
+            return lookup;
+        }
+
+        private static Dictionary<string, Type> BuildObjectReferenceTypeLookup()
+        {
+            var lookup = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(type => type is not null).Cast<Type>().ToArray();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    if (!typeof(UnityEngine.Object).IsAssignableFrom(type))
                     {
                         continue;
                     }

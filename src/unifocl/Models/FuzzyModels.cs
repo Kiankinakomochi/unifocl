@@ -34,5 +34,5 @@ internal sealed record InspectorSearchResultDto(
     int? ComponentIndex,
     string Name,
     string Path,
-    double Score);
-
+    double Score,
+    string? ValueToken = null);

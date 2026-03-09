@@ -202,6 +202,16 @@ internal sealed class InspectorTuiRenderer
         var rows = context.CommandStream
             .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
             .ToList();
+        if (context.InteractiveSearchPreviewRows.Count > 0)
+        {
+            if (rows.Count > 0)
+            {
+                rows.Add(string.Empty);
+            }
+
+            rows.AddRange(context.InteractiveSearchPreviewRows);
+        }
+
         if (rows.Count == 0)
         {
             return [];
