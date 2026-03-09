@@ -120,8 +120,8 @@ var projectCommands = new List<CommandSpec>
     new("s <field> <value...>", "Alias for set", "s"),
     new("toggle <target>", "Toggle bool/active/enabled in active mode", "toggle"),
     new("t <target>", "Alias for toggle", "t"),
-    new("f <query>", "Fuzzy find in active mode", "f"),
-    new("ff <query>", "Alias for fuzzy find", "ff"),
+    new("f [--type <type>|t:<type>] <query>", "Fuzzy find in active mode", "f"),
+    new("ff [--type <type>|t:<type>] <query>", "Alias for fuzzy find", "ff"),
     new("move <...>", "Move/reorder item in active mode", "move"),
     new("mv <...>", "Alias for move", "mv"),
     new("upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "upm list"),
@@ -157,6 +157,7 @@ var inspectorCommands = new List<CommandSpec>
     new("..", "Alias for up", ".."),
     new(":i", "Alias for up", ":i"),
     new("set <field> <value...>", "Set selected component field in inspector", "set"),
+    new("set <field> --search <query> [--scene|--project]", "Search and list ObjectReference candidates for indexed assignment", "set"),
     new("s <field> <value...>", "Alias for set", "s"),
     new("set <Component>.<field> <value...>", "Set a field directly from inspector root", "set"),
     new("edit <field> <value...>", "Edit serialized field value for selected component", "edit"),
@@ -861,7 +862,7 @@ static int RenderComposerFrame(
     }
     else if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
     {
-        lines.Add("[dim]Project mode: list, enter <idx>, up, f <query>, mk <type> [count] [--name], load <idx|name>, rename <idx> <new>, remove <idx>, move <...>, F7 focus nav[/]");
+        lines.Add("[dim]Project mode: list, enter <idx>, up, f [--type <type>|t:<type>] <query>, mk <type> [count] [--name], load <idx|name>, rename <idx> <new>, remove <idx>, move <...>, F7 focus nav[/]");
     }
     else
     {
@@ -1944,47 +1945,10 @@ static List<(string Path, string? CommitCommand)> GetInspectorFuzzyCandidates(In
 }
 
 static (string? TypeFilter, string Query) ParseProjectFuzzyQuery(string query)
-{
-    if (string.IsNullOrWhiteSpace(query))
-    {
-        return (null, string.Empty);
-    }
-
-    var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-    string? typeFilter = null;
-    var remaining = new List<string>();
-    foreach (var token in tokens)
-    {
-        if (token.StartsWith("t:", StringComparison.OrdinalIgnoreCase))
-        {
-            typeFilter = token[2..];
-            continue;
-        }
-
-        remaining.Add(token);
-    }
-
-    return (typeFilter, remaining.Count == 0 ? string.Empty : string.Join(' ', remaining));
-}
+    => ProjectMkCatalog.ParseFuzzyQuery(query);
 
 static bool PassesProjectTypeFilter(string path, string? typeFilter)
-{
-    if (string.IsNullOrWhiteSpace(typeFilter))
-    {
-        return true;
-    }
-
-    var ext = Path.GetExtension(path).ToLowerInvariant();
-    return typeFilter.ToLowerInvariant() switch
-    {
-        "script" => ext == ".cs",
-        "scene" => ext == ".unity",
-        "prefab" => ext == ".prefab",
-        "material" => ext == ".mat",
-        "animation" => ext is ".anim" or ".controller",
-        _ => path.Contains(typeFilter, StringComparison.OrdinalIgnoreCase)
-    };
-}
+    => ProjectMkCatalog.PassesFuzzyTypeFilter(path, typeFilter);
 
 static bool TryParseExecLaunchOptions(string[] args, out ExecLaunchOptions? options, out string? error)
 {

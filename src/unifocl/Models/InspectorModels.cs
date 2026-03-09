@@ -26,6 +26,8 @@ internal sealed class InspectorContext
     public bool InteractiveOverlayActive { get; set; }
     public string? InteractiveOverlayTitle { get; set; }
     public string? InteractiveOverlayValue { get; set; }
+    public List<string> InteractiveSearchPreviewRows { get; } = [];
+    public List<InspectorReferenceSearchEntry> LastReferenceSearchResults { get; } = [];
 
     public string PromptPath =>
         Depth == InspectorDepth.ComponentFields && !string.IsNullOrWhiteSpace(SelectedComponentName)
@@ -45,3 +47,8 @@ internal sealed record InspectorFieldEntry(
     string Type,
     bool IsBoolean,
     IReadOnlyList<string>? EnumOptions = null);
+
+internal sealed record InspectorReferenceSearchEntry(
+    string Scope,
+    string Path,
+    string ValueToken);

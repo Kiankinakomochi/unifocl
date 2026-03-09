@@ -1442,7 +1442,7 @@ internal sealed class ProjectViewService
     {
         if (tokens.Count < 2)
         {
-            outputs.Add("[x] usage: f <query>");
+            outputs.Add("[x] usage: f [--type <type>|t:<type>] <query>");
             return true;
         }
 
@@ -2814,42 +2814,10 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}[CreateAssetMenu(f
     }
 
     private static (string? TypeFilter, string Query) ParseProjectQuery(string query)
-    {
-        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        string? filter = null;
-        var remaining = new List<string>();
-        foreach (var token in tokens)
-        {
-            if (token.StartsWith("t:", StringComparison.OrdinalIgnoreCase))
-            {
-                filter = token[2..];
-                continue;
-            }
-
-            remaining.Add(token);
-        }
-
-        return (filter, remaining.Count == 0 ? string.Empty : string.Join(' ', remaining));
-    }
+        => ProjectMkCatalog.ParseFuzzyQuery(query);
 
     private static bool PassesTypeFilter(string path, string? typeFilter)
-    {
-        if (string.IsNullOrWhiteSpace(typeFilter))
-        {
-            return true;
-        }
-
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return typeFilter.ToLowerInvariant() switch
-        {
-            "script" => ext == ".cs",
-            "scene" => ext == ".unity",
-            "prefab" => ext == ".prefab",
-            "material" => ext == ".mat",
-            "animation" => ext is ".anim" or ".controller",
-            _ => path.Contains(typeFilter, StringComparison.OrdinalIgnoreCase)
-        };
-    }
+        => ProjectMkCatalog.PassesFuzzyTypeFilter(path, typeFilter);
 
     private static string FormatProjectCommandFailure(string action, string? message)
     {

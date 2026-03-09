@@ -333,33 +333,7 @@ internal sealed class ProjectDaemonBridge
 
     private static string ResolveStubExtension(string type)
     {
-        return ProjectMkCatalog.NormalizeKey(type) switch
-        {
-            "scene" => ".unity",
-            "prefab" => ".prefab",
-            "prefabvariant" => ".prefab",
-            "csharpscript" => ".cs",
-            "scriptableobjectscript" => ".cs",
-            "assemblydefinition" => ".asmdef",
-            "assemblydefinitionreference" => ".asmref",
-            "testingassemblydefinition" => ".asmdef",
-            "testingassemblydefinitionreference" => ".asmref",
-            "shader" => ".shader",
-            "computeshader" => ".compute",
-            "shaderincludefile" => ".hlsl",
-            "material" => ".mat",
-            "animatorcontroller" => ".controller",
-            "animatoroverridecontroller" => ".overrideController",
-            "animationclip" => ".anim",
-            "inputactions" => ".inputactions",
-            "uxmldocument" => ".uxml",
-            "ussstylesheet" => ".uss",
-            "shadergraph" => ".shadergraph",
-            "subgraph" => ".shadersubgraph",
-            "vfxgraph" => ".vfx",
-            "searchindex" => ".index",
-            _ => ".asset"
-        };
+        return ProjectMkCatalog.ResolveDefaultExtension(type);
     }
 
     private string EnsureUniqueStubAssetPath(string relativePath)
