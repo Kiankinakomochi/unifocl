@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1 - 2026-03-09
+
+### Changed
+- Officialized `0.7.1` by closing the development cycle suffix.
+- Added agent worktree orchestration scripts for bash and PowerShell.
+- Consolidated lifecycle and milestone progress guidance directly into `README.md`.
+- Replaced standalone lifecycle/milestone docs with GitHub Milestone tracking guidance in `README.md`.
+
 ## 0.7.1a2 - 2026-03-09
 
 ### Changed
