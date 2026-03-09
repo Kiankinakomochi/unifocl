@@ -24,6 +24,7 @@
 - Hierarchy mode now supports `inspect <idx|name>` and `ins <idx|name>` to jump from hierarchy selection to inspector mode.
 
 ### Changed
+- Officialized `0.5.0` release by removing the development suffix from CLI version output.
 - Hierarchy focus mode now distinguishes transition keys: `Tab` expands selected nodes, `Enter` transitions to inspector for the selected object.
 - Entering hierarchy interactive selection no longer collapses previously expanded hierarchy nodes.
 - Hierarchy-originated inspector transitions now pass through contextual routing reliably in hierarchy context.

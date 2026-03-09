@@ -3,7 +3,7 @@ internal static class CliVersion
     public const int Major = 0;
     public const int Minor = 5;
     public const int Patch = 0;
-    public const string DevCycle = "a16";
+    public const string DevCycle = "";
     public const string Protocol = "v2";
 
     public static string SemVer => string.IsNullOrWhiteSpace(DevCycle)
