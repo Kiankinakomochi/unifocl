@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2a2 - 2026-03-09
+
+### Changed
+- Fixed project-context empty-input routing so redraw requests execute `ProjectViewService` rendering instead of returning early from the router.
+- This resolves missing Project TUI frame after hierarchy `quit`/exit transitions when prompt context has already returned to Project mode.
+
 ## 0.5.2a1 - 2026-03-09
 
 ### Changed

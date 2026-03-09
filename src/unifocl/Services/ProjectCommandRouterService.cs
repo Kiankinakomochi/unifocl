@@ -59,6 +59,15 @@ internal sealed class ProjectCommandRouterService
         var tokens = Tokenize(normalizedInput);
         if (tokens.Count == 0)
         {
+            if (session.ContextMode == CliContextMode.Project)
+            {
+                await _projectViewService.TryHandleProjectViewCommandAsync(
+                    string.Empty,
+                    session,
+                    daemonControlService,
+                    daemonRuntime);
+            }
+
             return true;
         }
 
