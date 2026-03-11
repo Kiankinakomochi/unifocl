@@ -1184,6 +1184,7 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
 
     AppendLog(streamLog, "[grey]keybinds[/]: hierarchy focus");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted GameObject");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]0-9 (or multi-digit)[/] jump to visible object index");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] expand selected node");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] enter inspector for selected node");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] collapse selected node");
@@ -1191,12 +1192,14 @@ static void WriteKeybindsHelp(List<string> streamLog, CliSessionState session)
 
     AppendLog(streamLog, "[grey]keybinds[/]: project focus");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted file/folder");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]0-9 (or multi-digit)[/] jump to visible entry index");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] reveal/open selected entry");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Shift+Tab[/] move to parent folder");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc/F7[/] exit focus mode");
 
     AppendLog(streamLog, "[grey]keybinds[/]: inspector focus");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] move highlighted component/field (auto-scrolls long lists)");
+    AppendLog(streamLog, "[grey]keybinds[/]: [white]0-9 (or multi-digit)[/] jump to component/field index");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Tab[/] inspect selected component");
     AppendLog(streamLog, "[grey]keybinds[/]: [white]Enter[/] edit selected field (component inspection)");
     AppendLog(streamLog, "[grey]keybinds[/]: edit mode -> [white]Tab[/] next vector component / enum-bool option, [white]←/→[/] adjust/cycle, number keys edit vector/color component, [white]Enter[/] apply, [white]Esc[/] cancel");
