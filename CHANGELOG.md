@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.0 - 2026-03-11
+
+### Changed
+- Officialized `0.20.0` by closing the development cycle suffix.
+- Fixed inspector focus-mode body rendering to pin inspector section headers (component header / field table header) while scrolling list contents.
+- Fixed inspector focus-mode first-exit behavior after hierarchy-origin transitions so exiting selection mode with `F7` no longer collapses to prompt-only output.
+- Fixed hierarchy-to-inspector transition flow to preserve the already-rendered inspector frame by removing transition-time console clear operations.
+
 ## 0.19.0 - 2026-03-11
 
 ### Changed
