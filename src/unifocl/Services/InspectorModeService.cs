@@ -186,6 +186,8 @@ internal sealed class InspectorModeService
 
         var selectedComponentPosition = 0;
         var selectedFieldPosition = 0;
+        var typedIndexBuffer = string.Empty;
+        long typedIndexLastInputTick = 0;
 
         while (true)
         {
@@ -241,6 +243,39 @@ internal sealed class InspectorModeService
             }
 
             var intent = KeyboardIntentReader.ReadIntent();
+            if (SelectionIndexJumpHelper.TryApply(
+                    intent,
+                    index =>
+                    {
+                        if (context.Depth == InspectorDepth.ComponentList)
+                        {
+                            var orderedComponents = context.Components.OrderBy(component => component.Index).ToList();
+                            var componentTargetPosition = orderedComponents.FindIndex(component => component.Index == index);
+                            if (componentTargetPosition < 0)
+                            {
+                                return false;
+                            }
+
+                            selectedComponentPosition = componentTargetPosition;
+                            context.FocusHighlightedComponentIndex = orderedComponents[componentTargetPosition].Index;
+                            return true;
+                        }
+
+                        if ((uint)index >= context.Fields.Count)
+                        {
+                            return false;
+                        }
+
+                        selectedFieldPosition = index;
+                        context.FocusHighlightedFieldName = context.Fields[selectedFieldPosition].Name;
+                        return true;
+                    },
+                    ref typedIndexBuffer,
+                    ref typedIndexLastInputTick))
+            {
+                continue;
+            }
+
             switch (intent)
             {
                 case KeyboardIntent.Up:

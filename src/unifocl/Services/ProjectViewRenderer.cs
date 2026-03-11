@@ -16,7 +16,7 @@ internal sealed class ProjectViewRenderer
         var cwd = string.IsNullOrWhiteSpace(state.RelativeCwd) ? "Assets" : state.RelativeCwd;
         var db = state.DbState == ProjectDbState.LockedImporting ? "LOCKED (Importing)" : "IDLE (Safe)";
         var focusLabel = focusModeEnabled
-            ? " | FOCUS: ON (up/down, tab, shift+tab, esc)"
+            ? " | FOCUS: ON (up/down, idx jump, tab, shift+tab, esc)"
             : " | Focus Key: F7";
         var header = $" UnityCLI v{CliVersion.SemVer} | MODE: PROJECT | DB: {db} | CWD: {cwd}{focusLabel}";
 
@@ -37,7 +37,7 @@ internal sealed class ProjectViewRenderer
         if (state.UpmFocusModeEnabled && state.LastUpmPackages.Count > 0)
         {
             wrappedTranscript.Add(string.Empty);
-            wrappedTranscript.Add("[grey]upm selection[/]: [white]up/down[/] move, [white]enter[/] actions, [white]esc/F7[/] exit");
+            wrappedTranscript.Add("[grey]upm selection[/]: [white]up/down[/] move, [white]idx[/] jump, [white]enter[/] actions, [white]esc/F7[/] exit");
             for (var i = 0; i < state.LastUpmPackages.Count; i++)
             {
                 var package = state.LastUpmPackages[i];
@@ -51,11 +51,11 @@ internal sealed class ProjectViewRenderer
             if (state.UpmActionMenuVisible)
             {
                 wrappedTranscript.Add(string.Empty);
-                wrappedTranscript.Add("[grey]action[/]: choose with [white]up/down[/], run with [white]enter[/], close with [white]esc[/]");
+                wrappedTranscript.Add("[grey]action[/]: choose with [white]up/down[/] or [white]idx[/], run with [white]enter[/], close with [white]esc[/]");
                 var actions = new[] { "update", "remove", "clean install" };
                 for (var i = 0; i < actions.Length; i++)
                 {
-                    var label = $"{(i == state.UpmActionSelectedIndex ? ">" : " ")} {actions[i]}";
+                    var label = $"{(i == state.UpmActionSelectedIndex ? ">" : " ")} {i}. {actions[i]}";
                     wrappedTranscript.Add(i == state.UpmActionSelectedIndex
                         ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{Markup.Escape(label)}[/]"
                         : $"[grey]{Markup.Escape(label)}[/]");
