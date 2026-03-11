@@ -37,17 +37,47 @@ namespace UniFocl.EditorBridge
                     continue;
                 }
 
-                if (markDirty)
-                {
-                    EditorSceneManager.MarkSceneDirty(sceneToSave);
-                }
-
-                if (!EditorSceneManager.SaveScene(sceneToSave))
+                if (!IsScenePersistable(sceneToSave))
                 {
                     Debug.LogWarning(
-                        $"[unifocl] Failed to save scene '{sceneToSave.name}' (path: '{sceneToSave.path}') after {source}.");
+                        $"[unifocl] Skipping scene save after {source}: scene '{sceneToSave.name}' is preview/unsaveable (path: '{sceneToSave.path}').");
+                    continue;
+                }
+
+                try
+                {
+                    if (markDirty)
+                    {
+                        EditorSceneManager.MarkSceneDirty(sceneToSave);
+                    }
+
+                    if (!EditorSceneManager.SaveScene(sceneToSave))
+                    {
+                        Debug.LogWarning(
+                            $"[unifocl] Failed to save scene '{sceneToSave.name}' (path: '{sceneToSave.path}') after {source}.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning(
+                        $"[unifocl] Scene persistence threw after {source} for scene '{sceneToSave.name}' (path: '{sceneToSave.path}'): {ex.Message}");
                 }
             }
+        }
+
+        private static bool IsScenePersistable(Scene scene)
+        {
+            if (!scene.IsValid() || !scene.isLoaded)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(scene.path))
+            {
+                return false;
+            }
+
+            return !EditorSceneManager.IsPreviewScene(scene);
         }
     }
 }
