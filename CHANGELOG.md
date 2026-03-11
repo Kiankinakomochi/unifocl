@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.0 - 2026-03-11
+
+### Changed
+- Officialized `0.15.0` by closing the development cycle suffix.
+- Added mandatory worktree bootstrap steps to `AGENT.md` (branch from `main`, pull `origin/main`, init submodules, bump minor/start dev cycle, increment dev cycle on dev builds).
+- Fixed inspector mutation error reporting to return actionable details from Bridge and daemon responses.
+- Increased inspector mutation request timeout to avoid false failure logs when prefab/scene persistence takes longer.
+- Fixed inspector mutation persistence flow to skip preview/unsaveable scenes so successful prefab mutations no longer fail on post-save exceptions.
+
 ## 0.14.0 - 2026-03-11
 
 ### Changed

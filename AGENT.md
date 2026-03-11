@@ -4,6 +4,18 @@ description: >
 
 # unifocl CLI Skill (Strict Team Conventions)
 
+## Mandatory Worktree Bootstrap (Do First)
+
+Before any edits or worktree actions, execute these steps in order:
+
+1. Create a working branch with `codex/` prefix from latest `main`.
+2. Pull latest `origin/main`.
+3. Sync and initialize submodules recursively:
+   - `git submodule sync --recursive`
+   - `git submodule update --init --recursive`
+4. Bump the minor version in `src/unifocl/Services/CliVersion.cs` and start the dev cycle with `DevCycle = "a1"`.
+5. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
+
 ## Goal
 
 Maintain this repository with **scalability, security, statelessness, and maintainability** as absolute priorities.
