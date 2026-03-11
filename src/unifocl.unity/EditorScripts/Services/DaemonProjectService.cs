@@ -277,46 +277,61 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteRenameAsset(ProjectCommandRequest request)
         {
-            if (!IsValidAssetPath(request.assetPath) || !IsValidAssetPath(request.newAssetPath))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "rename-asset requires assetPath and newAssetPath" });
-            }
+            return ExecuteWithRollbackStash(
+                request,
+                mutationName: "rename-asset",
+                executeMutation: () =>
+                {
+                    if (!IsValidAssetPath(request.assetPath) || !IsValidAssetPath(request.newAssetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "rename-asset requires assetPath and newAssetPath" });
+                    }
 
-            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.assetPath) is null)
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset not found: {request.assetPath}" });
-            }
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.assetPath) is null)
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset not found: {request.assetPath}" });
+                    }
 
-            var error = AssetDatabase.MoveAsset(request.assetPath, request.newAssetPath);
-            if (!string.IsNullOrWhiteSpace(error))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = error });
-            }
+                    var error = AssetDatabase.MoveAsset(request.assetPath, request.newAssetPath);
+                    if (!string.IsNullOrWhiteSpace(error))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = error });
+                    }
 
-            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-            return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "asset renamed" });
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "asset renamed" });
+                },
+                preMutationTargets: new[] { request.assetPath },
+                rollbackCleanupTargets: new[] { request.newAssetPath });
         }
 
         private static string ExecuteRemoveAsset(ProjectCommandRequest request)
         {
-            if (!IsValidAssetPath(request.assetPath))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "remove-asset requires assetPath" });
-            }
+            return ExecuteWithRollbackStash(
+                request,
+                mutationName: "remove-asset",
+                executeMutation: () =>
+                {
+                    if (!IsValidAssetPath(request.assetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "remove-asset requires assetPath" });
+                    }
 
-            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.assetPath) is null
-                && !AssetDatabase.IsValidFolder(request.assetPath))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset not found: {request.assetPath}" });
-            }
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.assetPath) is null
+                        && !AssetDatabase.IsValidFolder(request.assetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset not found: {request.assetPath}" });
+                    }
 
-            if (!AssetDatabase.MoveAssetToTrash(request.assetPath))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"failed to remove asset: {request.assetPath}" });
-            }
+                    if (!AssetDatabase.MoveAssetToTrash(request.assetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"failed to remove asset: {request.assetPath}" });
+                    }
 
-            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-            return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "asset removed" });
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "asset removed" });
+                },
+                preMutationTargets: new[] { request.assetPath });
         }
 
         private static string ExecuteLoadAsset(ProjectCommandRequest request)
@@ -3008,6 +3023,278 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
             return !string.IsNullOrWhiteSpace(pathPart);
         }
 
+        private static string ExecuteWithRollbackStash(
+            ProjectCommandRequest request,
+            string mutationName,
+            Func<string> executeMutation,
+            IEnumerable<string> preMutationTargets,
+            IEnumerable<string>? rollbackCleanupTargets = null)
+        {
+            if (request.intent is null)
+            {
+                return executeMutation();
+            }
+
+            var projectRoot = GetProjectRoot();
+            var stashRoot = BuildTransactionStashRoot(projectRoot, request.intent.transactionId, mutationName);
+            var stashEntries = new List<StashEntry>();
+            try
+            {
+                Directory.CreateDirectory(stashRoot);
+                foreach (var assetPath in preMutationTargets
+                             .Where(path => !string.IsNullOrWhiteSpace(path))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!TryStashAssetWithMeta(projectRoot, stashRoot, assetPath, stashEntries, out var stashError))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = stashError ?? $"failed to stash target before {mutationName}: {assetPath}"
+                        });
+                    }
+                }
+
+                var responsePayload = executeMutation();
+                if (TryReadProjectResponseStatus(responsePayload, out var ok) && ok)
+                {
+                    DeleteDirectorySafe(stashRoot);
+                    return responsePayload;
+                }
+
+                if (!TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out var revertError))
+                {
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                    DeleteDirectorySafe(stashRoot);
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = $"{mutationName} failed and rollback also failed: {revertError}"
+                    });
+                }
+
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                DeleteDirectorySafe(stashRoot);
+                return responsePayload;
+            }
+            catch (Exception ex)
+            {
+                TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out _);
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                DeleteDirectorySafe(stashRoot);
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"{mutationName} exception: {ex.Message}"
+                });
+            }
+        }
+
+        private static string BuildTransactionStashRoot(string projectRoot, string transactionId, string mutationName)
+        {
+            var safeTransactionId = string.IsNullOrWhiteSpace(transactionId)
+                ? $"tx-{DateTime.UtcNow:yyyyMMddHHmmssfff}"
+                : SanitizePathToken(transactionId);
+            var safeMutationName = SanitizePathToken(mutationName);
+            var nonce = Guid.NewGuid().ToString("N")[..8];
+            return Path.Combine(projectRoot, ".unifocl", "stash", $"{safeTransactionId}-{safeMutationName}-{nonce}");
+        }
+
+        private static string SanitizePathToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return "transaction";
+            }
+
+            var chars = token
+                .Select(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' ? ch : '-')
+                .ToArray();
+            return new string(chars);
+        }
+
+        private static bool TryStashAssetWithMeta(
+            string projectRoot,
+            string stashRoot,
+            string assetPath,
+            List<StashEntry> entries,
+            out string? error)
+        {
+            error = null;
+            if (!TryStashSinglePath(projectRoot, stashRoot, assetPath, entries, out error))
+            {
+                return false;
+            }
+
+            if (!TryStashSinglePath(projectRoot, stashRoot, assetPath + ".meta", entries, out error))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryStashSinglePath(
+            string projectRoot,
+            string stashRoot,
+            string relativePath,
+            List<StashEntry> entries,
+            out string? error)
+        {
+            error = null;
+            if (entries.Any(entry => entry.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            var absolutePath = Path.Combine(projectRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            var existsAsFile = File.Exists(absolutePath);
+            var existsAsDirectory = Directory.Exists(absolutePath);
+            if (!existsAsFile && !existsAsDirectory)
+            {
+                return true;
+            }
+
+            var stashPath = Path.Combine(
+                stashRoot,
+                "entries",
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            try
+            {
+                if (existsAsDirectory)
+                {
+                    CopyDirectoryRecursive(absolutePath, stashPath);
+                }
+                else
+                {
+                    var stashDirectory = Path.GetDirectoryName(stashPath);
+                    if (!string.IsNullOrWhiteSpace(stashDirectory))
+                    {
+                        Directory.CreateDirectory(stashDirectory);
+                    }
+
+                    File.Copy(absolutePath, stashPath, overwrite: true);
+                }
+
+                entries.Add(new StashEntry(relativePath, stashPath, existsAsDirectory));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = $"failed to stash '{relativePath}': {ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool TryRevertFromStash(
+            string projectRoot,
+            IReadOnlyList<StashEntry> entries,
+            IEnumerable<string>? rollbackCleanupTargets,
+            out string? error)
+        {
+            error = null;
+            try
+            {
+                if (rollbackCleanupTargets is not null)
+                {
+                    foreach (var cleanupTarget in rollbackCleanupTargets
+                                 .Where(path => !string.IsNullOrWhiteSpace(path))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase))
+                    {
+                        DeleteAssetPathIfExists(projectRoot, cleanupTarget);
+                        DeleteAssetPathIfExists(projectRoot, cleanupTarget + ".meta");
+                    }
+                }
+
+                foreach (var entry in entries)
+                {
+                    var targetPath = Path.Combine(projectRoot, entry.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                    if (entry.IsDirectory)
+                    {
+                        if (Directory.Exists(targetPath))
+                        {
+                            Directory.Delete(targetPath, recursive: true);
+                        }
+
+                        CopyDirectoryRecursive(entry.StashPath, targetPath);
+                    }
+                    else
+                    {
+                        var targetDirectory = Path.GetDirectoryName(targetPath);
+                        if (!string.IsNullOrWhiteSpace(targetDirectory))
+                        {
+                            Directory.CreateDirectory(targetDirectory);
+                        }
+
+                        File.Copy(entry.StashPath, targetPath, overwrite: true);
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static void DeleteAssetPathIfExists(string projectRoot, string relativePath)
+        {
+            var absolutePath = Path.Combine(projectRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(absolutePath))
+            {
+                File.Delete(absolutePath);
+                return;
+            }
+
+            if (Directory.Exists(absolutePath))
+            {
+                Directory.Delete(absolutePath, recursive: true);
+            }
+        }
+
+        private static void CopyDirectoryRecursive(string sourceDirectory, string targetDirectory)
+        {
+            Directory.CreateDirectory(targetDirectory);
+            foreach (var file in Directory.GetFiles(sourceDirectory))
+            {
+                var targetFile = Path.Combine(targetDirectory, Path.GetFileName(file));
+                File.Copy(file, targetFile, overwrite: true);
+            }
+
+            foreach (var directory in Directory.GetDirectories(sourceDirectory))
+            {
+                var targetSubdirectory = Path.Combine(targetDirectory, Path.GetFileName(directory));
+                CopyDirectoryRecursive(directory, targetSubdirectory);
+            }
+        }
+
+        private static bool TryReadProjectResponseStatus(string payload, out bool ok)
+        {
+            ok = false;
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return false;
+            }
+
+            try
+            {
+                var parsed = JsonUtility.FromJson<ProjectCommandResponse>(payload);
+                if (parsed is null)
+                {
+                    return false;
+                }
+
+                ok = parsed.ok;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static bool IsValidAssetPath(string? assetPath)
         {
             if (string.IsNullOrWhiteSpace(assetPath) || assetPath.Contains("..", StringComparison.Ordinal))
@@ -3024,6 +3311,20 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
         {
             return Directory.GetParent(Application.dataPath)?.FullName
                    ?? throw new InvalidOperationException("failed to resolve Unity project root");
+        }
+
+        private readonly struct StashEntry
+        {
+            public StashEntry(string relativePath, string stashPath, bool isDirectory)
+            {
+                RelativePath = relativePath;
+                StashPath = stashPath;
+                IsDirectory = isDirectory;
+            }
+
+            public string RelativePath { get; }
+            public string StashPath { get; }
+            public bool IsDirectory { get; }
         }
     }
 }
