@@ -47,6 +47,16 @@ internal sealed class ProjectDaemonBridge
             "rename-asset" => HandleRenameAsset(request),
             "remove-asset" => HandleRemoveAsset(request),
             "load-asset" => HandleLoadAsset(request),
+            "upm-list" => HandleUpmList(request),
+            "upm-install" => RequireBridgeMode("upm-install"),
+            "upm-remove" => RequireBridgeMode("upm-remove"),
+            "build-run" => RequireBridgeMode("build-run"),
+            "build-exec" => RequireBridgeMode("build-exec"),
+            "build-scenes-get" => RequireBridgeMode("build-scenes-get"),
+            "build-scenes-set" => RequireBridgeMode("build-scenes-set"),
+            "build-addressables" => RequireBridgeMode("build-addressables"),
+            "build-targets" => HandleBuildTargetsStub(),
+            "build-cancel" => HandleBuildCancelStub(),
             _ => new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} unsupported action: {request.Action}", null, null)
         };
         response = JsonSerializer.Serialize(result, _jsonOptions);
@@ -270,6 +280,115 @@ internal sealed class ProjectDaemonBridge
             null);
     }
 
+    private ProjectCommandResponseDto HandleUpmList(ProjectCommandRequestDto request)
+    {
+        UpmListRequestPayload? payload = null;
+        if (!string.IsNullOrWhiteSpace(request.Content))
+        {
+            try
+            {
+                payload = JsonSerializer.Deserialize<UpmListRequestPayload>(request.Content, _jsonOptions);
+            }
+            catch (JsonException)
+            {
+                payload = null;
+            }
+        }
+
+        var includeOutdated = payload?.IncludeOutdated ?? false;
+        var includeBuiltin = payload?.IncludeBuiltin ?? false;
+        var includeGit = payload?.IncludeGit ?? false;
+        var manifestPath = Path.Combine(_projectPath, "Packages", "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            var empty = JsonSerializer.Serialize(new UpmListResponsePayload([]), _jsonOptions);
+            return new ProjectCommandResponseDto(true, "upm package list loaded from manifest", "upm-list", empty);
+        }
+
+        List<UpmListPackagePayload> packages;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("dependencies", out var dependencies)
+                || dependencies.ValueKind != JsonValueKind.Object)
+            {
+                packages = [];
+            }
+            else
+            {
+                packages = dependencies
+                    .EnumerateObject()
+                    .Where(property => property.Value.ValueKind == JsonValueKind.String)
+                    .Select(property =>
+                    {
+                        var version = property.Value.GetString() ?? string.Empty;
+                        var source = ResolveUpmSource(version);
+                        return new UpmListPackagePayload(
+                            property.Name,
+                            property.Name,
+                            version,
+                            source,
+                            null,
+                            false,
+                            false,
+                            false);
+                    })
+                    .Where(package =>
+                        (!includeGit || string.Equals(package.Source, "Git", StringComparison.OrdinalIgnoreCase))
+                        && (includeBuiltin || !string.Equals(package.Source, "BuiltIn", StringComparison.OrdinalIgnoreCase))
+                        && (!includeOutdated || package.IsOutdated))
+                    .OrderBy(package => package.PackageId, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            return new ProjectCommandResponseDto(false, $"failed to read package manifest: {ex.Message}", null, null);
+        }
+
+        var responsePayload = JsonSerializer.Serialize(new UpmListResponsePayload(packages), _jsonOptions);
+        return new ProjectCommandResponseDto(true, "upm package list loaded from manifest", "upm-list", responsePayload);
+    }
+
+    private ProjectCommandResponseDto HandleBuildTargetsStub()
+    {
+        var payload = JsonSerializer.Serialize(
+            new BuildTargetsResponsePayload(
+            [
+                new BuildTargetPayload("Win64", true, "StandaloneWindows64"),
+                new BuildTargetPayload("Android", true, "Android"),
+                new BuildTargetPayload("iOS", true, "iOS"),
+                new BuildTargetPayload("WebGL", true, "WebGL"),
+                new BuildTargetPayload("macOS", true, "StandaloneOSX"),
+                new BuildTargetPayload("Linux", true, "StandaloneLinux64")
+            ]),
+            _jsonOptions);
+        return new ProjectCommandResponseDto(
+            false,
+            $"{StubbedBridgePrefix} build-targets metadata is synthetic in Host mode; attach Bridge mode for authoritative build support state",
+            "build-targets",
+            payload);
+    }
+
+    private ProjectCommandResponseDto HandleBuildCancelStub()
+    {
+        return new ProjectCommandResponseDto(
+            true,
+            "build cancel acknowledged (stubbed host mode had no active build worker)",
+            "build",
+            null);
+    }
+
+    private ProjectCommandResponseDto RequireBridgeMode(string action)
+    {
+        return new ProjectCommandResponseDto(
+            false,
+            $"{StubbedBridgePrefix} {action} requires Bridge mode",
+            null,
+            null);
+    }
+
     private static bool IsValidAssetPath(string? assetPath)
     {
         if (string.IsNullOrWhiteSpace(assetPath) || assetPath.Contains("..", StringComparison.Ordinal))
@@ -367,4 +486,40 @@ internal sealed class ProjectDaemonBridge
 
     private sealed record MkAssetRequestPayload(string Type, int Count, string? Name);
     private sealed record MkAssetResponsePayload(List<string> CreatedPaths);
+    private sealed record UpmListRequestPayload(bool IncludeOutdated, bool IncludeBuiltin, bool IncludeGit);
+    private sealed record UpmListResponsePayload(List<UpmListPackagePayload>? Packages);
+    private sealed record UpmListPackagePayload(
+        string? PackageId,
+        string? DisplayName,
+        string? Version,
+        string? Source,
+        string? LatestCompatibleVersion,
+        bool IsOutdated,
+        bool IsDeprecated,
+        bool IsPreview);
+    private sealed record BuildTargetsResponsePayload(List<BuildTargetPayload> Targets);
+    private sealed record BuildTargetPayload(string Name, bool Installed, string? Note);
+
+    private static string ResolveUpmSource(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return "Unknown";
+        }
+
+        if (version.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Local";
+        }
+
+        if (version.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
+            || version.Contains(".git", StringComparison.OrdinalIgnoreCase)
+            || version.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || version.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Git";
+        }
+
+        return "Registry";
+    }
 }
