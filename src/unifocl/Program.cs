@@ -1,13 +1,60 @@
 using Spectre.Console;
 using System.Diagnostics;
 
-using var appCancellation = new CancellationTokenSource();
+var appCancellation = new CancellationTokenSource();
+var cancellationRefCount = 0;
+var cancellationDisposeRequested = 0;
+
+bool TryAcquireCancellationReference()
+{
+    while (true)
+    {
+        if (Volatile.Read(ref cancellationDisposeRequested) != 0)
+        {
+            return false;
+        }
+
+        Interlocked.Increment(ref cancellationRefCount);
+        if (Volatile.Read(ref cancellationDisposeRequested) == 0)
+        {
+            return true;
+        }
+
+        Interlocked.Decrement(ref cancellationRefCount);
+    }
+}
+
+void ReleaseCancellationReference()
+{
+    Interlocked.Decrement(ref cancellationRefCount);
+}
+
+void TryCancelApplication()
+{
+    if (!TryAcquireCancellationReference())
+    {
+        return;
+    }
+
+    try
+    {
+        if (!appCancellation.IsCancellationRequested)
+        {
+            appCancellation.Cancel();
+        }
+    }
+    finally
+    {
+        ReleaseCancellationReference();
+    }
+}
+
 ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
 {
     eventArgs.Cancel = true;
-    appCancellation.Cancel();
+    TryCancelApplication();
 };
-EventHandler processExitHandler = (_, _) => appCancellation.Cancel();
+EventHandler processExitHandler = (_, _) => TryCancelApplication();
 Console.CancelKeyPress += cancelHandler;
 AppDomain.CurrentDomain.ProcessExit += processExitHandler;
 
@@ -16,144 +63,146 @@ static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationT
     await operation().WaitAsync(cancellationToken);
 }
 
-var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
-if (BuildLogTailService.TryRunFromArgs(launchArgs))
+try
 {
-    return;
-}
-
-if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOptions, out var daemonParseError))
-{
-    if (daemonParseError is not null)
+    var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+    if (BuildLogTailService.TryRunFromArgs(launchArgs))
     {
-        CliTheme.MarkupLine($"[red]{Markup.Escape(daemonParseError)}[/]");
-        Environment.ExitCode = 2;
         return;
     }
 
-    try
+    if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOptions, out var daemonParseError))
     {
-        await DaemonControlService.RunDaemonServiceAsync(serviceOptions!, appCancellation.Token);
-    }
-    catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
-    {
-    }
-    return;
-}
+        if (daemonParseError is not null)
+        {
+            CliTheme.MarkupLine($"[red]{Markup.Escape(daemonParseError)}[/]");
+            Environment.ExitCode = 2;
+            return;
+        }
 
-var commands = CliCommandCatalog.CreateRootCommands();
-var projectCommands = CliCommandCatalog.CreateProjectCommands();
-var inspectorCommands = CliCommandCatalog.CreateInspectorCommands();
-
-var streamLog = new List<string>();
-var runtimePath = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
-var daemonRuntime = new DaemonRuntime(runtimePath);
-var session = new CliSessionState();
-var daemonControlService = new DaemonControlService();
-var projectLifecycleService = new ProjectLifecycleService();
-var projectCommandRouterService = new ProjectCommandRouterService();
-var hierarchyTui = new HierarchyTui();
-var buildCommandService = new BuildCommandService();
-if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
-{
-    if (!string.IsNullOrWhiteSpace(execError))
-    {
-        CliTheme.MarkupLine($"[red]{Markup.Escape(execError)}[/]");
-        Environment.ExitCode = 2;
-        return;
-    }
-
-    CliRuntimeState.SuppressConsoleOutput = execOptions!.Agentic;
-    AgenticResponseEnvelope envelope;
-    try
-    {
-        envelope = await CliOneShotExecutionService.ExecuteOneShotCommandAsync(
-            execOptions,
-            commands,
-            streamLog,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            projectLifecycleService,
-            projectCommandRouterService,
-            hierarchyTui,
-            buildCommandService,
-            appCancellation.Token).WaitAsync(appCancellation.Token);
-    }
-    catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
-    {
-        var canceled = new AgenticResponseEnvelope(
-            "error",
-            string.IsNullOrWhiteSpace(execOptions!.RequestId) ? Guid.NewGuid().ToString("N") : execOptions.RequestId!,
-            "none",
-            "exec",
-            null,
-            [new AgenticError("E_CANCELED", "execution canceled")],
-            [],
-            new AgenticMeta("agentic.v1", CliVersion.Protocol, 130, DateTime.UtcNow.ToString("O")));
-        var canceledPayload = AgenticFormatter.SerializeEnvelope(canceled, execOptions.Format);
-        Console.Out.WriteLine(canceledPayload);
-        Environment.ExitCode = 130;
-        return;
-    }
-    var payload = AgenticFormatter.SerializeEnvelope(envelope, execOptions.Format);
-    Console.Out.WriteLine(payload);
-    Environment.ExitCode = envelope.Meta.ExitCode;
-    return;
-}
-
-CliBootLogo.SeedBootLog(streamLog);
-CliLogService.RenderInitialLog(streamLog);
-
-while (true)
-{
-    if (appCancellation.IsCancellationRequested)
-    {
-        break;
-    }
-
-    string? rawInput;
-    try
-    {
-        rawInput = CliComposerService.ReadInput(commands, projectCommands, inspectorCommands, streamLog, session);
-    }
-    catch (Exception ex)
-    {
-        CliLogService.LogUnhandledException(streamLog, ex, "input");
-        continue;
-    }
-
-    if (rawInput is null)
-    {
         try
         {
-            await AwaitWithCancellationAsync(
-                () => projectLifecycleService.PerformSafeExitCleanupAsync(
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line)),
-                appCancellation.Token);
+            await DaemonControlService.RunDaemonServiceAsync(serviceOptions!, appCancellation.Token);
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
         {
         }
-        catch (Exception ex)
-        {
-            CliLogService.LogUnhandledException(streamLog, ex, "shutdown");
-        }
-
-        CliTheme.MarkupLine("[grey]Input stream closed. Session ended.[/]");
         return;
     }
 
-    try
+    var commands = CliCommandCatalog.CreateRootCommands();
+    var projectCommands = CliCommandCatalog.CreateProjectCommands();
+    var inspectorCommands = CliCommandCatalog.CreateInspectorCommands();
+
+    var streamLog = new List<string>();
+    var runtimePath = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
+    var daemonRuntime = new DaemonRuntime(runtimePath);
+    var session = new CliSessionState();
+    var daemonControlService = new DaemonControlService();
+    var projectLifecycleService = new ProjectLifecycleService();
+    var projectCommandRouterService = new ProjectCommandRouterService();
+    var hierarchyTui = new HierarchyTui();
+    var buildCommandService = new BuildCommandService();
+    if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
-        var input = rawInput.Trim();
-        if (string.IsNullOrWhiteSpace(input))
+        if (!string.IsNullOrWhiteSpace(execError))
         {
+            CliTheme.MarkupLine($"[red]{Markup.Escape(execError)}[/]");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        CliRuntimeState.SuppressConsoleOutput = execOptions!.Agentic;
+        AgenticResponseEnvelope envelope;
+        try
+        {
+            envelope = await CliOneShotExecutionService.ExecuteOneShotCommandAsync(
+                execOptions,
+                commands,
+                streamLog,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                projectLifecycleService,
+                projectCommandRouterService,
+                hierarchyTui,
+                buildCommandService,
+                appCancellation.Token).WaitAsync(appCancellation.Token);
+        }
+        catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+        {
+            var canceled = new AgenticResponseEnvelope(
+                "error",
+                string.IsNullOrWhiteSpace(execOptions!.RequestId) ? Guid.NewGuid().ToString("N") : execOptions.RequestId!,
+                "none",
+                "exec",
+                null,
+                [new AgenticError("E_CANCELED", "execution canceled")],
+                [],
+                new AgenticMeta("agentic.v1", CliVersion.Protocol, 130, DateTime.UtcNow.ToString("O")));
+            var canceledPayload = AgenticFormatter.SerializeEnvelope(canceled, execOptions.Format);
+            Console.Out.WriteLine(canceledPayload);
+            Environment.ExitCode = 130;
+            return;
+        }
+        var payload = AgenticFormatter.SerializeEnvelope(envelope, execOptions.Format);
+        Console.Out.WriteLine(payload);
+        Environment.ExitCode = envelope.Meta.ExitCode;
+        return;
+    }
+
+    CliBootLogo.SeedBootLog(streamLog);
+    CliLogService.RenderInitialLog(streamLog);
+
+    while (true)
+    {
+        if (appCancellation.IsCancellationRequested)
+        {
+            break;
+        }
+
+        string? rawInput;
+        try
+        {
+            rawInput = CliComposerService.ReadInput(commands, projectCommands, inspectorCommands, streamLog, session);
+        }
+        catch (Exception ex)
+        {
+            CliLogService.LogUnhandledException(streamLog, ex, "input");
             continue;
         }
+
+        if (rawInput is null)
+        {
+            try
+            {
+                await AwaitWithCancellationAsync(
+                    () => projectLifecycleService.PerformSafeExitCleanupAsync(
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => CliLogService.AppendLog(streamLog, line)),
+                    appCancellation.Token);
+            }
+            catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                CliLogService.LogUnhandledException(streamLog, ex, "shutdown");
+            }
+
+            CliTheme.MarkupLine("[grey]Input stream closed. Session ended.[/]");
+            return;
+        }
+
+        try
+        {
+            var input = rawInput.Trim();
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                continue;
+            }
 
         if (input.Equals(":focus-recent", StringComparison.OrdinalIgnoreCase))
         {
@@ -484,34 +533,44 @@ while (true)
         CliLogService.AppendLog(streamLog, $"[yellow]command[/]: not implemented yet -> {Markup.Escape(matched.Signature)}");
         CliLogService.AppendLog(streamLog, "[grey]hint[/]: run /help for implemented commands and mode-specific workflows");
     }
+        catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+        {
+            CliLogService.AppendLog(streamLog, "[yellow]system[/]: cancellation requested, shutting down");
+            break;
+        }
+        catch (Exception ex)
+        {
+            CliLogService.LogUnhandledException(streamLog, ex, "command");
+        }
+    }
+
+    try
+    {
+        await projectLifecycleService.PerformSafeExitCleanupAsync(
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => CliLogService.AppendLog(streamLog, line));
+    }
     catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
     {
-        CliLogService.AppendLog(streamLog, "[yellow]system[/]: cancellation requested, shutting down");
-        break;
     }
     catch (Exception ex)
     {
-        CliLogService.LogUnhandledException(streamLog, ex, "command");
+        CliLogService.LogUnhandledException(streamLog, ex, "shutdown");
     }
-}
-
-try
-{
-    await projectLifecycleService.PerformSafeExitCleanupAsync(
-        session,
-        daemonControlService,
-        daemonRuntime,
-        line => CliLogService.AppendLog(streamLog, line));
-}
-catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
-{
-}
-catch (Exception ex)
-{
-    CliLogService.LogUnhandledException(streamLog, ex, "shutdown");
 }
 finally
 {
+    Interlocked.Exchange(ref cancellationDisposeRequested, 1);
     Console.CancelKeyPress -= cancelHandler;
     AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+
+    var spinWait = new SpinWait();
+    while (Volatile.Read(ref cancellationRefCount) > 0)
+    {
+        spinWait.SpinOnce();
+    }
+
+    appCancellation.Dispose();
 }

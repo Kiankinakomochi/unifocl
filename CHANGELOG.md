@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.24.0 - 2026-03-11
+
+### Changed
+- Officialized `0.24.0` by closing the development cycle suffix.
+- Updated agentic-mode persistence to store and restore deterministic session state by `sessionSeed` and to persist request lifecycle snapshots for status polling:
+  - added session/request persistence models and a runtime-backed persistence service under `.unifocl-runtime/agentic/`
+  - wired `--session-seed` through CLI `exec` parsing and one-shot execution metadata
+  - `/agent/status` now returns tracked request state (running/success/error), timing metadata, and command context instead of a stateless placeholder payload
+- Hardened top-level cancellation/shutdown handling in `Program.cs` with a reference-counted cancellation guard so signal/exit callbacks cannot cancel a disposed token source.
+- Extended worktree orchestration with `setup-smoke-project` in `src/unifocl/scripts/agent-worktree.sh` to scaffold a minimal Unity project for agentic smoke tests, and documented setup flow updates in `README.md`.
+
 ## 0.23.0 - 2026-03-11
 
 ### Changed
