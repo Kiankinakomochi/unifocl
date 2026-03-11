@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.0 - 2026-03-11
+
+### Changed
+- Officialized `0.22.0` by closing the development cycle suffix.
+- Refactored `ProjectViewService` into an orchestration-focused partial service split by concern (`FocusMode`, `FileOps`, `Upm`) while preserving behavior.
+- Extracted dedicated project-view utility services for tree state/navigation, transcript retention, and `mk/make` argument parsing/parent resolution to reduce service complexity.
+
 ## 0.21.0 - 2026-03-11
 
 ### Changed
