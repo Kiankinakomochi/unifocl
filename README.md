@@ -71,6 +71,75 @@ rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
 
+## Persistence Safety Contract
+
+unifocl now enforces an enterprise-style mutation safety contract across `hierarchy`, `inspector`, and `project` modes. The implementation is split into four layers.
+
+### 1. Transactional Envelope (Daemon Core)
+
+All mutating requests carry a required `MutationIntent` envelope before Unity API or filesystem execution.
+
+Current envelope fields:
+* `transactionId`
+* `target`
+* `property`
+* `oldValue`
+* `newValue`
+* `flags.dryRun`
+* `flags.requireRollback` (must be `true`)
+
+Daemon-side validation is centralized in `DaemonMutationTransactionCoordinator` and rejects mutation requests that are missing or invalid. Valid intents are routed to a deterministic safety handler by mode:
+* `hierarchy` / `inspector` -> `memory`
+* `project` -> `filesystem`
+
+Each mutation entrypoint returns a unified transaction decision envelope (`success|error`) before command execution continues.
+
+### 2. Memory Layer Safety (Hierarchy & Inspector)
+
+Inspector and hierarchy property writes are routed through Unity serialized APIs and guarded for idempotency:
+* Mutations use `SerializedObject` / `SerializedProperty`.
+* Read-before-write checks skip no-op writes.
+* `Undo.RecordObject(...)` + `ApplyModifiedProperties()` execute only when values actually change.
+
+Lifecycle and multi-step memory mutations are wrapped in Undo boundaries:
+* Creates use `Undo.RegisterCreatedObjectUndo(...)`.
+* Deletes use `Undo.DestroyObjectImmediate(...)`.
+* Multi-step operations use grouped Undo with `Undo.CollapseUndoOperations(groupId)` on success.
+* Failures revert via `Undo.RevertAllDownToGroup(groupId)`.
+
+Persistence hooks for scene/prefab integrity:
+* Prefab instances are tracked with `PrefabUtility.RecordPrefabInstancePropertyModifications(...)`.
+* Successful scene mutations mark and save through `EditorSceneManager.MarkSceneDirty(...)` and scene persistence services.
+* Dry-run mode suppresses durable scene writes.
+
+### 3. Filesystem Layer Safety (Project Mode)
+
+Project-mode mutations that bypass Unity Undo are protected with transactional stashing:
+* Before execution, target assets and matching `.meta` files are shadow-copied into `.unifocl/stash/<transaction>-<mutation>-<nonce>/`.
+* On success, stash contents are removed (commit path).
+* On failure or exception, the stash is restored and cleanup targets are removed, then `AssetDatabase.Refresh(ForceUpdate)` is called to re-sync Unity state.
+
+Critical filesystem mutation sections are serialized with `SemaphoreSlim` to avoid concurrent race conditions during stash/restore and mutation execution.
+
+### 4. Dry-Run & Preview Mechanics
+
+Dry-run behavior is wired end-to-end from CLI parsing to daemon execution and agentic responses.
+
+Memory dry-run (`hierarchy` / `inspector`):
+* Snapshot pre-mutation state with `EditorJsonUtility.ToJson(...)`.
+* Execute mutation inside an Undo group.
+* Snapshot post-mutation state.
+* Immediately revert with Undo.
+* Return a structured unified diff payload.
+
+Filesystem dry-run (`project`):
+* No `System.IO` mutation occurs.
+* Daemon returns proposed path and metadata changes (including `.meta` side effects).
+
+CLI / agentic integration:
+* Interactive outputs append unified dry-run diff lines in Spectre command logs.
+* `agentic.v1` envelopes include optional `diff` payloads (`format`, `summary`, `lines`) for machine consumers.
+
 ## Installation
 
 unifocl is currently distributed as source code and requires a modern .NET runtime. Future distribution methods (like a .NET Global Tool, Homebrew, or Winget) are planned but not yet implemented.
