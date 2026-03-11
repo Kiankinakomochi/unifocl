@@ -28,6 +28,12 @@ The agent must treat the following as **non-negotiable principles**:
 - **Build Command:** Run builds or tests on `src/unifocl/unifocl.csproj` with `--disable-build-servers -v minimal`
 - **Editor Change Validation:** When changing any code under `/Editor` (for example `src/unifocl.unity/EditorScripts/**`), run compatcheck before finalizing:
   - `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
+  - Recommended local bootstrap command (creates benchmark Unity project + writes local path config + runs compatcheck):
+    - `./scripts/setup-compatcheck-local.sh`
+  - The setup command writes local-only artifacts:
+    - `local.config.json`
+    - `.local/compatcheck-benchmark/`
+  - Keep those artifacts uncommitted.
 - **Unity Type Reference Strategy (Primary):** For types defined in Unity-side assemblies, use mirrored POCO contracts for compile-safe boundaries and HTTP communication. Avoid reflection-based type access as a default approach.
 - **Contract Pipeline Strategy (Primary):** Shared transport contracts must be defined in protobuf `.proto` files under the `external/unifocl-protobuf` submodule and consumed via generated C# classes (`Unifocl.Shared`). CLI code must reference only generated protobuf DTOs for transport boundaries; Unity bridge code maps Unity types to/from these stable protobuf contracts.
 - **Plugin Sync:** After protobuf contract updates, run `./scripts/sync-protobuf-unity-plugin.sh` to rebuild `Unifocl.Shared.dll` and copy it into `src/unifocl.unity/EditorScripts/Plugins/`.

@@ -1480,6 +1480,11 @@ internal sealed class InspectorModeService
         context.LastReferenceSearchResults.Clear();
         session.ContextMode = CliContextMode.Inspector;
         session.FocusPath = targetPath;
+
+        // Right after scene/prefab transitions, Bridge callbacks can be briefly delayed on Unity main thread.
+        // Probe hierarchy snapshot readiness first to reduce false-empty inspector fetches.
+        await WaitForHierarchySnapshotReadyAsync(session);
+
         var componentFetch = await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"{context.PromptLabel} > {rawCommand}");
         AddStream(context, $"[i] entering inspector for: {context.TargetPath.TrimStart('/')}");
@@ -1494,6 +1499,26 @@ internal sealed class InspectorModeService
         }
 
         _renderer.Render(context);
+    }
+
+    private async Task WaitForHierarchySnapshotReadyAsync(CliSessionState session)
+    {
+        if (session.AttachedPort is null)
+        {
+            return;
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(12);
+        while (DateTime.UtcNow < deadline)
+        {
+            var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+            if (snapshot is not null)
+            {
+                return;
+            }
+
+            await Task.Delay(160);
+        }
     }
 
     private async Task EnterComponentAsync(
@@ -2619,23 +2644,32 @@ internal sealed class InspectorModeService
             return null;
         }
 
-        try
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            using var cts = new CancellationTokenSource(ResolveInspectRequestTimeout(request.Action));
-            var json = JsonSerializer.Serialize(request, _jsonOptions);
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await Http.PostAsync($"http://127.0.0.1:{port.Value}/inspect", content, cts.Token);
-            if (!response.IsSuccessStatusCode)
+            try
+            {
+                using var cts = new CancellationTokenSource(ResolveInspectRequestTimeout(request.Action));
+                var json = JsonSerializer.Serialize(request, _jsonOptions);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await Http.PostAsync($"http://127.0.0.1:{port.Value}/inspect", content, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                return (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
+            }
+            catch when (attempt < 2)
+            {
+                await Task.Delay(180);
+            }
+            catch
             {
                 return null;
             }
+        }
 
-            return (await response.Content.ReadAsStringAsync(cts.Token)).Trim();
-        }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 
     private static TimeSpan ResolveInspectRequestTimeout(string action)
@@ -2643,10 +2677,11 @@ internal sealed class InspectorModeService
         // Mutation requests can include scene/prefab persistence and legitimately take longer.
         if (action is "set-field" or "toggle-field" or "toggle-component" or "add-component" or "remove-component")
         {
-            return TimeSpan.FromSeconds(5);
+            return TimeSpan.FromSeconds(10);
         }
 
-        return TimeSpan.FromSeconds(2);
+        // Read actions are used immediately after load transitions and may need extra bridge settle time.
+        return TimeSpan.FromSeconds(8);
     }
 
     private static void ReplaceField(InspectorContext context, InspectorFieldEntry field)
