@@ -4,6 +4,13 @@
 
 ### Changed
 - Officialized `0.23.0` by closing the development cycle suffix.
+- Hardened CLI cancellation management from top-level entrypoints through one-shot command dispatch by introducing root-token handling, cancellation-aware await boundaries, and explicit cancellation outcomes (`E_CANCELED`/exit `130`) for interrupted agentic executions.
+- Hardened daemon/background task lifecycles to reduce zombie/orphan risk:
+  - tracked and drained in-flight daemon request tasks during shutdown in CLI and Unity bridge daemons
+  - added cancellation-aware HTTP request/response handling for daemon endpoints
+  - replaced unbounded/fire-and-forget timeout flows with cancellable timeout sources tied to command completion
+- Hardened external-process safety with bounded waits and kill-on-timeout behavior for Unity Hub module installation, git probe/clone operations, and ADB deploy operations.
+- Hardened utility/service reliability around process handle lifetime and cancellation-aware dump/monitor behavior to prevent indefinite wait loops under daemon disconnect/cancellation scenarios.
 - Added a README persistence-safety section documenting the shipped enterprise mutation contract:
   - transactional mutation intent envelope and daemon transaction coordinator routing
   - memory-layer idempotent serialized mutations with Undo rollback semantics

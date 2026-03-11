@@ -12,7 +12,8 @@ internal static class CliOneShotExecutionService
         ProjectLifecycleService projectLifecycleService,
         ProjectCommandRouterService projectCommandRouterService,
         HierarchyTui hierarchyTui,
-        BuildCommandService buildCommandService)
+        BuildCommandService buildCommandService,
+        CancellationToken cancellationToken = default)
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
         var extraMeta = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -57,7 +58,7 @@ internal static class CliOneShotExecutionService
             }
             else if (input.StartsWith("/dump", StringComparison.OrdinalIgnoreCase))
             {
-                var dump = await CliDumpService.ExecuteDumpCommandAsync(input, session);
+                var dump = await CliDumpService.ExecuteDumpCommandAsync(input, session).WaitAsync(cancellationToken);
                 if (!dump.Ok)
                 {
                     errors.Add(dump.Error!);
@@ -81,7 +82,8 @@ internal static class CliOneShotExecutionService
                     projectLifecycleService,
                     projectCommandRouterService,
                     hierarchyTui,
-                    buildCommandService);
+                    buildCommandService,
+                    cancellationToken).WaitAsync(cancellationToken);
                 var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
                 errors.AddRange(parsed.Errors);
                 warnings.AddRange(parsed.Warnings);
@@ -90,6 +92,10 @@ internal static class CliOneShotExecutionService
                     ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
                 };
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            errors.Add(new AgenticError("E_CANCELED", "execution canceled"));
         }
         catch (Exception ex)
         {
@@ -134,15 +140,23 @@ internal static class CliOneShotExecutionService
         ProjectLifecycleService projectLifecycleService,
         ProjectCommandRouterService projectCommandRouterService,
         HierarchyTui hierarchyTui,
-        BuildCommandService buildCommandService)
+        BuildCommandService buildCommandService,
+        CancellationToken cancellationToken = default)
     {
+        static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken token)
+        {
+            await operation().WaitAsync(token);
+        }
+
         if (input.Equals(":focus-recent", StringComparison.OrdinalIgnoreCase))
         {
-            await projectLifecycleService.TryHandleRecentSelectionToggleAsync(
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+            await AwaitWithCancellationAsync(
+                () => projectLifecycleService.TryHandleRecentSelectionToggleAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
             return;
         }
 
@@ -150,12 +164,14 @@ internal static class CliOneShotExecutionService
         {
             if (CliCommandParsingService.TryNormalizeProjectBuildCommand(input, out var normalizedBuildInput))
             {
-                await buildCommandService.HandleBuildCommandAsync(
-                    normalizedBuildInput,
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line));
+                await AwaitWithCancellationAsync(
+                    () => buildCommandService.HandleBuildCommandAsync(
+                        normalizedBuildInput,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => CliLogService.AppendLog(streamLog, line)),
+                    cancellationToken);
                 return;
             }
 
@@ -164,7 +180,7 @@ internal static class CliOneShotExecutionService
                 session,
                 daemonControlService,
                 daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
             if (!handledProjectCommand)
             {
                 CliLogService.AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
@@ -200,7 +216,9 @@ internal static class CliOneShotExecutionService
 
         if (matched.Trigger == "/dump")
         {
-            await CliDumpService.HandleDumpCommandAsync(input, session, streamLog);
+            await AwaitWithCancellationAsync(
+                () => CliDumpService.HandleDumpCommandAsync(input, session, streamLog),
+                cancellationToken);
             return;
         }
 
@@ -219,7 +237,7 @@ internal static class CliOneShotExecutionService
                 session,
                 daemonControlService,
                 daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
             return;
         }
 
@@ -239,7 +257,7 @@ internal static class CliOneShotExecutionService
                 session,
                 daemonControlService,
                 daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
             if (session.Inspector is not null)
             {
                 session.ContextMode = CliContextMode.Inspector;
@@ -264,7 +282,7 @@ internal static class CliOneShotExecutionService
                 session,
                 daemonControlService,
                 daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
             if (!handled)
             {
                 CliLogService.AppendLog(streamLog, "[yellow]upm[/]: unsupported /upm command");
@@ -275,12 +293,14 @@ internal static class CliOneShotExecutionService
 
         if (matched.Trigger.StartsWith("/build", StringComparison.Ordinal))
         {
-            await buildCommandService.HandleBuildCommandAsync(
-                input,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+            await AwaitWithCancellationAsync(
+                () => buildCommandService.HandleBuildCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
             return;
         }
 
@@ -302,18 +322,22 @@ internal static class CliOneShotExecutionService
         CliLogService.AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
         if (matched.Trigger.StartsWith("/daemon", StringComparison.Ordinal))
         {
-            await daemonControlService.HandleDaemonCommandAsync(
-                input,
-                matched.Trigger,
-                daemonRuntime,
-                session,
-                line => CliLogService.AppendLog(streamLog, line),
-                streamLog);
+            await AwaitWithCancellationAsync(
+                () => daemonControlService.HandleDaemonCommandAsync(
+                    input,
+                    matched.Trigger,
+                    daemonRuntime,
+                    session,
+                    line => CliLogService.AppendLog(streamLog, line),
+                    streamLog),
+                cancellationToken);
             if (matched.Trigger == "/daemon attach")
             {
-                await buildCommandService.NotifyAttachedBuildIfAnyAsync(
-                    session,
-                    line => CliLogService.AppendLog(streamLog, line));
+                await AwaitWithCancellationAsync(
+                    () => buildCommandService.NotifyAttachedBuildIfAnyAsync(
+                        session,
+                        line => CliLogService.AppendLog(streamLog, line)),
+                    cancellationToken);
             }
 
             return;
@@ -325,7 +349,7 @@ internal static class CliOneShotExecutionService
                 session,
                 daemonControlService,
                 daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line)))
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken))
         {
             if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone" || matched.Trigger == "/recent")
                 && session.Mode == CliMode.Project
@@ -336,7 +360,7 @@ internal static class CliOneShotExecutionService
                     session,
                     daemonControlService,
                     daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line));
+                    line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
             }
 
             return;

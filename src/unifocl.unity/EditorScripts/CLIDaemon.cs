@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -36,6 +37,7 @@ namespace UniFocl.EditorBridge
     {
         private static HttpListener? _listener;
         private static CancellationTokenSource? _cts;
+        private static Task? _acceptLoopTask;
         private static DateTime _lastActivityUtc;
         private static bool _running;
         private static bool _autoExitEditor;
@@ -50,6 +52,8 @@ namespace UniFocl.EditorBridge
         private static string _projectCommandStageLogSignature = string.Empty;
         private static readonly ConcurrentQueue<MainThreadWorkItem> _mainThreadWorkQueue = new();
         private static readonly ConcurrentQueue<Action> _mainThreadActionQueue = new();
+        private static readonly ConcurrentDictionary<long, Task> _requestTasks = new();
+        private static long _requestTaskIdSeed;
 
         public static bool HasDaemonServiceArg()
         {
@@ -108,7 +112,7 @@ namespace UniFocl.EditorBridge
             AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
 
-            _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
+            _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token), _cts.Token);
 
             var dispatcherMode = "update-queue";
             Debug.Log($"[unifocl] CLIDaemon started on http://127.0.0.1:{options.port}/ (batch={_isBatchMode}, autoExit={_autoExitEditor}, dispatcher={dispatcherMode})");
@@ -139,7 +143,8 @@ namespace UniFocl.EditorBridge
                         break;
                     }
 
-                    _ = Task.Run(() => HandleRequestAsync(context, cancellationToken), cancellationToken);
+                    var requestTask = Task.Run(() => HandleRequestAsync(context, cancellationToken), cancellationToken);
+                    TrackRequestTask(requestTask);
                 }
             }
             catch (ObjectDisposedException)
@@ -152,7 +157,10 @@ namespace UniFocl.EditorBridge
 
         private static async Task HandleRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
         {
-            _ = cancellationToken;
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
 
             var request = context.Request;
             var path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
@@ -165,27 +173,27 @@ namespace UniFocl.EditorBridge
             {
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteTextResponseAsync(context.Response, "PONG");
+                    await WriteTextResponseAsync(context.Response, "PONG", cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime-id", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteTextResponseAsync(context.Response, _runtimeInstanceId);
+                    await WriteTextResponseAsync(context.Response, _runtimeInstanceId, cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command-status", StringComparison.OrdinalIgnoreCase))
                 {
                     var requestedId = request.QueryString["requestId"];
-                    await WriteJsonResponseAsync(context.Response, GetProjectCommandStatusPayload(requestedId));
+                    await WriteJsonResponseAsync(context.Response, GetProjectCommandStatusPayload(requestedId), cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
                 {
                     MarkActivity();
-                    await WriteTextResponseAsync(context.Response, "OK");
+                    await WriteTextResponseAsync(context.Response, "OK", cancellationToken: cancellationToken);
                     return;
                 }
 
@@ -193,7 +201,7 @@ namespace UniFocl.EditorBridge
                 {
                     var shutdownMode = _isBatchMode ? "host-session shutdown" : "bridge-session detach";
                     Debug.Log($"[unifocl] daemon /stop requested from CLI ({shutdownMode}); stopping daemon listener.");
-                    await WriteTextResponseAsync(context.Response, "STOPPING");
+                    await WriteTextResponseAsync(context.Response, "STOPPING", cancellationToken: cancellationToken);
                     if (_isBatchMode
                         && (_mainThreadManagedThreadId == 0 || Environment.CurrentManagedThreadId != _mainThreadManagedThreadId))
                     {
@@ -225,7 +233,7 @@ namespace UniFocl.EditorBridge
                     }
 
                     MarkActivity();
-                    await WriteJsonResponseAsync(context.Response, DaemonAssetIndexService.BuildPayload(knownRevision));
+                    await WriteJsonResponseAsync(context.Response, DaemonAssetIndexService.BuildPayload(knownRevision), cancellationToken: cancellationToken);
                     return;
                 }
 
@@ -233,40 +241,40 @@ namespace UniFocl.EditorBridge
                 {
                     MarkActivity();
                     var response = await ExecuteOnMainThreadAsync(DaemonHierarchyService.BuildSnapshotPayload);
-                    await WriteJsonResponseAsync(context.Response, response);
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
                 {
-                    var payload = await ReadRequestBodyAsync(request);
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
                     MarkActivity();
                     var response = await ExecuteOnMainThreadAsync(() => DaemonHierarchyService.ExecuteCommand(payload));
-                    await WriteJsonResponseAsync(context.Response, response);
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
                 {
-                    var payload = await ReadRequestBodyAsync(request);
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
                     MarkActivity();
                     var response = await ExecuteOnMainThreadAsync(() => DaemonHierarchyService.ExecuteSearch(payload));
-                    await WriteJsonResponseAsync(context.Response, response);
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
                 {
-                    var payload = await ReadRequestBodyAsync(request);
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
                     MarkActivity();
                     var response = await ExecuteOnMainThreadAsync(() => DaemonInspectorService.Execute(payload));
-                    await WriteJsonResponseAsync(context.Response, response);
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
                 {
-                    var payload = await ReadRequestBodyAsync(request);
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
                     MarkActivity();
                     var action = TryExtractProjectAction(payload);
                     var requestId = TryExtractProjectRequestId(payload);
@@ -277,13 +285,13 @@ namespace UniFocl.EditorBridge
                     stopwatch.Stop();
                     CompleteProjectCommandFromResponse(response);
                     Debug.Log($"[unifocl] project command completed: action={action}, elapsedMs={stopwatch.ElapsedMilliseconds}");
-                    await WriteJsonResponseAsync(context.Response, response);
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
                     return;
                 }
 
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/build/status", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.GetBuildStatusPayload());
+                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.GetBuildStatusPayload(), cancellationToken: cancellationToken);
                     return;
                 }
 
@@ -295,12 +303,16 @@ namespace UniFocl.EditorBridge
                     _ = long.TryParse(offsetRaw, out var offset);
                     _ = int.TryParse(limitRaw, out var limit);
                     _ = bool.TryParse(errorsOnlyRaw, out var errorsOnly);
-                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.ReadBuildLogPayload(offset, limit, errorsOnly));
+                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.ReadBuildLogPayload(offset, limit, errorsOnly), cancellationToken: cancellationToken);
                     return;
                 }
 
                 MarkActivity();
-                await WriteTextResponseAsync(context.Response, "ERR", 404);
+                await WriteTextResponseAsync(context.Response, "ERR", 404, cancellationToken: cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
             }
             catch (Exception ex)
             {
@@ -317,7 +329,7 @@ namespace UniFocl.EditorBridge
                 try
                 {
                     var detail = $"ERR: {ex.GetType().Name}: {ex.Message}";
-                    await WriteTextResponseAsync(context.Response, detail, 500);
+                    await WriteTextResponseAsync(context.Response, detail, 500, cancellationToken: cancellationToken);
                 }
                 catch
                 {
@@ -396,16 +408,28 @@ namespace UniFocl.EditorBridge
             return string.IsNullOrWhiteSpace(requestId) ? null : requestId;
         }
 
-        private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
+        private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
-            return await reader.ReadToEndAsync();
+            var payload = await reader.ReadToEndAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            return payload;
         }
 
-        private static async Task WriteTextResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
+        private static async Task WriteTextResponseAsync(
+            HttpListenerResponse response,
+            string payload,
+            int statusCode = 200,
+            CancellationToken cancellationToken = default)
         {
             try
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
                 response.StatusCode = statusCode;
                 response.ContentType = "text/plain; charset=utf-8";
@@ -424,10 +448,19 @@ namespace UniFocl.EditorBridge
             }
         }
 
-        private static async Task WriteJsonResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
+        private static async Task WriteJsonResponseAsync(
+            HttpListenerResponse response,
+            string payload,
+            int statusCode = 200,
+            CancellationToken cancellationToken = default)
         {
             try
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
                 response.StatusCode = statusCode;
                 response.ContentType = "application/json; charset=utf-8";
@@ -539,6 +572,8 @@ namespace UniFocl.EditorBridge
             {
             }
 
+            TryDrainBackgroundDaemonTasks();
+
             _cts?.Dispose();
             _cts = null;
             _listener = null;
@@ -556,6 +591,67 @@ namespace UniFocl.EditorBridge
 
             _isBatchMode = false;
             _mainThreadManagedThreadId = 0;
+        }
+
+        private static void TrackRequestTask(Task requestTask)
+        {
+            var id = Interlocked.Increment(ref _requestTaskIdSeed);
+            _requestTasks[id] = requestTask;
+            _ = requestTask.ContinueWith(task =>
+            {
+                _requestTasks.TryRemove(id, out _);
+                if (task.IsFaulted && task.Exception is not null)
+                {
+                    Debug.LogError($"[unifocl] request task failed: {task.Exception.GetBaseException().Message}");
+                }
+            }, TaskScheduler.Default);
+        }
+
+        private static void TryDrainBackgroundDaemonTasks()
+        {
+            var acceptLoopTask = _acceptLoopTask;
+            var requestTasks = new List<Task>(_requestTasks.Count);
+            foreach (var requestTask in _requestTasks.Values)
+            {
+                requestTasks.Add(requestTask);
+            }
+
+            if (acceptLoopTask is null && requestTasks.Count == 0)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var tasks = new List<Task>(requestTasks.Count + (acceptLoopTask is null ? 0 : 1));
+                    if (acceptLoopTask is not null)
+                    {
+                        tasks.Add(acceptLoopTask);
+                    }
+
+                    foreach (var requestTask in requestTasks)
+                    {
+                        tasks.Add(requestTask);
+                    }
+
+                    if (tasks.Count == 0)
+                    {
+                        return;
+                    }
+
+                    var drain = Task.WhenAll(tasks);
+                    var completed = await Task.WhenAny(drain, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+                    if (completed != drain)
+                    {
+                        Debug.LogWarning($"[unifocl] daemon shutdown timed out while draining {tasks.Count} background task(s)");
+                    }
+                }
+                catch
+                {
+                }
+            });
         }
 
         private static void OnEditorQuitting()

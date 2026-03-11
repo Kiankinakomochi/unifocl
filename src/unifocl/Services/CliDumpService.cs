@@ -5,6 +5,7 @@ using Spectre.Console;
 
 internal static class CliDumpService
 {
+    private static readonly TimeSpan InspectorDumpRequestTimeout = TimeSpan.FromSeconds(8);
     public static async Task HandleDumpCommandAsync(string input, CliSessionState session, List<string> streamLog)
     {
         var result = await ExecuteDumpCommandAsync(input, session);
@@ -205,81 +206,95 @@ internal static class CliDumpService
             return null;
         }
 
-        var targetPath = session.Inspector?.PromptPath ?? "/";
-        using var http = new HttpClient();
-        var listPayload = JsonSerializer.Serialize(new
+        try
         {
-            action = "list-components",
-            targetPath,
-            componentIndex = -1,
-            componentName = "",
-            fieldName = "",
-            value = "",
-            query = ""
-        });
-        using var listResponse = await http.PostAsync(
-            $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
-            new StringContent(listPayload, Encoding.UTF8, "application/json"));
-        if (!listResponse.IsSuccessStatusCode)
-        {
-            return null;
-        }
-
-        var listBody = await listResponse.Content.ReadAsStringAsync();
-        using var listDoc = JsonDocument.Parse(listBody);
-        if (!listDoc.RootElement.TryGetProperty("components", out var components))
-        {
-            return new { targetPath, components = Array.Empty<object>() };
-        }
-
-        var expanded = new List<object>();
-        foreach (var component in components.EnumerateArray())
-        {
-            var index = component.TryGetProperty("index", out var indexProp) ? indexProp.GetInt32() : -1;
-            var name = component.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-            var fieldsPayload = JsonSerializer.Serialize(new
+            var targetPath = session.Inspector?.PromptPath ?? "/";
+            using var http = new HttpClient();
+            using var cts = new CancellationTokenSource(InspectorDumpRequestTimeout);
+            var listPayload = JsonSerializer.Serialize(new
             {
-                action = "list-fields",
+                action = "list-components",
                 targetPath,
-                componentIndex = index,
-                componentName = name,
+                componentIndex = -1,
+                componentName = "",
                 fieldName = "",
                 value = "",
                 query = ""
             });
-            using var fieldResponse = await http.PostAsync(
+            using var listResponse = await http.PostAsync(
                 $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
-                new StringContent(fieldsPayload, Encoding.UTF8, "application/json"));
-            var fields = Array.Empty<object>();
-            if (fieldResponse.IsSuccessStatusCode)
+                new StringContent(listPayload, Encoding.UTF8, "application/json"),
+                cts.Token);
+            if (!listResponse.IsSuccessStatusCode)
             {
-                var fieldsBody = await fieldResponse.Content.ReadAsStringAsync();
-                using var fieldsDoc = JsonDocument.Parse(fieldsBody);
-                if (fieldsDoc.RootElement.TryGetProperty("fields", out var fieldsElement))
-                {
-                    fields = fieldsElement.EnumerateArray().Select(field => new
-                    {
-                        name = field.TryGetProperty("name", out var n) ? n.GetString() : null,
-                        value = field.TryGetProperty("value", out var v) ? v.GetString() : null,
-                        type = field.TryGetProperty("type", out var t) ? t.GetString() : null,
-                        isBoolean = field.TryGetProperty("isBoolean", out var b) && b.GetBoolean()
-                    }).Cast<object>().ToArray();
-                }
+                return null;
             }
 
-            expanded.Add(new
+            var listBody = await listResponse.Content.ReadAsStringAsync(cts.Token);
+            using var listDoc = JsonDocument.Parse(listBody);
+            if (!listDoc.RootElement.TryGetProperty("components", out var components))
             {
-                index,
-                name,
-                enabled = component.TryGetProperty("enabled", out var enabledProp) && enabledProp.GetBoolean(),
-                fields
-            });
-        }
+                return new { targetPath, components = Array.Empty<object>() };
+            }
 
-        return new
+            var expanded = new List<object>();
+            foreach (var component in components.EnumerateArray())
+            {
+                var index = component.TryGetProperty("index", out var indexProp) ? indexProp.GetInt32() : -1;
+                var name = component.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+                var fieldsPayload = JsonSerializer.Serialize(new
+                {
+                    action = "list-fields",
+                    targetPath,
+                    componentIndex = index,
+                    componentName = name,
+                    fieldName = "",
+                    value = "",
+                    query = ""
+                });
+                using var fieldResponse = await http.PostAsync(
+                    $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
+                    new StringContent(fieldsPayload, Encoding.UTF8, "application/json"),
+                    cts.Token);
+                var fields = Array.Empty<object>();
+                if (fieldResponse.IsSuccessStatusCode)
+                {
+                    var fieldsBody = await fieldResponse.Content.ReadAsStringAsync(cts.Token);
+                    using var fieldsDoc = JsonDocument.Parse(fieldsBody);
+                    if (fieldsDoc.RootElement.TryGetProperty("fields", out var fieldsElement))
+                    {
+                        fields = fieldsElement.EnumerateArray().Select(field => new
+                        {
+                            name = field.TryGetProperty("name", out var n) ? n.GetString() : null,
+                            value = field.TryGetProperty("value", out var v) ? v.GetString() : null,
+                            type = field.TryGetProperty("type", out var t) ? t.GetString() : null,
+                            isBoolean = field.TryGetProperty("isBoolean", out var b) && b.GetBoolean()
+                        }).Cast<object>().ToArray();
+                    }
+                }
+
+                expanded.Add(new
+                {
+                    index,
+                    name,
+                    enabled = component.TryGetProperty("enabled", out var enabledProp) && enabledProp.GetBoolean(),
+                    fields
+                });
+            }
+
+            return new
+            {
+                targetPath,
+                components = expanded
+            };
+        }
+        catch (OperationCanceledException)
         {
-            targetPath,
-            components = expanded
-        };
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
