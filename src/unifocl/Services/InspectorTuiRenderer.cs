@@ -9,6 +9,7 @@ internal sealed class InspectorTuiRenderer
     private const int ReservedPromptRows = 4;
     private const int FrameOverheadRows = 5;
     private sealed record RenderRow(string Content, bool Highlight, bool AllowMarkup = false);
+    private sealed record BodyLayout(IReadOnlyList<RenderRow> PinnedRows, IReadOnlyList<RenderRow> ScrollRows);
 
     public void Render(
         InspectorContext context,
@@ -21,30 +22,55 @@ internal sealed class InspectorTuiRenderer
         var availableRows = Math.Max(MinBodyRows + MinStreamRows, Console.WindowHeight - ReservedPromptRows);
         var dynamicRows = Math.Max(MinBodyRows + MinStreamRows, availableRows - FrameOverheadRows);
 
-        var bodyRows = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName, innerWidth).ToList();
+        var bodyLayout = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName, innerWidth);
+        var pinnedBodyRows = bodyLayout.PinnedRows.ToList();
+        var scrollableBodyRows = bodyLayout.ScrollRows.ToList();
+        var totalBodyRowCount = pinnedBodyRows.Count + scrollableBodyRows.Count;
         var streamRows = BuildStreamRows(context, Math.Max(1, innerWidth - 1)).ToList();
         var hasStreamPane = streamRows.Count > 0;
         var (bodyViewportRows, streamViewportRows) = hasStreamPane
-            ? AllocateViewportRows(dynamicRows, bodyRows.Count, streamRows.Count)
+            ? AllocateViewportRows(dynamicRows, totalBodyRowCount, streamRows.Count)
             : (Math.Max(1, dynamicRows), 0);
         var bodyOffset = context.BodyScrollOffset;
-        EnsureFocusedRowVisibility(context, highlightedComponentIndex, highlightedFieldName, bodyRows.Count, bodyViewportRows, ref bodyOffset);
+        IReadOnlyList<RenderRow> visiblePinnedBodyRows;
+        IReadOnlyList<RenderRow> visibleScrollableBodyRows;
+        if (bodyViewportRows <= pinnedBodyRows.Count)
+        {
+            visiblePinnedBodyRows = pinnedBodyRows.Take(bodyViewportRows).ToList();
+            visibleScrollableBodyRows = [];
+            bodyOffset = 0;
+        }
+        else
+        {
+            var scrollViewportRows = bodyViewportRows - pinnedBodyRows.Count;
+            EnsureFocusedRowVisibility(
+                context,
+                highlightedComponentIndex,
+                highlightedFieldName,
+                scrollableBodyRows.Count,
+                scrollViewportRows,
+                ref bodyOffset);
+            visiblePinnedBodyRows = pinnedBodyRows;
+            visibleScrollableBodyRows = SliceRows(scrollableBodyRows, scrollViewportRows, ref bodyOffset, followTail: false);
+        }
+
         var streamOffset = context.StreamScrollOffset;
-        var visibleBody = SliceRows(bodyRows, bodyViewportRows, ref bodyOffset, followTail: false);
         var visibleStream = hasStreamPane
             ? SliceRows(streamRows, streamViewportRows, ref streamOffset, context.FollowStreamScroll)
             : Array.Empty<string>();
         context.BodyScrollOffset = bodyOffset;
         context.StreamScrollOffset = streamOffset;
 
-        var frame = new List<string>(FrameOverheadRows + visibleBody.Count + (hasStreamPane ? visibleStream.Count + 1 : 0))
+        var frame = new List<string>(
+            FrameOverheadRows + visiblePinnedBodyRows.Count + visibleScrollableBodyRows.Count + (hasStreamPane ? visibleStream.Count + 1 : 0))
         {
             Border('┌', '┐', innerWidth),
             Line(BuildHeader(context, focusModeEnabled), innerWidth),
             Border('├', '┤', innerWidth)
         };
 
-        frame.AddRange(visibleBody.Select(row => Line(row.Content, innerWidth, row.Highlight, row.AllowMarkup)));
+        frame.AddRange(visiblePinnedBodyRows.Select(row => Line(row.Content, innerWidth, row.Highlight, row.AllowMarkup)));
+        frame.AddRange(visibleScrollableBodyRows.Select(row => Line(row.Content, innerWidth, row.Highlight, row.AllowMarkup)));
         if (hasStreamPane)
         {
             frame.Add(Border('├', '┤', innerWidth));
@@ -58,35 +84,55 @@ internal sealed class InspectorTuiRenderer
         }
     }
 
-    private static IEnumerable<RenderRow> BuildBodyRows(
+    private static BodyLayout BuildBodyRows(
         InspectorContext context,
         int? highlightedComponentIndex,
         string? highlightedFieldName,
         int innerWidth)
     {
+        var pinnedRows = BuildBodyPinnedRows(context, innerWidth).ToList();
         var rows = context.Depth == InspectorDepth.ComponentList
             ? BuildComponentRows(context, highlightedComponentIndex)
-            : BuildFieldRows(context, highlightedFieldName, innerWidth);
-        if (!context.InteractiveOverlayActive || string.IsNullOrWhiteSpace(context.InteractiveOverlayTitle))
+            : BuildFieldRows(context, highlightedFieldName);
+        return new BodyLayout(pinnedRows, rows.ToList());
+    }
+
+    private static IEnumerable<RenderRow> BuildBodyPinnedRows(InspectorContext context, int innerWidth)
+    {
+        var pinnedRows = new List<RenderRow>();
+        if (context.InteractiveOverlayActive && !string.IsNullOrWhiteSpace(context.InteractiveOverlayTitle))
         {
-            return rows;
+            pinnedRows.Add(new RenderRow($"OVERLAY: {context.InteractiveOverlayTitle}", false));
+            pinnedRows.Add(new RenderRow(new string('─', Math.Max(1, innerWidth - 1)), false));
+            var overlayValue = context.InteractiveOverlayValue ?? string.Empty;
+            pinnedRows.AddRange(
+                TuiTextWrap.WrapPlainText(overlayValue, Math.Max(10, innerWidth - 2)).Select(line => new RenderRow(line, false)));
+            pinnedRows.Add(new RenderRow(string.Empty, false));
         }
 
-        var overlayRows = new List<RenderRow>
+        if (context.Depth == InspectorDepth.ComponentList)
         {
-            new($"OVERLAY: {context.InteractiveOverlayTitle}", false),
-            new(new string('─', Math.Max(1, innerWidth - 1)), false)
-        };
-        var overlayValue = context.InteractiveOverlayValue ?? string.Empty;
-        overlayRows.AddRange(TuiTextWrap.WrapPlainText(overlayValue, Math.Max(10, innerWidth - 2)).Select(line => new RenderRow(line, false)));
-        overlayRows.Add(new RenderRow(string.Empty, false));
-        overlayRows.AddRange(rows);
-        return overlayRows;
+            pinnedRows.Add(new RenderRow("COMPONENTS:", false));
+            return pinnedRows;
+        }
+
+        pinnedRows.Add(new RenderRow($"{PadRight("IDX", 4)}{PadRight("FIELD", 16)}{PadRight("VALUE", 26)}TYPE", false));
+        pinnedRows.Add(new RenderRow(new string('─', Math.Max(1, innerWidth - 1)), false));
+        if (context.InteractiveEditActive && !string.IsNullOrWhiteSpace(context.InteractiveEditFieldName))
+        {
+            var part = context.InteractiveEditPartCount > 0
+                ? $" [{context.InteractiveEditPartIndex + 1}/{context.InteractiveEditPartCount}]"
+                : string.Empty;
+            var mode = string.IsNullOrWhiteSpace(context.InteractiveEditMode) ? "edit" : context.InteractiveEditMode;
+            pinnedRows.Add(new RenderRow($"EDITING {context.InteractiveEditFieldName} ({mode}){part}", false));
+        }
+
+        return pinnedRows;
     }
 
     private static IEnumerable<RenderRow> BuildComponentRows(InspectorContext context, int? highlightedComponentIndex)
     {
-        var lines = new List<RenderRow> { new("COMPONENTS:", false) };
+        var lines = new List<RenderRow>();
         foreach (var component in context.Components)
         {
             var selected = highlightedComponentIndex == component.Index;
@@ -96,7 +142,7 @@ internal sealed class InspectorTuiRenderer
             lines.Add(new RenderRow($"{marker}{indexCell} {name}", false, true));
         }
 
-        if (lines.Count == 1)
+        if (lines.Count == 0)
         {
             lines.Add(new RenderRow(" [empty]", false));
         }
@@ -104,22 +150,9 @@ internal sealed class InspectorTuiRenderer
         return lines;
     }
 
-    private static IEnumerable<RenderRow> BuildFieldRows(InspectorContext context, string? highlightedFieldName, int innerWidth)
+    private static IEnumerable<RenderRow> BuildFieldRows(InspectorContext context, string? highlightedFieldName)
     {
-        var lines = new List<RenderRow>
-        {
-            new($"{PadRight("IDX", 4)}{PadRight("FIELD", 16)}{PadRight("VALUE", 26)}TYPE", false),
-            new(new string('─', Math.Max(1, innerWidth - 1)), false)
-        };
-
-        if (context.InteractiveEditActive && !string.IsNullOrWhiteSpace(context.InteractiveEditFieldName))
-        {
-            var part = context.InteractiveEditPartCount > 0
-                ? $" [{context.InteractiveEditPartIndex + 1}/{context.InteractiveEditPartCount}]"
-                : string.Empty;
-            var mode = string.IsNullOrWhiteSpace(context.InteractiveEditMode) ? "edit" : context.InteractiveEditMode;
-            lines.Add(new RenderRow($"EDITING {context.InteractiveEditFieldName} ({mode}){part}", false));
-        }
+        var lines = new List<RenderRow>();
 
         for (var i = 0; i < context.Fields.Count; i++)
         {
@@ -309,23 +342,13 @@ internal sealed class InspectorTuiRenderer
             return;
         }
 
-        var overlayRows = 0;
-        if (context.InteractiveOverlayActive && !string.IsNullOrWhiteSpace(context.InteractiveOverlayTitle))
-        {
-            overlayRows = 3;
-            if (!string.IsNullOrWhiteSpace(context.InteractiveOverlayValue))
-            {
-                overlayRows += TuiTextWrap.WrapPlainText(context.InteractiveOverlayValue, Math.Max(10, ResolveInnerWidth() - 2)).Count;
-            }
-        }
-
         int? targetRow = null;
         if (context.Depth == InspectorDepth.ComponentList && highlightedComponentIndex is int componentIndex)
         {
             var position = context.Components.FindIndex(component => component.Index == componentIndex);
             if (position >= 0)
             {
-                targetRow = overlayRows + 1 + position;
+                targetRow = position;
             }
         }
         else if (context.Depth == InspectorDepth.ComponentFields && !string.IsNullOrWhiteSpace(highlightedFieldName))
@@ -333,7 +356,7 @@ internal sealed class InspectorTuiRenderer
             var position = context.Fields.FindIndex(field => field.Name.Equals(highlightedFieldName, StringComparison.OrdinalIgnoreCase));
             if (position >= 0)
             {
-                targetRow = overlayRows + 2 + position;
+                targetRow = position;
             }
         }
 

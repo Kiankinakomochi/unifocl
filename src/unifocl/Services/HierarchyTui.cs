@@ -146,7 +146,6 @@ internal sealed class HierarchyTui
                     && transitionToInspectorAsync is not null
                     && await transitionToInspectorAsync(focusInspectTarget))
                 {
-                    Console.Clear();
                     log($"[grey]hierarchy[/]: transitioned to inspector -> [white]{Markup.Escape(focusInspectTarget)}[/]");
                     return;
                 }
@@ -181,7 +180,6 @@ internal sealed class HierarchyTui
                 TrimCommandLog(commandLog);
                 if (inspectTransitioned)
                 {
-                    Console.Clear();
                     log("[grey]hierarchy[/]: transitioned to inspector mode");
                     return;
                 }

@@ -393,6 +393,16 @@ internal sealed class InspectorModeService
         }
     }
 
+    public void RenderCurrentFrame(CliSessionState session)
+    {
+        if (session.Inspector is null)
+        {
+            return;
+        }
+
+        _renderer.Render(session.Inspector);
+    }
+
     private static void StepUpToComponentList(InspectorContext context, string message)
     {
         context.FocusHighlightedComponentIndex = context.SelectedComponentIndex;
