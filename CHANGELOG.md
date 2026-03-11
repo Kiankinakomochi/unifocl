@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.0 - 2026-03-11
+
+### Changed
+- Officialized `0.21.0` by closing the development cycle suffix.
+- Refactored CLI bootstrap orchestration by extracting command catalog, boot logo rendering, command parsing, one-shot execution, dump handling, composer input/render pipeline, and IntelliSense (UPM/fuzzy/mk/component) into dedicated services.
+- Refactored `ProjectViewService` toward orchestration-focused responsibility by moving payload records into model files and extracting reusable business logic into `ProjectViewServiceUtils`.
+
 ## 0.20.0 - 2026-03-11
 
 ### Changed
