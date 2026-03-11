@@ -87,40 +87,37 @@ namespace UniFocl.EditorBridge
                     });
 
                 case "add-component":
-                    return JsonUtility.ToJson(BuildComponentMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError));
+                    return JsonUtility.ToJson(BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError));
 
                 case "remove-component":
-                    return JsonUtility.ToJson(BuildComponentMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
+                    return JsonUtility.ToJson(BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
 
                 case "toggle-component":
-                    return JsonUtility.ToJson(new InspectorMutationResponse
-                    {
-                        ok = ToggleComponent(request.targetPath, request.componentIndex, request.componentName)
-                    });
+                    return JsonUtility.ToJson(BuildMutationResponse(
+                        ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
+                        toggleComponentError));
 
                 case "toggle-field":
-                    return JsonUtility.ToJson(new InspectorMutationResponse
-                    {
-                        ok = ToggleField(request.targetPath, request.componentIndex, request.componentName, request.fieldName)
-                    });
+                    return JsonUtility.ToJson(BuildMutationResponse(
+                        ToggleField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, out var toggleFieldError),
+                        toggleFieldError));
 
                 case "set-field":
-                    return JsonUtility.ToJson(new InspectorMutationResponse
-                    {
-                        ok = SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value)
-                    });
+                    return JsonUtility.ToJson(BuildMutationResponse(
+                        SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
+                        setFieldError));
 
                 default:
                     return JsonUtility.ToJson(new InspectorMutationResponse { ok = false });
             }
         }
 
-        private static InspectorMutationResponse BuildComponentMutationResponse(bool ok, string? error)
+        private static InspectorMutationResponse BuildMutationResponse(bool ok, string? error)
         {
             return new InspectorMutationResponse
             {
                 ok = ok,
-                message = ok ? string.Empty : (error ?? "component mutation failed")
+                message = ok ? string.Empty : (error ?? "inspector mutation failed")
             };
         }
 
@@ -470,11 +467,13 @@ namespace UniFocl.EditorBridge
             return expectedType.IsAssignableFrom(assetType);
         }
 
-        private static bool ToggleComponent(string? targetPath, int componentIndex, string? componentName)
+        private static bool ToggleComponent(string? targetPath, int componentIndex, string? componentName, out string? error)
         {
+            error = null;
             var component = ResolveComponent(targetPath, componentIndex, componentName);
             if (component is null)
             {
+                error = "component was not found on target object";
                 return false;
             }
 
@@ -505,6 +504,7 @@ namespace UniFocl.EditorBridge
                 return true;
             }
 
+            error = $"{component.GetType().Name} does not support enabled toggle mutations";
             return false;
         }
 
@@ -573,18 +573,33 @@ namespace UniFocl.EditorBridge
             return true;
         }
 
-        private static bool ToggleField(string? targetPath, int componentIndex, string? componentName, string? fieldName)
+        private static bool ToggleField(string? targetPath, int componentIndex, string? componentName, string? fieldName, out string? error)
         {
+            error = null;
             var component = ResolveComponent(targetPath, componentIndex, componentName);
-            if (component is null || string.IsNullOrWhiteSpace(fieldName))
+            if (component is null)
             {
+                error = "component was not found on target object";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                error = "field name is required";
                 return false;
             }
 
             var serializedObject = new SerializedObject(component);
             var property = FindPropertyByNameOrPath(serializedObject, fieldName);
-            if (property is null || property.propertyType != SerializedPropertyType.Boolean)
+            if (property is null)
             {
+                error = $"serialized field was not found: {fieldName}";
+                return false;
+            }
+
+            if (property.propertyType != SerializedPropertyType.Boolean)
+            {
+                error = $"field '{property.propertyPath}' is {property.propertyType} (expected Boolean for toggle)";
                 return false;
             }
 
@@ -597,11 +612,25 @@ namespace UniFocl.EditorBridge
             return true;
         }
 
-        private static bool SetField(string? targetPath, int componentIndex, string? componentName, string? fieldName, string? rawValue)
+        private static bool SetField(string? targetPath, int componentIndex, string? componentName, string? fieldName, string? rawValue, out string? error)
         {
+            error = null;
             var component = ResolveComponent(targetPath, componentIndex, componentName);
-            if (component is null || string.IsNullOrWhiteSpace(fieldName) || rawValue is null)
+            if (component is null)
             {
+                error = "component was not found on target object";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                error = "field name is required";
+                return false;
+            }
+
+            if (rawValue is null)
+            {
+                error = "field value is required";
                 return false;
             }
 
@@ -609,6 +638,7 @@ namespace UniFocl.EditorBridge
             var property = FindPropertyByNameOrPath(serializedObject, fieldName);
             if (property is null)
             {
+                error = $"serialized field was not found: {fieldName}";
                 return false;
             }
 
@@ -616,6 +646,7 @@ namespace UniFocl.EditorBridge
             serializedObject.Update();
             if (!TryAssignPropertyValue(property, rawValue))
             {
+                error = $"failed to assign serialized field '{property.propertyPath}' ({property.propertyType}) from value '{rawValue}'";
                 return false;
             }
 
