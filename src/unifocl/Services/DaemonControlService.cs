@@ -45,7 +45,8 @@ internal sealed class DaemonControlService
                 HandleDaemonDetach(session, log);
                 break;
             default:
-                log("[red]daemon[/]: command handler not implemented");
+                log("[yellow]daemon[/]: usage /daemon <start|stop|restart|ps|attach|detach>");
+                await HandleDaemonPsAsync(runtime, session, streamLog, log);
                 break;
         }
     }

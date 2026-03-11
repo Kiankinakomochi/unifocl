@@ -395,9 +395,41 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/build logs` | | Reopen live build log tail (restartable, with error filtering). |
 | `/init [path]` | | Generate bridge-mode config and install editor-side dependencies. |
 | `/clear` | | Clear and redraw the boot screen and log. |
-| `/help [topic]` | `/?` | Show help by topic. |
+| `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
-> **Note:** Additional diagnostic commands (`/doctor`, `/logs`, `/scan`, `/info`, `/unity detect`) are available but may be in active development.
+### Newly Implemented Command Coverage
+
+The following command routes are now implemented with deterministic behavior in both interactive and one-shot (`exec --agentic`) pathways:
+
+* `/status`: prints session mode/context, attached daemon, project path, and active daemon runtime entries.
+* `/help [topic]`: structured command help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`).
+* `/doctor`: local environment diagnostics (dotnet, git, Unity editor detection, project layout, daemon entry count).
+* `/scan [--root <dir>] [--depth <n>]`: scans directories for Unity projects (`Assets/` + `ProjectSettings/`).
+* `/info <path?>`: inspects project metadata (Unity version, default daemon port, bridge protocol, dependency count).
+* `/logs [daemon|unity] [-f]`: daemon runtime summary or cached Unity log-pane tail.
+* `/examples`: prints common operational command flows.
+* `/update`: reports installed CLI version and update guidance.
+* `/install-hook`: runs bridge dependency install flow (`/init`) against current/open project.
+
+Also implemented:
+
+* `/daemon` (without subcommand) now returns usage + process summary instead of a generic unimplemented response.
+* Unsupported slash command routes now return explicit "unsupported route" messaging instead of "not implemented yet".
+
+### Host-Mode Hierarchy Fallback (No GUI Bridge Attached)
+
+When Bridge mode is unavailable, hierarchy endpoints now provide a host-mode filesystem-backed fallback over `Assets`:
+
+* `HIERARCHY_GET`: returns an `Assets`-root snapshot.
+* `HIERARCHY_FIND`: fuzzy-searches node names/paths.
+* `HIERARCHY_CMD`: supports `mk`, `rm`, `rename`, `mv`, `toggle` with guardrails.
+
+Safety constraints in host-mode fallback:
+
+* All mutations are constrained within `Assets`.
+* Move/rename path-escape is rejected.
+* Moving a directory into itself/descendants is rejected.
+* `mk` validates names and supports typed placeholders (`Empty`, `EmptyChild`, `EmptyParent`, `Text/TMP`, `Sprite`, default prefab).
 
 ### UPM Management Stability Note
 

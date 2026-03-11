@@ -530,8 +530,8 @@ try
             continue;
         }
 
-        CliLogService.AppendLog(streamLog, $"[yellow]command[/]: not implemented yet -> {Markup.Escape(matched.Signature)}");
-        CliLogService.AppendLog(streamLog, "[grey]hint[/]: run /help for implemented commands and mode-specific workflows");
+        CliLogService.AppendLog(streamLog, $"[yellow]command[/]: unsupported route -> {Markup.Escape(matched.Signature)}");
+        CliLogService.AppendLog(streamLog, "[grey]hint[/]: run /help for available commands and mode-specific workflows");
     }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
         {

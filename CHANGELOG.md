@@ -10,6 +10,14 @@
   - `/agent/status` now returns tracked request state (running/success/error), timing metadata, and command context instead of a stateless placeholder payload
 - Hardened top-level cancellation/shutdown handling in `Program.cs` with a reference-counted cancellation guard so signal/exit callbacks cannot cancel a disposed token source.
 - Extended worktree orchestration with `setup-smoke-project` in `src/unifocl/scripts/agent-worktree.sh` to scaffold a minimal Unity project for agentic smoke tests, and documented setup flow updates in `README.md`.
+- Implemented previously stub-routed root command coverage in lifecycle handling for `/help`, `/status`, `/doctor`, `/scan`, `/info`, `/logs`, `/examples`, `/update`, and `/install-hook`.
+- Replaced generic unimplemented route messaging in interactive and one-shot command paths with explicit unsupported-route guidance.
+- Expanded host/stub project bridge handling for `PROJECT_CMD` actions (`upm-list`, `build-targets`, `build-cancel`, and explicit Bridge-required responses for unsupported mutation/build actions).
+- Implemented host-mode hierarchy daemon fallback:
+  - filesystem-backed `Assets` snapshot and fuzzy-search endpoints
+  - host-safe hierarchy command support (`mk`, `rm`, `rename`, `mv`, `toggle`)
+  - path-boundary/mutation guardrails (Assets-root confinement, anti path-escape, and anti self-descendant move constraints)
+- Updated README command documentation with newly implemented command explanations and host-mode hierarchy fallback behavior.
 
 ## 0.23.0 - 2026-03-11
 
