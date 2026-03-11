@@ -41,6 +41,36 @@ What this means in practice:
 * unifocl does not bypass Unity with privileged OS hooks.
 * It either executes through a Host-mode Unity runtime or through a Bridge-mode attached editor runtime, depending on what is available.
 
+## Dry-Run Preview Commands
+
+`--dry-run` is now supported for mutation commands in all interactive modes:
+
+* `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`)
+* `Inspector` mutations (`set`, `toggle`, `component add/remove`, `make`, `remove`, `rename`, `move`)
+* `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`)
+
+Behavior:
+
+* **Hierarchy / Inspector (memory layer):** unifocl captures pre/post state snapshots, executes inside an Undo group, immediately reverts, and returns a structured diff preview.
+* **Project (filesystem layer):** unifocl returns proposed path/meta changes without performing file I/O.
+* **TUI rendering:** when `--dry-run` is appended, unified diff lines are appended to command transcript output.
+
+Examples:
+
+```bash
+# hierarchy mode
+mk Cube --dry-run
+rename 12 NewName --dry-run
+
+# inspector mode
+set speed 5 --dry-run
+component add Rigidbody --dry-run
+
+# project mode
+rename 3 PlayerController --dry-run
+rm 7 --dry-run
+```
+
 ## Installation
 
 unifocl is currently distributed as source code and requires a modern .NET runtime. Future distribution methods (like a .NET Global Tool, Homebrew, or Winget) are planned but not yet implemented.
@@ -130,6 +160,11 @@ Notes:
   "data": {},
   "errors": [{ "code": "E_*", "message": "string", "hint": "string|null" }],
   "warnings": [{ "code": "W_*", "message": "string" }],
+  "diff": {
+    "format": "unified",
+    "summary": "string|null",
+    "lines": ["--- before", "+++ after", "..."]
+  },
   "meta": {
     "schemaVersion": "agentic.v1",
     "protocol": "v3",
@@ -148,6 +183,7 @@ Field semantics:
 * `data`: command payload (shape varies by action).
 * `errors`: deterministic machine errors (empty on success).
 * `warnings`: non-fatal issues.
+* `diff`: optional dry-run diff payload (present when `--dry-run` preview is returned).
 * `meta`: schema/protocol/exit metadata plus optional command-specific extras.
 
 ### 3. Agentic Exit Codes
