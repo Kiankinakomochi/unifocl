@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0a1 - 2026-03-11
+
+### Changed
+- Started the `0.13.0` development cycle with `a1` suffix versioning.
+- Fixed project-mode prefab loading so loading `.prefab` assets (including focus mode selection) switches to Hierarchy mode like scene loading.
+- Fixed prefab hierarchy snapshots to use loaded prefab contents explicitly (not active-scene roots), so prefab load works whether or not a scene is open.
+- Fixed inspector target resolution in prefab context so component lists/fields resolve from current hierarchy roots (prefab or scene), not scene-only roots.
+- Improved inspector empty-component diagnostics to explicitly report bridge failure mode, payload status, attached daemon port, hierarchy snapshot root, and target-path resolution outcome.
+- Fixed persistence flow for loaded-prefab mutations by explicitly saving loaded prefab contents during mutation/preflight persistence and by preserving preflight save-before-clear ordering on scene load.
+- Improved inspector mutation failure messaging to clearly distinguish Unity Bridge mode requirements vs Host/stub daemon mode.
+- Bumped bridge protocol to `v7`; projects must re-run `/init` to refresh embedded bridge payload.
+
 ## 0.12.1 - 2026-03-11
 
 ### Changed
@@ -68,13 +80,6 @@
   - `scene:/...` and `scene:/...#Component`
   - `asset:Assets/...` and direct `Assets/...` asset path
   - `null` to clear reference fields.
-
-## 0.12.0a1 - 2026-03-10
-
-### Changed
-- Started the `0.12.0` development cycle with `a1` suffix versioning.
-- Added project-mode fuzzy `--type`/`-t` argument support (in addition to existing `t:<type>`) for type-scoped fuzzy queries.
-- Refactored project mk catalog usage so fuzzy-type parsing/filtering and mk type extension resolution now share `ProjectMkCatalog` as the common source of truth.
 
 ## 0.11.0 - 2026-03-10
 

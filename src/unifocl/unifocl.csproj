@@ -7,6 +7,56 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <AutoIncrementDevCycle Condition="'$(AutoIncrementDevCycle)' == ''">true</AutoIncrementDevCycle>
+  </PropertyGroup>
+
+  <UsingTask
+      TaskName="IncrementDevCycleTask"
+      TaskFactory="RoslynCodeTaskFactory"
+      AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <FilePath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Reference Include="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        if (!System.IO.File.Exists(FilePath))
+        {
+            Log.LogError($"CliVersion file not found: {FilePath}");
+            return false;
+        }
+
+        var content = System.IO.File.ReadAllText(FilePath);
+        var matcher = new System.Text.RegularExpressions.Regex(@"public const string DevCycle = ""a(?<n>\d+)"";");
+        var match = matcher.Match(content);
+        if (!match.Success)
+        {
+            Log.LogError("DevCycle must be in the form public const string DevCycle = \"aN\"; for auto-increment.");
+            return false;
+        }
+
+        var current = int.Parse(match.Groups["n"].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var next = current + 1;
+        var updated = matcher.Replace(content, $"public const string DevCycle = \"a{next}\";", 1);
+        if (!string.Equals(updated, content, System.StringComparison.Ordinal))
+        {
+            System.IO.File.WriteAllText(FilePath, updated);
+            Log.LogMessage(Microsoft.Build.Framework.MessageImportance.High, $"Incremented DevCycle to a{next}.");
+        }
+
+        return true;
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target
+      Name="AutoIncrementDevCycle"
+      BeforeTargets="CoreCompile"
+      Condition="'$(Configuration)' == 'Debug' and '$(DesignTimeBuild)' != 'true' and '$(AutoIncrementDevCycle)' == 'true'">
+    <IncrementDevCycleTask FilePath="$(MSBuildProjectDirectory)/Services/CliVersion.cs" />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>

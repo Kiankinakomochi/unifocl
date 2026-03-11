@@ -243,11 +243,13 @@ internal sealed class ProjectDaemonBridge
         }
 
         var extension = Path.GetExtension(assetPath);
-        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
+        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase))
         {
+            var kind = extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase) ? "prefab" : "scene";
             return new ProjectCommandResponseDto(
                 false,
-                $"{StubbedBridgePrefix} scene load is unavailable without Bridge mode: {assetPath}",
+                $"{StubbedBridgePrefix} {kind} load is unavailable without Bridge mode: {assetPath}",
                 null,
                 null);
         }
@@ -263,7 +265,7 @@ internal sealed class ProjectDaemonBridge
 
         return new ProjectCommandResponseDto(
             false,
-            $"unsupported asset type: {extension} (supported: .unity, .cs)",
+            $"unsupported asset type: {extension} (supported: .unity, .prefab, .cs)",
             null,
             null);
     }

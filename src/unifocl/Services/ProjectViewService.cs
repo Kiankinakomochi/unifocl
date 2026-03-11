@@ -932,18 +932,20 @@ internal sealed class ProjectViewService
 
         if (target.IsDirectory)
         {
-            outputs.Add("[x] load expects a scene (.unity) or script (.cs), not a directory");
+            outputs.Add("[x] load expects a scene (.unity), prefab (.prefab), or script (.cs), not a directory");
             return true;
         }
 
-        var isSceneLoad = Path.GetExtension(target.Name).Equals(".unity", StringComparison.OrdinalIgnoreCase);
-        EmitImmediateLoadFeedback(state, target.Name, isSceneLoad);
+        var extension = Path.GetExtension(target.Name);
+        var isHierarchyAssetLoad = IsHierarchyAssetExtension(extension);
+        var loadAssetKind = ResolveLoadAssetKind(extension);
+        EmitImmediateLoadFeedback(state, target.Name);
         EmitLoadDiagnostic(state, $"selector '{selector}' resolved to '{target.RelativePath}'");
         EmitLoadDiagnostic(state, "ensuring Bridge mode context");
-        var bridgeModeReady = await (isSceneLoad
+        var bridgeModeReady = await (isHierarchyAssetLoad
             ? RunTrackableProgressAsync(
                 session,
-                "preparing scene load context",
+                $"preparing {loadAssetKind} load context",
                 TimeSpan.FromSeconds(6),
                 () => EnsureModeContextAsync(
                     session,
@@ -955,20 +957,20 @@ internal sealed class ProjectViewService
                 daemonControlService,
                 daemonRuntime,
                 requireBridgeMode: false));
-        if (!bridgeModeReady && isSceneLoad)
+        if (!bridgeModeReady && isHierarchyAssetLoad)
         {
-            outputs.Add("[x] scene load failed: Bridge mode is unavailable; set UNITY_PATH or start Unity editor for this project");
+            outputs.Add($"[x] {loadAssetKind} load failed: Bridge mode is unavailable; set UNITY_PATH or start Unity editor for this project");
             return true;
         }
-        if (isSceneLoad)
+        if (isHierarchyAssetLoad)
         {
             EmitLoadDiagnostic(state, "Bridge mode context ready");
         }
 
-        var response = await (isSceneLoad
+        var response = await (isHierarchyAssetLoad
             ? RunTrackableProgressAsync(
                 session,
-                $"loading scene {target.Name}",
+                $"loading {loadAssetKind} {target.Name}",
                 TimeSpan.FromSeconds(20),
                 () => ExecuteProjectCommandAsync(
                     session,
@@ -985,10 +987,10 @@ internal sealed class ProjectViewService
                 && !fallbackPath.Equals(target.RelativePath, StringComparison.OrdinalIgnoreCase))
             {
                 EmitLoadDiagnostic(state, $"asset fallback path resolved: '{fallbackPath}'");
-                response = await (isSceneLoad
+                response = await (isHierarchyAssetLoad
                     ? RunTrackableProgressAsync(
                         session,
-                        $"retrying scene load {target.Name}",
+                        $"retrying {loadAssetKind} load {target.Name}",
                         TimeSpan.FromSeconds(20),
                         () => ExecuteProjectCommandAsync(
                             session,
@@ -1005,9 +1007,9 @@ internal sealed class ProjectViewService
 
         if (!response.Ok)
         {
-            if (Path.GetExtension(target.Name).Equals(".unity", StringComparison.OrdinalIgnoreCase))
+            if (isHierarchyAssetLoad)
             {
-                outputs.Add($"[x] scene load failed: {response.Message ?? "unknown error"}");
+                outputs.Add($"[x] {loadAssetKind} load failed: {response.Message ?? "unknown error"}");
                 return true;
             }
 
@@ -1015,10 +1017,11 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        var extension = Path.GetExtension(target.Name);
-        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase) || response.Kind?.Equals("scene", StringComparison.OrdinalIgnoreCase) == true)
+        if (isHierarchyAssetLoad
+            || response.Kind?.Equals("scene", StringComparison.OrdinalIgnoreCase) == true
+            || response.Kind?.Equals("prefab", StringComparison.OrdinalIgnoreCase) == true)
         {
-            outputs.Add($"[=] loaded scene: {target.Name}");
+            outputs.Add($"[=] loaded {loadAssetKind}: {target.Name}");
             outputs.Add("[i] switched to hierarchy mode");
             session.ContextMode = CliContextMode.Hierarchy;
             session.AutoEnterHierarchyRequested = true;
@@ -2261,9 +2264,35 @@ internal sealed class ProjectViewService
         state.CommandTranscript.RemoveRange(0, overflow);
     }
 
-    private void EmitImmediateLoadFeedback(ProjectViewState state, string targetName, bool isSceneLoad)
+    private static bool IsHierarchyAssetExtension(string extension)
     {
-        var prefix = isSceneLoad ? "scene" : "script";
+        return extension.Equals(".unity", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveLoadAssetKind(string extension)
+    {
+        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
+        {
+            return "scene";
+        }
+
+        if (extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase))
+        {
+            return "prefab";
+        }
+
+        if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
+        {
+            return "script";
+        }
+
+        return "asset";
+    }
+
+    private void EmitImmediateLoadFeedback(ProjectViewState state, string targetName)
+    {
+        var prefix = ResolveLoadAssetKind(Path.GetExtension(targetName));
         AppendTranscript(state, [$"[*] loading {prefix}: {targetName}"]);
         RenderFrame(state);
     }

@@ -111,7 +111,7 @@ var projectCommands = new List<CommandSpec>
     new("..", "Alias for up", ".."),
     new("make --type <type> [--count <count>] [--name <name>] [--parent <idx|name>]", "Create typed asset(s) in project mode", "make"),
     new("mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]", "Alias for make", "mk"),
-    new("load <idx|name>", "Load/open scene or script in project mode", "load"),
+    new("load <idx|name>", "Load/open scene, prefab, or script in project mode", "load"),
     new("remove <idx>", "Remove selected item in active mode", "remove"),
     new("rm <idx>", "Alias for remove", "rm"),
     new("rename <idx> <new-name>", "Rename selected item (mode dependent)", "rename"),

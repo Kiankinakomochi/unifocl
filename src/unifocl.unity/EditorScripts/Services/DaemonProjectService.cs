@@ -325,6 +325,8 @@ namespace UniFocl.EditorBridge
                             activeScene);
                     }
 
+                    DaemonHierarchyService.ClearLoadedPrefabSnapshotRoot();
+
                     if (!DaemonSceneManager.TryLoadSceneSingleAndActivate(requestedScenePath, out _, out var loadError))
                     {
                         return JsonUtility.ToJson(new ProjectCommandResponse
@@ -346,6 +348,44 @@ namespace UniFocl.EditorBridge
                 }
             }
 
+            if (extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase))
+            {
+                var requestedPrefabPath = request.assetPath.Replace('\\', '/');
+                if (!File.Exists(Path.Combine(GetProjectRoot(), requestedPrefabPath.Replace('/', Path.DirectorySeparatorChar))))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"prefab not found: {request.assetPath}" });
+                }
+
+                try
+                {
+                    if (DaemonSceneManager.TryGetActiveScene(out var activeScene))
+                    {
+                        DaemonScenePersistenceService.SaveScenesWithoutMarkDirty(
+                            "project prefab-switch preflight",
+                            activeScene);
+                    }
+
+                    if (!DaemonHierarchyService.TryLoadPrefabSnapshotRoot(requestedPrefabPath, out var loadError))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = loadError ?? $"prefab load failed: {requestedPrefabPath}"
+                        });
+                    }
+
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "prefab loaded", kind = "prefab" });
+                }
+                catch (Exception ex)
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = $"prefab load failed: {ex.Message}"
+                    });
+                }
+            }
+
             if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
             {
                 var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.assetPath);
@@ -361,7 +401,7 @@ namespace UniFocl.EditorBridge
             return JsonUtility.ToJson(new ProjectCommandResponse
             {
                 ok = false,
-                message = $"unsupported asset type: {extension} (supported: .unity, .cs)"
+                message = $"unsupported asset type: {extension} (supported: .unity, .prefab, .cs)"
             });
         }
 

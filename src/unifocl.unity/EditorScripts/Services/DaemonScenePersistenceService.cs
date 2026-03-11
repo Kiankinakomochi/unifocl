@@ -21,6 +21,8 @@ namespace UniFocl.EditorBridge
 
         private static void SaveScenes(bool markDirty, string source, params Scene[] scenes)
         {
+            DaemonHierarchyService.PersistLoadedPrefabSnapshotRootIfAny(source, markDirty);
+
             var seen = new HashSet<int>();
             foreach (var scene in scenes)
             {

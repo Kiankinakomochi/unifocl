@@ -1,10 +1,10 @@
 internal static class CliVersion
 {
     public const int Major = 0;
-    public const int Minor = 12;
-    public const int Patch = 1;
-    public const string DevCycle = "";
-    public const string Protocol = "v6";
+    public const int Minor = 13;
+    public const int Patch = 0;
+    public const string DevCycle = "a1";
+    public const string Protocol = "v7";
 
     public static string SemVer => string.IsNullOrWhiteSpace(DevCycle)
         ? $"{Major}.{Minor}.{Patch}"
