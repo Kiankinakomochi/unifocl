@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1 - 2026-03-11
+
+### Changed
+- Officialized `0.12.1` by closing the development cycle suffix.
+- Updated composer IntelliSense Enter behavior to execute immediately when input already matches a catalog command trigger.
+- Improved hierarchy fuzzy flow by enabling live fuzzy preview suggestions during `f`/`ff` input and ensuring command execution is not blocked by prompt suggestions.
+- Added leaf-focused fuzzy suggestion styling across hierarchy/project/inspector results so parent path context is dimmed and the deepest segment is emphasized.
+
 ## 0.12.0 - 2026-03-10
 
 ### Changed

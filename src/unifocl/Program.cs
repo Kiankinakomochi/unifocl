@@ -592,7 +592,6 @@ static string? ReadInteractiveInput(
     var input = new StringBuilder();
     var selectedIntellisenseCandidateIndex = 0;
     var intellisenseDismissed = false;
-    var intellisenseSelectionArmed = false;
     var renderedLines = RenderComposerFrame(
         input.ToString(),
         commands,
@@ -620,17 +619,23 @@ static string? ReadInteractiveInput(
         switch (key.Key)
         {
             case ConsoleKey.Enter:
-                if ((intellisenseSelectionArmed
-                     || ShouldCommitSuggestionOnEnter(input.ToString(), session, candidates))
-                    && candidates.Count > 0
+                if (IsCatalogCommandInput(input.ToString(), commands, projectCommands, inspectorCommands, session))
+                {
+                    Console.WriteLine();
+                    return input.ToString();
+                }
+
+                if (candidates.Count > 0
                     && selectedIntellisenseCandidateIndex >= 0
                     && selectedIntellisenseCandidateIndex < candidates.Count
                     && !string.IsNullOrWhiteSpace(candidates[selectedIntellisenseCandidateIndex].CommitCommand))
                 {
+                    var currentInput = input.ToString();
+                    var acceptedCommand = candidates[selectedIntellisenseCandidateIndex].CommitCommand!;
                     input.Clear();
-                    input.Append(candidates[selectedIntellisenseCandidateIndex].CommitCommand!);
-                    intellisenseDismissed = false;
-                    intellisenseSelectionArmed = false;
+                    input.Append(MergeAcceptedSuggestion(currentInput, acceptedCommand));
+                    // Accepting a suggestion exits IntelliSense so next Enter executes.
+                    intellisenseDismissed = true;
                     break;
                 }
 
@@ -643,7 +648,6 @@ static string? ReadInteractiveInput(
                 }
 
                 intellisenseDismissed = false;
-                intellisenseSelectionArmed = false;
                 break;
             case ConsoleKey.Escape:
                 if (!intellisenseDismissed && allCandidates.Count > 0)
@@ -657,7 +661,6 @@ static string? ReadInteractiveInput(
                 }
 
                 selectedIntellisenseCandidateIndex = 0;
-                intellisenseSelectionArmed = false;
                 break;
             case ConsoleKey.UpArrow:
                 if (intellisenseDismissed && allCandidates.Count > 0)
@@ -671,7 +674,6 @@ static string? ReadInteractiveInput(
                     selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex <= 0
                         ? candidates.Count - 1
                         : selectedIntellisenseCandidateIndex - 1;
-                    intellisenseSelectionArmed = true;
                 }
                 break;
             case ConsoleKey.DownArrow:
@@ -686,7 +688,6 @@ static string? ReadInteractiveInput(
                     selectedIntellisenseCandidateIndex = selectedIntellisenseCandidateIndex >= candidates.Count - 1
                         ? 0
                         : selectedIntellisenseCandidateIndex + 1;
-                    intellisenseSelectionArmed = true;
                 }
                 break;
             case ConsoleKey.F7:
@@ -719,7 +720,6 @@ static string? ReadInteractiveInput(
                 {
                     input.Append(key.KeyChar);
                     intellisenseDismissed = false;
-                    intellisenseSelectionArmed = false;
                 }
                 break;
         }
@@ -734,76 +734,6 @@ static string? ReadInteractiveInput(
             selectedIntellisenseCandidateIndex,
             intellisenseDismissed);
     }
-}
-
-static bool ShouldCommitSuggestionOnEnter(
-    string input,
-    CliSessionState session,
-    IReadOnlyList<(string Label, string? CommitCommand)> candidates)
-{
-    if (candidates.Count == 0)
-    {
-        return false;
-    }
-
-    return IsMkTypeSelectionPhase(input, session)
-        || IsInspectorComponentAddSelectionPhase(input, session);
-}
-
-static bool IsMkTypeSelectionPhase(string input, CliSessionState session)
-{
-    if (session.Inspector is not null
-        || session.Mode != CliMode.Project
-        || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
-    {
-        return false;
-    }
-
-    var tokens = TokenizeComposerInput(input.TrimStart());
-    if (tokens.Count == 0)
-    {
-        return false;
-    }
-
-    if (tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
-    {
-        return tokens.Count <= 1;
-    }
-
-    if (tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase))
-    {
-        return !HasConcreteMakeType(tokens);
-    }
-
-    return false;
-}
-
-static bool IsInspectorComponentAddSelectionPhase(string input, CliSessionState session)
-{
-    var context = session.Inspector;
-    if (context is null || context.Depth != InspectorDepth.ComponentList)
-    {
-        return false;
-    }
-
-    var tokens = TokenizeComposerInput(input.TrimStart());
-    if (tokens.Count == 0)
-    {
-        return false;
-    }
-
-    var command = tokens[0].ToLowerInvariant();
-    if (command is not ("component" or "comp"))
-    {
-        return false;
-    }
-
-    if (tokens.Count == 1)
-    {
-        return true;
-    }
-
-    return tokens[1].Equals("add", StringComparison.OrdinalIgnoreCase);
 }
 
 static int RenderComposerFrame(
@@ -1581,6 +1511,133 @@ static List<string> TokenizeComposerInput(string input)
     return tokens;
 }
 
+static string MergeAcceptedSuggestion(string currentInput, string acceptedCommand)
+{
+    if (string.IsNullOrWhiteSpace(acceptedCommand))
+    {
+        return currentInput;
+    }
+
+    var trimmedCurrent = currentInput.TrimStart();
+    if (string.IsNullOrWhiteSpace(trimmedCurrent))
+    {
+        return acceptedCommand;
+    }
+
+    var tokenCount = CountTokens(acceptedCommand);
+    if (tokenCount <= 0)
+    {
+        return acceptedCommand;
+    }
+
+    var remainder = SliceAfterTokenCount(trimmedCurrent, tokenCount);
+    if (string.IsNullOrEmpty(remainder))
+    {
+        return acceptedCommand;
+    }
+
+    if (acceptedCommand.EndsWith(' '))
+    {
+        return acceptedCommand + remainder.TrimStart();
+    }
+
+    if (char.IsWhiteSpace(remainder[0]))
+    {
+        return acceptedCommand + remainder;
+    }
+
+    return $"{acceptedCommand} {remainder}";
+}
+
+static int CountTokens(string input)
+{
+    var count = 0;
+    var inQuotes = false;
+    var inToken = false;
+    foreach (var ch in input)
+    {
+        if (ch == '"')
+        {
+            inQuotes = !inQuotes;
+            continue;
+        }
+
+        if (!inQuotes && char.IsWhiteSpace(ch))
+        {
+            if (inToken)
+            {
+                count++;
+                inToken = false;
+            }
+
+            continue;
+        }
+
+        inToken = true;
+    }
+
+    if (inToken)
+    {
+        count++;
+    }
+
+    return count;
+}
+
+static string SliceAfterTokenCount(string input, int tokenCount)
+{
+    if (tokenCount <= 0)
+    {
+        return input;
+    }
+
+    var i = 0;
+    var consumed = 0;
+    var inQuotes = false;
+    var inToken = false;
+    while (i < input.Length)
+    {
+        var ch = input[i];
+        if (ch == '"')
+        {
+            inQuotes = !inQuotes;
+            if (!inToken)
+            {
+                inToken = true;
+            }
+
+            i++;
+            continue;
+        }
+
+        if (!inQuotes && char.IsWhiteSpace(ch))
+        {
+            if (inToken)
+            {
+                consumed++;
+                inToken = false;
+                if (consumed == tokenCount)
+                {
+                    return input[i..];
+                }
+            }
+
+            i++;
+            continue;
+        }
+
+        inToken = true;
+        i++;
+    }
+
+    if (inToken)
+    {
+        consumed++;
+    }
+
+    return consumed >= tokenCount ? string.Empty : input;
+}
+
 static bool TryGetUpmComposerCandidates(
     string input,
     CliSessionState session,
@@ -1709,6 +1766,33 @@ static bool TryGetUpmComposerCandidates(
     return true;
 }
 
+static bool IsCatalogCommandInput(
+    string input,
+    List<CommandSpec> commands,
+    List<CommandSpec> projectCommands,
+    List<CommandSpec> inspectorCommands,
+    CliSessionState session)
+{
+    var trimmed = input.Trim();
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        return false;
+    }
+
+    var tokens = TokenizeComposerInput(trimmed);
+    if (tokens.Count == 0)
+    {
+        return false;
+    }
+
+    var head = tokens[0];
+    IEnumerable<CommandSpec> catalog = head.StartsWith('/')
+        ? commands
+        : (session.Inspector is not null ? inspectorCommands : projectCommands);
+
+    return catalog.Any(command => command.Trigger.Equals(head, StringComparison.OrdinalIgnoreCase));
+}
+
 static IEnumerable<string> GetSuggestionLines(
     string query,
     List<CommandSpec> commands,
@@ -1798,6 +1882,7 @@ static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState sess
     }
 
     var selected = Math.Clamp(selectedFuzzyCandidateIndex, 0, candidates.Count - 1);
+    var inspectorMode = session.Inspector is not null;
     for (var i = 0; i < candidates.Count && i < 10; i++)
     {
         var candidate = candidates[i];
@@ -1805,10 +1890,12 @@ static bool TryGetFuzzyQueryIntellisenseLines(string input, CliSessionState sess
         var prefix = selectedLine
             ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]>[/]"
             : "[grey] [/]";
-        var escapedPath = Markup.Escape(candidate.Path);
+        var formattedPath = inspectorMode
+            ? FormatInspectorFuzzyCandidateLabel(candidate.Path, selectedLine)
+            : FormatProjectFuzzyCandidateLabel(candidate.Path, selectedLine);
         lines.Add(selectedLine
-            ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{i}[/] [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escapedPath}[/]"
-            : $"{prefix} [deepskyblue1]{i}[/] {escapedPath}");
+            ? $"{prefix} [{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{i}[/] {formattedPath}"
+            : $"{prefix} [deepskyblue1]{i}[/] {formattedPath}");
     }
 
     return true;
@@ -1871,6 +1958,45 @@ static bool TryParseFuzzyQueryInput(string input, out string query)
 
     query = firstSpace < 0 ? string.Empty : trimmed[(firstSpace + 1)..].Trim();
     return true;
+}
+
+static string FormatInspectorFuzzyCandidateLabel(string path, bool selectedLine)
+{
+    var lastDot = path.LastIndexOf('.');
+    var lastSlash = path.LastIndexOf('/');
+    var separatorIndex = Math.Max(lastDot, lastSlash);
+    if (separatorIndex < 0 || separatorIndex >= path.Length - 1)
+    {
+        var escaped = Markup.Escape(path);
+        return selectedLine
+            ? $"[{CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escaped}[/]"
+            : $"[white]{escaped}[/]";
+    }
+
+    var context = Markup.Escape(path[..(separatorIndex + 1)]);
+    var leaf = Markup.Escape(path[(separatorIndex + 1)..]);
+    return selectedLine
+        ? $"[grey58]{context}[/][bold {CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{leaf}[/]"
+        : $"[grey58]{context}[/][bold white]{leaf}[/]";
+}
+
+static string FormatProjectFuzzyCandidateLabel(string path, bool selectedLine)
+{
+    var normalizedPath = path.Replace('\\', '/');
+    var separatorIndex = normalizedPath.LastIndexOf('/');
+    if (separatorIndex < 0 || separatorIndex >= normalizedPath.Length - 1)
+    {
+        var escaped = Markup.Escape(path);
+        return selectedLine
+            ? $"[bold {CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{escaped}[/]"
+            : $"[bold white]{escaped}[/]";
+    }
+
+    var context = Markup.Escape(normalizedPath[..(separatorIndex + 1)]);
+    var leaf = Markup.Escape(normalizedPath[(separatorIndex + 1)..]);
+    return selectedLine
+        ? $"[grey58]{context}[/][bold {CliTheme.CursorForeground} on {CliTheme.CursorBackground}]{leaf}[/]"
+        : $"[grey58]{context}[/][bold white]{leaf}[/]";
 }
 
 static List<(string Path, string? CommitCommand)> GetProjectFuzzyCandidates(ProjectViewState state, string query)
