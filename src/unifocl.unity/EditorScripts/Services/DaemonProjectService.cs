@@ -24,6 +24,7 @@ namespace UniFocl.EditorBridge
     {
         private static readonly object BuildStateLock = new();
         private static readonly Regex PercentRegex = new(@"(?<!\d)(\d{1,3})\s*%", RegexOptions.Compiled);
+        private static readonly SemaphoreSlim FileSystemMutationSemaphore = new(1, 1);
         private static BuildRuntimeState _buildState = new();
         private static int _unityMainThreadId;
         private static bool _buildInProgress;
@@ -192,28 +193,31 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteCreateScript(ProjectCommandRequest request)
         {
-            if (!IsValidAssetPath(request.assetPath) || string.IsNullOrWhiteSpace(request.content))
+            return ExecuteWithFileSystemCriticalSection(() =>
             {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "mk-script requires assetPath and content" });
-            }
+                if (!IsValidAssetPath(request.assetPath) || string.IsNullOrWhiteSpace(request.content))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "mk-script requires assetPath and content" });
+                }
 
-            var assetPath = request.assetPath;
-            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) is not null)
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset already exists: {assetPath}" });
-            }
+                var assetPath = request.assetPath;
+                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) is not null)
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset already exists: {assetPath}" });
+                }
 
-            var absolutePath = Path.Combine(GetProjectRoot(), assetPath.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath) ?? GetProjectRoot());
-            File.WriteAllText(absolutePath, request.content);
-            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
-            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                var absolutePath = Path.Combine(GetProjectRoot(), assetPath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(absolutePath) ?? GetProjectRoot());
+                File.WriteAllText(absolutePath, request.content);
+                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
 
-            return JsonUtility.ToJson(new ProjectCommandResponse
-            {
-                ok = true,
-                message = "script created",
-                kind = "script"
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = "script created",
+                    kind = "script"
+                });
             });
         }
 
@@ -3030,63 +3034,79 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
             IEnumerable<string> preMutationTargets,
             IEnumerable<string>? rollbackCleanupTargets = null)
         {
-            if (request.intent is null)
+            return ExecuteWithFileSystemCriticalSection(() =>
             {
-                return executeMutation();
-            }
-
-            var projectRoot = GetProjectRoot();
-            var stashRoot = BuildTransactionStashRoot(projectRoot, request.intent.transactionId, mutationName);
-            var stashEntries = new List<StashEntry>();
-            try
-            {
-                Directory.CreateDirectory(stashRoot);
-                foreach (var assetPath in preMutationTargets
-                             .Where(path => !string.IsNullOrWhiteSpace(path))
-                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                if (request.intent is null)
                 {
-                    if (!TryStashAssetWithMeta(projectRoot, stashRoot, assetPath, stashEntries, out var stashError))
+                    return executeMutation();
+                }
+
+                var projectRoot = GetProjectRoot();
+                var stashRoot = BuildTransactionStashRoot(projectRoot, request.intent.transactionId, mutationName);
+                var stashEntries = new List<StashEntry>();
+                try
+                {
+                    Directory.CreateDirectory(stashRoot);
+                    foreach (var assetPath in preMutationTargets
+                                 .Where(path => !string.IsNullOrWhiteSpace(path))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase))
                     {
+                        if (!TryStashAssetWithMeta(projectRoot, stashRoot, assetPath, stashEntries, out var stashError))
+                        {
+                            return JsonUtility.ToJson(new ProjectCommandResponse
+                            {
+                                ok = false,
+                                message = stashError ?? $"failed to stash target before {mutationName}: {assetPath}"
+                            });
+                        }
+                    }
+
+                    var responsePayload = executeMutation();
+                    if (TryReadProjectResponseStatus(responsePayload, out var ok) && ok)
+                    {
+                        DeleteDirectorySafe(stashRoot);
+                        return responsePayload;
+                    }
+
+                    if (!TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out var revertError))
+                    {
+                        AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                        DeleteDirectorySafe(stashRoot);
                         return JsonUtility.ToJson(new ProjectCommandResponse
                         {
                             ok = false,
-                            message = stashError ?? $"failed to stash target before {mutationName}: {assetPath}"
+                            message = $"{mutationName} failed and rollback also failed: {revertError}"
                         });
                     }
-                }
 
-                var responsePayload = executeMutation();
-                if (TryReadProjectResponseStatus(responsePayload, out var ok) && ok)
-                {
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                     DeleteDirectorySafe(stashRoot);
                     return responsePayload;
                 }
-
-                if (!TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out var revertError))
+                catch (Exception ex)
                 {
+                    TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out _);
                     AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                     DeleteDirectorySafe(stashRoot);
                     return JsonUtility.ToJson(new ProjectCommandResponse
                     {
                         ok = false,
-                        message = $"{mutationName} failed and rollback also failed: {revertError}"
+                        message = $"{mutationName} exception: {ex.Message}"
                     });
                 }
+            });
+        }
 
-                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-                DeleteDirectorySafe(stashRoot);
-                return responsePayload;
-            }
-            catch (Exception ex)
+        private static string ExecuteWithFileSystemCriticalSection(Func<string> operation)
+        {
+            FileSystemMutationSemaphore.Wait();
+            try
             {
-                TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out _);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-                DeleteDirectorySafe(stashRoot);
-                return JsonUtility.ToJson(new ProjectCommandResponse
-                {
-                    ok = false,
-                    message = $"{mutationName} exception: {ex.Message}"
-                });
+                return operation();
+            }
+            finally
+            {
+                FileSystemMutationSemaphore.Release();
             }
         }
 
