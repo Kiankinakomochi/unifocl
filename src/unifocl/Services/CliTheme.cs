@@ -49,15 +49,22 @@ internal static class CliTheme
     public static void MarkupLine(string markupLine)
     {
         var themed = ApplyMarkupPalette(markupLine);
+        
+        // 1. Normalize all line endings to CRLF to prevent internal staircase drift
+        themed = themed.Replace("\r\n", "\n").Replace("\n", "\r\n");
+
         try
         {
-            AnsiConsole.MarkupLine(themed);
+            AnsiConsole.Markup(themed);
         }
         catch (InvalidOperationException)
         {
             // Fallback to plain output if invalid Spectre markup slips through.
-            AnsiConsole.MarkupLine(Spectre.Console.Markup.Escape(themed));
+            AnsiConsole.Markup(Spectre.Console.Markup.Escape(themed));
         }
+
+        // 2. Emit explicit CRLF using Spectre to keep I/O streams synchronized
+        AnsiConsole.Markup("\r\n");
     }
 
     public static void Markup(string markup)
