@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -9,6 +10,38 @@ namespace UniFocl.EditorBridge
 {
     internal static class DaemonScenePersistenceService
     {
+        public static void RecordPrefabInstanceMutation(UnityEngine.Object mutationTarget)
+        {
+            if (DaemonDryRunContext.IsActive)
+            {
+                return;
+            }
+
+            if (mutationTarget is null)
+            {
+                return;
+            }
+
+            var gameObject = mutationTarget as GameObject ?? (mutationTarget as Component)?.gameObject;
+            if (gameObject is null)
+            {
+                return;
+            }
+
+            try
+            {
+                PrefabUtility.RecordPrefabInstancePropertyModifications(gameObject);
+                if (mutationTarget is Component component)
+                {
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(component);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[unifocl] Failed to record prefab instance mutation: {ex.Message}");
+            }
+        }
+
         public static void PersistMutationScenes(string mutationSource, params Scene[] scenes)
         {
             SaveScenes(markDirty: true, mutationSource, scenes);
@@ -21,6 +54,11 @@ namespace UniFocl.EditorBridge
 
         private static void SaveScenes(bool markDirty, string source, params Scene[] scenes)
         {
+            if (DaemonDryRunContext.IsActive)
+            {
+                return;
+            }
+
             DaemonHierarchyService.PersistLoadedPrefabSnapshotRootIfAny(source, markDirty);
 
             var seen = new HashSet<int>();

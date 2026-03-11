@@ -11,6 +11,11 @@
   - replaced unbounded/fire-and-forget timeout flows with cancellable timeout sources tied to command completion
 - Hardened external-process safety with bounded waits and kill-on-timeout behavior for Unity Hub module installation, git probe/clone operations, and ADB deploy operations.
 - Hardened utility/service reliability around process handle lifetime and cancellation-aware dump/monitor behavior to prevent indefinite wait loops under daemon disconnect/cancellation scenarios.
+- Added a README persistence-safety section documenting the shipped enterprise mutation contract:
+  - transactional mutation intent envelope and daemon transaction coordinator routing
+  - memory-layer idempotent serialized mutations with Undo rollback semantics
+  - project-layer stash-based filesystem rollback with `.meta` coverage and AssetDatabase refresh
+  - dry-run preview behavior and diff integration across CLI/TUI and `agentic.v1` responses
 
 ## 0.22.0 - 2026-03-11
 

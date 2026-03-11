@@ -38,6 +38,11 @@ internal sealed record AgenticMeta(
     [property: JsonPropertyOrder(4)] string TimestampUtc,
     [property: JsonPropertyOrder(5)] Dictionary<string, object?>? Extra = null);
 
+internal sealed record AgenticDiffPayload(
+    [property: JsonPropertyOrder(1)] string Format,
+    [property: JsonPropertyOrder(2)] List<string> Lines,
+    [property: JsonPropertyOrder(3)] string? Summary = null);
+
 internal sealed record AgenticResponseEnvelope(
     [property: JsonPropertyOrder(1)] string Status,
     [property: JsonPropertyOrder(2)] string RequestId,
@@ -46,7 +51,8 @@ internal sealed record AgenticResponseEnvelope(
     [property: JsonPropertyOrder(5)] object? Data,
     [property: JsonPropertyOrder(6)] List<AgenticError> Errors,
     [property: JsonPropertyOrder(7)] List<AgenticWarning> Warnings,
-    [property: JsonPropertyOrder(8)] AgenticMeta Meta);
+    [property: JsonPropertyOrder(8)] AgenticMeta Meta,
+    [property: JsonPropertyOrder(9)] AgenticDiffPayload? Diff = null);
 
 internal sealed record AgenticCapabilities(
     [property: JsonPropertyOrder(1)] string SchemaVersion,

@@ -48,6 +48,7 @@ internal static class CliOneShotExecutionService
         object? data = null;
         var errors = new List<AgenticError>();
         var warnings = new List<AgenticWarning>();
+        CliDryRunDiffService.Reset();
         try
         {
             var input = options.CommandText.Trim();
@@ -110,6 +111,7 @@ internal static class CliOneShotExecutionService
             _ => "none"
         };
         var action = CliCommandParsingService.ExtractActionLabel(options.CommandText);
+        var diff = CliDryRunDiffService.ConsumeCurrentDiff();
 
         return new AgenticResponseEnvelope(
             errors.Count == 0 ? "success" : "error",
@@ -124,7 +126,8 @@ internal static class CliOneShotExecutionService
                 CliVersion.Protocol,
                 exitCode,
                 DateTime.UtcNow.ToString("O"),
-                extraMeta));
+                extraMeta),
+            diff);
     }
 
     private static async Task ExecuteCommandForOneShotAsync(

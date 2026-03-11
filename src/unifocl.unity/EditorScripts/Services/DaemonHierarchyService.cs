@@ -184,35 +184,117 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "missing hierarchy command payload" });
             }
 
+            if (DaemonMutationTransactionCoordinator.IsHierarchyMutation(request.action))
+            {
+                var decision = DaemonMutationTransactionCoordinator.ValidateHierarchyIntent(request.action, request.intent);
+                if (!decision.Accepted)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = decision.Message });
+                }
+
+                if (decision.IsDryRun)
+                {
+                    return ExecuteDryRunCommand(request);
+                }
+            }
+
             lock (Sync)
             {
-                if (request.action.Equals("mk", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteCreate(request);
-                }
-
-                if (request.action.Equals("toggle", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteToggle(request);
-                }
-
-                if (request.action.Equals("rm", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteRemove(request);
-                }
-
-                if (request.action.Equals("rename", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteRename(request);
-                }
-
-                if (request.action.Equals("mv", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteMove(request);
-                }
-
-                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"unsupported action: {request.action}" });
+                return ExecuteCommandCore(request);
             }
+        }
+
+        private static string ExecuteDryRunCommand(HierarchyCommandRequest request)
+        {
+            lock (Sync)
+            {
+                var beforeSnapshotVersion = _snapshotVersion;
+                var beforeHash = _lastSnapshotHash;
+                var beforeHasHash = _hasSnapshotHash;
+                var snapshotTarget = ResolveDryRunSnapshotTarget(request);
+                var beforeJson = snapshotTarget is null
+                    ? BuildSnapshotPayload()
+                    : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+                var undoGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("unifocl hierarchy dry-run");
+                try
+                {
+                    using var dryRunScope = DaemonDryRunContext.Enter();
+                    var responsePayload = ExecuteCommandCore(request);
+                    var parsed = JsonUtility.FromJson<HierarchyCommandResponse>(responsePayload);
+                    if (parsed is null || !parsed.ok)
+                    {
+                        Undo.RevertAllDownToGroup(undoGroup);
+                        _snapshotVersion = beforeSnapshotVersion;
+                        _lastSnapshotHash = beforeHash;
+                        _hasSnapshotHash = beforeHasHash;
+                        return responsePayload;
+                    }
+
+                    var afterJson = snapshotTarget is null
+                        ? BuildSnapshotPayload()
+                        : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    _snapshotVersion = beforeSnapshotVersion;
+                    _lastSnapshotHash = beforeHash;
+                    _hasSnapshotHash = beforeHasHash;
+                    parsed.message = "dry-run preview";
+                    parsed.content = DaemonDryRunDiffService.BuildJsonDiffPayload("hierarchy mutation preview", beforeJson, afterJson);
+                    return JsonUtility.ToJson(parsed);
+                }
+                catch (Exception ex)
+                {
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    _snapshotVersion = beforeSnapshotVersion;
+                    _lastSnapshotHash = beforeHash;
+                    _hasSnapshotHash = beforeHasHash;
+                    return JsonUtility.ToJson(new HierarchyCommandResponse
+                    {
+                        ok = false,
+                        message = $"hierarchy dry-run failed: {ex.Message}"
+                    });
+                }
+            }
+        }
+
+        private static string ExecuteCommandCore(HierarchyCommandRequest request)
+        {
+            if (request.action.Equals("mk", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteCreate(request);
+            }
+
+            if (request.action.Equals("toggle", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteToggle(request);
+            }
+
+            if (request.action.Equals("rm", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteRemove(request);
+            }
+
+            if (request.action.Equals("rename", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteRename(request);
+            }
+
+            if (request.action.Equals("mv", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteMove(request);
+            }
+
+            return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"unsupported action: {request.action}" });
+        }
+
+        private static GameObject? ResolveDryRunSnapshotTarget(HierarchyCommandRequest request)
+        {
+            if (request.targetId == 0)
+            {
+                return null;
+            }
+
+            return EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
         }
 
         public static string ExecuteSearch(string payload)
@@ -302,23 +384,38 @@ namespace UniFocl.EditorBridge
                 parentScene = parentObject.scene;
             }
 
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl hierarchy create");
             GameObject? lastCreated = null;
-            for (var i = 0; i < count; i++)
+            try
             {
-                var created = CreateTypedObject(normalizedType, request, parentTransform, parentScene, activeScene, i, out var error);
-                if (created is null)
+                for (var i = 0; i < count; i++)
                 {
-                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = error ?? $"mk failed for type: {normalizedType}" });
-                }
+                    var created = CreateTypedObject(normalizedType, request, parentTransform, parentScene, activeScene, i, out var error);
+                    if (created is null)
+                    {
+                        Undo.RevertAllDownToGroup(undoGroup);
+                        return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = error ?? $"mk failed for type: {normalizedType}" });
+                    }
 
-                lastCreated = created;
+                    Undo.RegisterCreatedObjectUndo(created, "unifocl create hierarchy object");
+                    DaemonScenePersistenceService.RecordPrefabInstanceMutation(created);
+                    lastCreated = created;
+                }
+            }
+            catch (Exception ex)
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"mk failed: {ex.Message}" });
             }
 
             if (lastCreated is null)
             {
+                Undo.RevertAllDownToGroup(undoGroup);
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mk did not create any objects" });
             }
 
+            Undo.CollapseUndoOperations(undoGroup);
             DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", lastCreated.scene);
             _snapshotVersion++;
 
@@ -659,6 +756,8 @@ namespace UniFocl.EditorBridge
             wrapper.transform.position = target.transform.position;
             wrapper.transform.rotation = target.transform.rotation;
             Undo.SetTransformParent(target.transform, wrapper.transform, "unifocl create empty parent");
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(wrapper);
             return wrapper;
         }
 
@@ -675,8 +774,23 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
             }
 
-            Undo.RecordObject(target, "unifocl toggle hierarchy active");
-            target.SetActive(!target.activeSelf);
+            var nextValue = !target.activeSelf;
+            if (!TrySetGameObjectBooleanProperty(target, "m_IsActive", nextValue, out var changed, out var error))
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = error ?? "toggle failed" });
+            }
+
+            if (!changed)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse
+                {
+                    ok = true,
+                    message = "unchanged",
+                    nodeId = target.GetInstanceID(),
+                    isActive = target.activeSelf
+                });
+            }
+
             DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", target.scene);
             _snapshotVersion++;
 
@@ -703,7 +817,19 @@ namespace UniFocl.EditorBridge
             }
 
             var scene = target.scene;
-            Undo.DestroyObjectImmediate(target);
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl hierarchy remove");
+            try
+            {
+                Undo.DestroyObjectImmediate(target);
+                Undo.CollapseUndoOperations(undoGroup);
+            }
+            catch (Exception ex)
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"remove failed: {ex.Message}" });
+            }
+
             if (scene.IsValid())
             {
                 DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", scene);
@@ -738,8 +864,22 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
             }
 
-            Undo.RecordObject(target, "unifocl rename hierarchy object");
-            target.name = request.name.Trim();
+            if (!TrySetGameObjectStringProperty(target, "m_Name", request.name.Trim(), out var changed, out var error))
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = error ?? "rename failed" });
+            }
+
+            if (!changed)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse
+                {
+                    ok = true,
+                    message = "unchanged",
+                    nodeId = target.GetInstanceID(),
+                    isActive = target.activeSelf
+                });
+            }
+
             DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", target.scene);
             _snapshotVersion++;
 
@@ -781,6 +921,7 @@ namespace UniFocl.EditorBridge
                 Undo.SetTransformParent(target.transform, null, "unifocl move hierarchy object");
                 var previousScene = target.scene;
                 SceneManager.MoveGameObjectToScene(target, activeScene);
+                DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
                 DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", previousScene, activeScene);
                 _snapshotVersion++;
                 return JsonUtility.ToJson(new HierarchyCommandResponse
@@ -812,6 +953,7 @@ namespace UniFocl.EditorBridge
             var previousParentScene = target.scene;
             Undo.SetTransformParent(target.transform, parentObject.transform, "unifocl move hierarchy object");
             SceneManager.MoveGameObjectToScene(target, parentObject.scene);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
             DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", previousParentScene, parentObject.scene);
             _snapshotVersion++;
 
@@ -1085,6 +1227,68 @@ namespace UniFocl.EditorBridge
             }
 
             return string.IsNullOrWhiteSpace(scene.name) ? "Untitled Scene" : scene.name;
+        }
+
+        private static bool TrySetGameObjectBooleanProperty(
+            GameObject target,
+            string propertyPath,
+            bool nextValue,
+            out bool changed,
+            out string? error)
+        {
+            changed = false;
+            error = null;
+            var serializedObject = new SerializedObject(target);
+            var property = serializedObject.FindProperty(propertyPath);
+            if (property is null || property.propertyType != SerializedPropertyType.Boolean)
+            {
+                error = $"property '{propertyPath}' is unavailable for toggle";
+                return false;
+            }
+
+            serializedObject.Update();
+            if (property.boolValue == nextValue)
+            {
+                return true;
+            }
+
+            Undo.RecordObject(target, "unifocl hierarchy serialized mutation");
+            property.boolValue = nextValue;
+            serializedObject.ApplyModifiedProperties();
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
+            changed = true;
+            return true;
+        }
+
+        private static bool TrySetGameObjectStringProperty(
+            GameObject target,
+            string propertyPath,
+            string nextValue,
+            out bool changed,
+            out string? error)
+        {
+            changed = false;
+            error = null;
+            var serializedObject = new SerializedObject(target);
+            var property = serializedObject.FindProperty(propertyPath);
+            if (property is null || property.propertyType != SerializedPropertyType.String)
+            {
+                error = $"property '{propertyPath}' is unavailable for rename";
+                return false;
+            }
+
+            serializedObject.Update();
+            if (string.Equals(property.stringValue, nextValue, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            Undo.RecordObject(target, "unifocl hierarchy serialized mutation");
+            property.stringValue = nextValue;
+            serializedObject.ApplyModifiedProperties();
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
+            changed = true;
+            return true;
         }
 
         private static int ComputeHierarchyHash(string sceneName, IReadOnlyList<HierarchyNodeDto> roots)
