@@ -47,6 +47,7 @@ internal sealed class ProjectCommandRouterService
             }
 
             await _inspectorModeService.RunKeyboardFocusModeAsync(session, log);
+            _inspectorModeService.RenderCurrentFrame(session);
             return true;
         }
 
@@ -96,6 +97,7 @@ internal sealed class ProjectCommandRouterService
                 && tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
             {
                 await _inspectorModeService.RunKeyboardFocusModeAsync(session, log, enteredFromHierarchyContext);
+                _inspectorModeService.RenderCurrentFrame(session);
             }
 
             return true;
