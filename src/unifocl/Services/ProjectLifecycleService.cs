@@ -791,12 +791,12 @@ internal sealed class ProjectLifecycleService
         return HandleInitAsync($"/init \"{targetPath}\"", new CommandSpec("/init", "Initialize bridge", "/init"), session, log);
     }
 
-    private static Task<bool> HandleDoctorAsync(
+    private static async Task<bool> HandleDoctorAsync(
         CliSessionState session,
         DaemonRuntime daemonRuntime,
         Action<string> log)
     {
-        var dotnet = RunProcess("dotnet", "--version", Directory.GetCurrentDirectory());
+        var dotnet = await RunProcessAsync("dotnet", "--version", Directory.GetCurrentDirectory(), TimeSpan.FromSeconds(8));
         if (dotnet.ExitCode == 0)
         {
             var version = dotnet.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "unknown";
@@ -807,7 +807,7 @@ internal sealed class ProjectLifecycleService
             log("[red]doctor[/]: dotnet not available on PATH");
         }
 
-        var git = RunProcess("git", "--version", Directory.GetCurrentDirectory());
+        var git = await RunProcessAsync("git", "--version", Directory.GetCurrentDirectory(), TimeSpan.FromSeconds(8));
         if (git.ExitCode == 0)
         {
             var version = git.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "unknown";
@@ -839,7 +839,7 @@ internal sealed class ProjectLifecycleService
 
         var daemonCount = daemonRuntime.GetAll().Count();
         log($"[grey]doctor[/]: active daemon entries={daemonCount}");
-        return Task.FromResult(true);
+        return true;
     }
 
     private static Task<bool> HandleScanAsync(
