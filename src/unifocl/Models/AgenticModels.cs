@@ -13,7 +13,8 @@ internal sealed record ExecLaunchOptions(
     string? ProjectPath,
     CliContextMode? ContextMode,
     int? AttachPort,
-    string? RequestId);
+    string? RequestId,
+    string? SessionSeed);
 
 internal sealed record AgenticExecutionRequest(
     string CommandText,

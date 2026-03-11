@@ -384,7 +384,11 @@ internal sealed class DaemonControlService
                     return;
                 }
 
-                var responsePayload = await ExecuteAgenticExecAsync(parsed, options, cancellationToken);
+                var normalizedRequest = parsed with
+                {
+                    SessionSeed = AgenticStatePersistenceService.NormalizeSessionSeed(parsed.SessionSeed)
+                };
+                var responsePayload = await ExecuteAgenticExecAsync(normalizedRequest, options, cancellationToken);
                 touchActivity();
                 await WriteJsonResponseAsync(context.Response, responsePayload, cancellationToken: cancellationToken);
                 return;
@@ -2001,18 +2005,81 @@ internal sealed class DaemonControlService
 
     private static string BuildAgenticStatusPayload(string requestId)
     {
+        if (string.IsNullOrWhiteSpace(requestId))
+        {
+            var missingRequestEnvelope = new AgenticResponseEnvelope(
+                "success",
+                Guid.NewGuid().ToString("N"),
+                "none",
+                "status",
+                new Dictionary<string, object?>
+                {
+                    ["active"] = false,
+                    ["state"] = "unknown",
+                    ["note"] = "pass requestId to query a tracked agentic request"
+                },
+                [],
+                [],
+                new AgenticMeta(
+                    "agentic.v1",
+                    CliVersion.Protocol,
+                    0,
+                    DateTime.UtcNow.ToString("O")));
+            return JsonSerializer.Serialize(missingRequestEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        var requestStatus = AgenticStatePersistenceService.TryReadRequestStatus(requestId);
+        if (requestStatus is null)
+        {
+            var notFoundEnvelope = new AgenticResponseEnvelope(
+                "success",
+                requestId,
+                "none",
+                "status",
+                new Dictionary<string, object?>
+                {
+                    ["active"] = false,
+                    ["state"] = "unknown",
+                    ["note"] = "no tracked agentic request found for this requestId"
+                },
+                [],
+                [],
+                new AgenticMeta(
+                    "agentic.v1",
+                    CliVersion.Protocol,
+                    0,
+                    DateTime.UtcNow.ToString("O")));
+            return JsonSerializer.Serialize(notFoundEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        var warnings = new List<AgenticWarning>();
+        if (string.Equals(requestStatus.State, "error", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(requestStatus.ErrorMessage))
+        {
+            warnings.Add(new AgenticWarning(
+                requestStatus.ErrorCode ?? "W_EXEC",
+                requestStatus.ErrorMessage!));
+        }
+
         var envelope = new AgenticResponseEnvelope(
             "success",
-            string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId,
-            "project",
+            requestId,
+            requestStatus.Mode,
             "status",
             new Dictionary<string, object?>
             {
-                ["active"] = false,
-                ["note"] = "daemon service status endpoint is stateless in this runtime"
+                ["active"] = string.Equals(requestStatus.State, "running", StringComparison.OrdinalIgnoreCase),
+                ["state"] = requestStatus.State,
+                ["sessionSeed"] = requestStatus.SessionSeed,
+                ["command"] = requestStatus.CommandText,
+                ["outputMode"] = requestStatus.OutputMode,
+                ["startedAtUtc"] = requestStatus.StartedAtUtc,
+                ["completedAtUtc"] = requestStatus.CompletedAtUtc,
+                ["exitCode"] = requestStatus.ExitCode,
+                ["action"] = requestStatus.Action
             },
             [],
-            [],
+            warnings,
             new AgenticMeta(
                 "agentic.v1",
                 CliVersion.Protocol,
@@ -2062,6 +2129,9 @@ internal sealed class DaemonControlService
             mode = "project";
         }
 
+        var sessionSeed = AgenticStatePersistenceService.NormalizeSessionSeed(request.SessionSeed);
+        var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId;
+
         var psi = new ProcessStartInfo
         {
             FileName = executable,
@@ -2079,21 +2149,28 @@ internal sealed class DaemonControlService
         psi.ArgumentList.Add(mode);
         psi.ArgumentList.Add("--attach-port");
         psi.ArgumentList.Add(daemonOptions.Port.ToString());
+        psi.ArgumentList.Add("--session-seed");
+        psi.ArgumentList.Add(sessionSeed);
         if (!string.IsNullOrWhiteSpace(daemonOptions.ProjectPath))
         {
             psi.ArgumentList.Add("--project");
             psi.ArgumentList.Add(daemonOptions.ProjectPath);
         }
 
-        if (!string.IsNullOrWhiteSpace(request.RequestId))
-        {
-            psi.ArgumentList.Add("--request-id");
-            psi.ArgumentList.Add(request.RequestId);
-        }
+        psi.ArgumentList.Add("--request-id");
+        psi.ArgumentList.Add(requestId);
 
+        AgenticStatePersistenceService.MarkRequestStarted(requestId, sessionSeed, request.CommandText, format);
         using var process = Process.Start(psi);
         if (process is null)
         {
+            AgenticStatePersistenceService.MarkRequestCompleted(
+                requestId,
+                sessionSeed,
+                request.CommandText,
+                format,
+                processExitCode: 1,
+                BuildAgenticValidationError("failed to spawn agentic exec process"));
             return BuildAgenticValidationError("failed to spawn agentic exec process");
         }
 
@@ -2122,7 +2199,7 @@ internal sealed class DaemonControlService
 
             var timeoutEnvelope = new AgenticResponseEnvelope(
                 "error",
-                string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId,
+                requestId,
                 mode,
                 "exec",
                 null,
@@ -2131,24 +2208,48 @@ internal sealed class DaemonControlService
                     cancellationToken.IsCancellationRequested ? "agent exec canceled" : "agent exec timed out after 120s")],
                 [],
                 new AgenticMeta("agentic.v1", CliVersion.Protocol, cancellationToken.IsCancellationRequested ? 5 : 3, DateTime.UtcNow.ToString("O")));
-            return JsonSerializer.Serialize(timeoutEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var timeoutPayload = JsonSerializer.Serialize(timeoutEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            AgenticStatePersistenceService.MarkRequestCompleted(
+                requestId,
+                sessionSeed,
+                request.CommandText,
+                format,
+                cancellationToken.IsCancellationRequested ? 130 : 3,
+                timeoutPayload);
+            return timeoutPayload;
         }
 
         if (!string.IsNullOrWhiteSpace(stdout))
         {
-            return stdout.Trim();
+            var payload = stdout.Trim();
+            AgenticStatePersistenceService.MarkRequestCompleted(
+                requestId,
+                sessionSeed,
+                request.CommandText,
+                format,
+                process.ExitCode,
+                payload);
+            return payload;
         }
 
         var fallbackEnvelope = new AgenticResponseEnvelope(
             "error",
-            string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId,
+            requestId,
             mode,
             "exec",
             null,
             [new AgenticError("E_INTERNAL", $"agent exec returned empty payload (exit={process.ExitCode}, stderr={stderr.Trim()})")],
             [],
             new AgenticMeta("agentic.v1", CliVersion.Protocol, 4, DateTime.UtcNow.ToString("O")));
-        return JsonSerializer.Serialize(fallbackEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var fallbackPayload = JsonSerializer.Serialize(fallbackEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        AgenticStatePersistenceService.MarkRequestCompleted(
+            requestId,
+            sessionSeed,
+            request.CommandText,
+            format,
+            process.ExitCode,
+            fallbackPayload);
+        return fallbackPayload;
     }
 
     private static string FormatUptime(DateTime startedAtUtc)
