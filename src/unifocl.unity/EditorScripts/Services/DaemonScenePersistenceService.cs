@@ -12,6 +12,11 @@ namespace UniFocl.EditorBridge
     {
         public static void RecordPrefabInstanceMutation(UnityEngine.Object mutationTarget)
         {
+            if (DaemonDryRunContext.IsActive)
+            {
+                return;
+            }
+
             if (mutationTarget is null)
             {
                 return;
@@ -49,6 +54,11 @@ namespace UniFocl.EditorBridge
 
         private static void SaveScenes(bool markDirty, string source, params Scene[] scenes)
         {
+            if (DaemonDryRunContext.IsActive)
+            {
+                return;
+            }
+
             DaemonHierarchyService.PersistLoadedPrefabSnapshotRootIfAny(source, markDirty);
 
             var seen = new HashSet<int>();

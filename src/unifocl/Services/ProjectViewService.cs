@@ -39,6 +39,8 @@ internal sealed class ProjectViewService
 
         InitializeIfNeeded(session.ProjectView, session.CurrentProjectPath);
         var tokens = ProjectViewServiceUtils.Tokenize(input);
+        CliDryRunDiffService.TryStripDryRunFlag(tokens, out var dryRunRequested);
+        using var dryRunScope = CliDryRunScope.Push(dryRunRequested);
         if (tokens.Count == 0)
         {
             await SyncAssetIndexAsync(session);
@@ -704,6 +706,12 @@ internal sealed class ProjectViewService
                 return true;
             }
 
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
+                return true;
+            }
+
             var createdPaths = ProjectViewServiceUtils.ParseMkAssetCreatedPaths(response.Content);
             if (createdPaths.Count == 0)
             {
@@ -785,6 +793,12 @@ internal sealed class ProjectViewService
                 if (!response.Ok)
                 {
                     outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("create", response.Message));
+                    return true;
+                }
+
+                if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                    && TryAppendDryRunDiff(outputs, response.Content))
+                {
                     return true;
                 }
 
@@ -892,6 +906,12 @@ internal sealed class ProjectViewService
                         outputs.Add($"[i] removed {removedPaths.Count}/{targets.Count} before failure");
                     }
 
+                    return true;
+                }
+
+                if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                    && TryAppendDryRunDiff(outputs, response.Content))
+                {
                     return true;
                 }
 
@@ -1094,6 +1114,12 @@ internal sealed class ProjectViewService
                 return true;
             }
 
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
+                return true;
+            }
+
             outputs.Add("[=] rename complete. .meta file updated successfully.");
             if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
             {
@@ -1120,6 +1146,17 @@ internal sealed class ProjectViewService
         }
 
         return await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus);
+    }
+
+    private static bool TryAppendDryRunDiff(List<string> outputs, string? content)
+    {
+        if (!CliDryRunDiffService.TryCaptureDiffFromContent(content, out var diff) || diff is null)
+        {
+            return false;
+        }
+
+        CliDryRunDiffService.AppendUnifiedDiffToLog(outputs, diff);
+        return true;
     }
 
     private async Task<ProjectCommandResponseDto> ExecuteUpmMutationWithRecoveryAsync(

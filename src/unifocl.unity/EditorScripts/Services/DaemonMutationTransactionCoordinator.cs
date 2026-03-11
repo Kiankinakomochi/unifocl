@@ -81,13 +81,10 @@ namespace UniFocl.EditorBridge
                 return MutationTransactionDecision.Error("mutation intent must require rollback semantics");
             }
 
-            if (intent.flags.dryRun)
-            {
-                return MutationTransactionDecision.DryRun($"dry-run accepted ({mode}:{action})");
-            }
+            var isDryRun = intent.flags.dryRun;
 
             var handler = ResolveHandler(mode);
-            return MutationTransactionDecision.Success($"handler={handler}");
+            return MutationTransactionDecision.Success($"handler={handler}", isDryRun);
         }
 
         private static string ResolveHandler(string mode)
@@ -101,26 +98,33 @@ namespace UniFocl.EditorBridge
     internal readonly struct MutationTransactionDecision
     {
         private MutationTransactionDecision(bool accepted, bool shouldExecute, string status, string message)
+            : this(accepted, shouldExecute, status, message, false)
+        {
+        }
+
+        private MutationTransactionDecision(bool accepted, bool shouldExecute, string status, string message, bool isDryRun)
         {
             Accepted = accepted;
             ShouldExecute = shouldExecute;
             Status = status;
             Message = message;
+            IsDryRun = isDryRun;
         }
 
         public bool Accepted { get; }
         public bool ShouldExecute { get; }
         public string Status { get; }
         public string Message { get; }
+        public bool IsDryRun { get; }
 
-        public static MutationTransactionDecision Success(string message)
+        public static MutationTransactionDecision Success(string message, bool isDryRun = false)
         {
-            return new MutationTransactionDecision(true, true, "success", message);
+            return new MutationTransactionDecision(true, true, "success", message, isDryRun);
         }
 
         public static MutationTransactionDecision DryRun(string message)
         {
-            return new MutationTransactionDecision(true, false, "success", message);
+            return new MutationTransactionDecision(true, true, "success", message, true);
         }
 
         public static MutationTransactionDecision Error(string message)

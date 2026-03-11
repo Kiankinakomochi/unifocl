@@ -64,7 +64,7 @@ internal static class MutationIntentFactory
             property,
             oldValue,
             nextValue,
-            new MutationIntentFlagsDto(DryRun: false, RequireRollback: true));
+            new MutationIntentFlagsDto(DryRun: CliDryRunScope.IsEnabled, RequireRollback: true));
     }
 }
 

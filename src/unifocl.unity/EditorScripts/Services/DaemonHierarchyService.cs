@@ -192,41 +192,109 @@ namespace UniFocl.EditorBridge
                     return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = decision.Message });
                 }
 
-                if (!decision.ShouldExecute)
+                if (decision.IsDryRun)
                 {
-                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = true, message = decision.Message });
+                    return ExecuteDryRunCommand(request);
                 }
             }
 
             lock (Sync)
             {
-                if (request.action.Equals("mk", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteCreate(request);
-                }
-
-                if (request.action.Equals("toggle", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteToggle(request);
-                }
-
-                if (request.action.Equals("rm", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteRemove(request);
-                }
-
-                if (request.action.Equals("rename", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteRename(request);
-                }
-
-                if (request.action.Equals("mv", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ExecuteMove(request);
-                }
-
-                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"unsupported action: {request.action}" });
+                return ExecuteCommandCore(request);
             }
+        }
+
+        private static string ExecuteDryRunCommand(HierarchyCommandRequest request)
+        {
+            lock (Sync)
+            {
+                var beforeSnapshotVersion = _snapshotVersion;
+                var beforeHash = _lastSnapshotHash;
+                var beforeHasHash = _hasSnapshotHash;
+                var snapshotTarget = ResolveDryRunSnapshotTarget(request);
+                var beforeJson = snapshotTarget is null
+                    ? BuildSnapshotPayload()
+                    : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+                var undoGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("unifocl hierarchy dry-run");
+                try
+                {
+                    using var dryRunScope = DaemonDryRunContext.Enter();
+                    var responsePayload = ExecuteCommandCore(request);
+                    var parsed = JsonUtility.FromJson<HierarchyCommandResponse>(responsePayload);
+                    if (parsed is null || !parsed.ok)
+                    {
+                        Undo.RevertAllDownToGroup(undoGroup);
+                        _snapshotVersion = beforeSnapshotVersion;
+                        _lastSnapshotHash = beforeHash;
+                        _hasSnapshotHash = beforeHasHash;
+                        return responsePayload;
+                    }
+
+                    var afterJson = snapshotTarget is null
+                        ? BuildSnapshotPayload()
+                        : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    _snapshotVersion = beforeSnapshotVersion;
+                    _lastSnapshotHash = beforeHash;
+                    _hasSnapshotHash = beforeHasHash;
+                    parsed.message = "dry-run preview";
+                    parsed.content = DaemonDryRunDiffService.BuildJsonDiffPayload("hierarchy mutation preview", beforeJson, afterJson);
+                    return JsonUtility.ToJson(parsed);
+                }
+                catch (Exception ex)
+                {
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    _snapshotVersion = beforeSnapshotVersion;
+                    _lastSnapshotHash = beforeHash;
+                    _hasSnapshotHash = beforeHasHash;
+                    return JsonUtility.ToJson(new HierarchyCommandResponse
+                    {
+                        ok = false,
+                        message = $"hierarchy dry-run failed: {ex.Message}"
+                    });
+                }
+            }
+        }
+
+        private static string ExecuteCommandCore(HierarchyCommandRequest request)
+        {
+            if (request.action.Equals("mk", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteCreate(request);
+            }
+
+            if (request.action.Equals("toggle", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteToggle(request);
+            }
+
+            if (request.action.Equals("rm", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteRemove(request);
+            }
+
+            if (request.action.Equals("rename", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteRename(request);
+            }
+
+            if (request.action.Equals("mv", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteMove(request);
+            }
+
+            return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"unsupported action: {request.action}" });
+        }
+
+        private static GameObject? ResolveDryRunSnapshotTarget(HierarchyCommandRequest request)
+        {
+            if (request.targetId == 0)
+            {
+                return null;
+            }
+
+            return EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
         }
 
         public static string ExecuteSearch(string payload)

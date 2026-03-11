@@ -29,6 +29,16 @@ internal sealed class InspectorModeService
             return false;
         }
 
+        var normalizedTokens = tokens.ToList();
+        CliDryRunDiffService.TryStripDryRunFlag(normalizedTokens, out var dryRunRequested);
+        using var dryRunScope = CliDryRunScope.Push(dryRunRequested);
+        if (normalizedTokens.Count == 0)
+        {
+            return false;
+        }
+
+        tokens = normalizedTokens;
+
         var command = tokens[0].ToLowerInvariant();
         var inInspector = session.Inspector is not null;
         var isInspectorCommand = command is
@@ -536,17 +546,18 @@ internal sealed class InspectorModeService
                     null));
 
             AddStream(context, $"{context.PromptLabel} > {input}");
-            if (mutation.Ok)
-            {
-                context.Components.Remove(entry);
-                context.Components.Add(entry with { Enabled = newEnabled });
-                context.Components.Sort((a, b) => a.Index.CompareTo(b.Index));
-                AddStream(context, $"[*] ok: {entry.Name} set to {(newEnabled ? "activated" : "deactivated")}");
-            }
-            else
-            {
-                AddStream(context, $"[!] {DescribeInspectorMutationFailure(mutation.Message)}");
-            }
+        if (mutation.Ok)
+        {
+            context.Components.Remove(entry);
+            context.Components.Add(entry with { Enabled = newEnabled });
+            context.Components.Sort((a, b) => a.Index.CompareTo(b.Index));
+            AddStream(context, $"[*] ok: {entry.Name} set to {(newEnabled ? "activated" : "deactivated")}");
+            AppendDryRunDiffIfAny(context, mutation.Content);
+        }
+        else
+        {
+            AddStream(context, $"[!] {DescribeInspectorMutationFailure(mutation.Message)}");
+        }
 
             _renderer.Render(context);
             return;
@@ -586,6 +597,7 @@ internal sealed class InspectorModeService
         {
             ReplaceField(context, field with { Value = newValue });
             AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
+            AppendDryRunDiffIfAny(context, fieldMutation.Content);
         }
         else
         {
@@ -772,6 +784,8 @@ internal sealed class InspectorModeService
             _renderer.Render(context);
             return;
         }
+
+        AppendDryRunDiffIfAny(context, mutation.Content);
 
         if (updateSelectedComponentFields)
         {
@@ -1063,6 +1077,10 @@ internal sealed class InspectorModeService
         }
 
         AddStream(context, $"[+] created: {type} x{count}");
+        if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var diff) && diff is not null)
+        {
+            CliDryRunDiffService.AppendUnifiedDiffToLog(context.CommandStream, diff);
+        }
         _renderer.Render(context);
     }
 
@@ -1161,6 +1179,7 @@ internal sealed class InspectorModeService
 
         await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"[+] added component: {displayName}");
+        AppendDryRunDiffIfAny(context, mutation.Content);
         _renderer.Render(context);
     }
 
@@ -1213,6 +1232,7 @@ internal sealed class InspectorModeService
 
         await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"[-] removed component: {target.Name}");
+        AppendDryRunDiffIfAny(context, mutation.Content);
         _renderer.Render(context);
     }
 
@@ -1250,6 +1270,12 @@ internal sealed class InspectorModeService
         }
 
         AddStream(context, $"[-] removed target: {targetNode.Name}");
+        if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var diff) && diff is not null)
+        {
+            CliDryRunDiffService.AppendUnifiedDiffToLog(context.CommandStream, diff);
+            _renderer.Render(context);
+            return;
+        }
         session.Inspector = null;
         session.ContextMode = CliContextMode.Project;
         log("[i] inspector target removed; returned to project context");
@@ -1309,6 +1335,10 @@ internal sealed class InspectorModeService
         context.TargetPath = ReplaceLeafSegment(context.TargetPath, newName);
         session.FocusPath = context.TargetPath;
         AddStream(context, $"[=] renamed target to: {newName}");
+        if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var diff) && diff is not null)
+        {
+            CliDryRunDiffService.AppendUnifiedDiffToLog(context.CommandStream, diff);
+        }
         _renderer.Render(context);
     }
 
@@ -1389,6 +1419,10 @@ internal sealed class InspectorModeService
         context.TargetPath = movedPath;
         session.FocusPath = movedPath;
         AddStream(context, $"[*] moved target to: {movedPath}");
+        if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var diff) && diff is not null)
+        {
+            CliDryRunDiffService.AppendUnifiedDiffToLog(context.CommandStream, diff);
+        }
         _renderer.Render(context);
     }
 
@@ -2637,12 +2671,12 @@ internal sealed class InspectorModeService
         return null;
     }
 
-    private async Task<(bool Ok, string? Message)> TrySendInspectorMutationWithMessageAsync(CliSessionState session, InspectorBridgeRequest request)
+    private async Task<(bool Ok, string? Message, string? Content)> TrySendInspectorMutationWithMessageAsync(CliSessionState session, InspectorBridgeRequest request)
     {
         var response = await SendBridgeRequestAsync(request, session);
         if (string.IsNullOrWhiteSpace(response))
         {
-            return (false, "inspector mutation failed (daemon inspect endpoint request failed or returned empty response)");
+            return (false, "inspector mutation failed (daemon inspect endpoint request failed or returned empty response)", null);
         }
 
         try
@@ -2650,19 +2684,23 @@ internal sealed class InspectorModeService
             var mutation = JsonSerializer.Deserialize<InspectorBridgeMutationResponse>(response, _jsonOptions);
             if (mutation?.Ok == true)
             {
-                return (true, mutation.Message);
+                if (CliDryRunDiffService.TryCaptureDiffFromContent(mutation.Content, out _))
+                {
+                }
+
+                return (true, mutation.Message, mutation.Content);
             }
 
             if (string.IsNullOrWhiteSpace(mutation?.Message))
             {
-                return (false, "inspector mutation failed (daemon inspect endpoint returned ok=false without message)");
+                return (false, "inspector mutation failed (daemon inspect endpoint returned ok=false without message)", mutation?.Content);
             }
 
-            return (false, mutation.Message);
+            return (false, mutation.Message, mutation.Content);
         }
         catch
         {
-            return (false, $"inspector mutation failed (daemon inspect endpoint returned invalid payload: {response})");
+            return (false, $"inspector mutation failed (daemon inspect endpoint returned invalid payload: {response})", null);
         }
     }
 
@@ -3064,6 +3102,16 @@ internal sealed class InspectorModeService
         }
     }
 
+    private static void AppendDryRunDiffIfAny(InspectorContext context, string? content)
+    {
+        if (!CliDryRunDiffService.TryCaptureDiffFromContent(content, out var diff) || diff is null)
+        {
+            return;
+        }
+
+        CliDryRunDiffService.AppendUnifiedDiffToLog(context.CommandStream, diff);
+    }
+
     private static void AppendInspectorFuzzyResults(InspectorContext context, string query, IEnumerable<string> paths)
     {
         var buffered = paths.ToList();
@@ -3122,7 +3170,7 @@ internal sealed class InspectorModeService
     private sealed record InspectorBridgeComponentsResponse(bool Ok, List<InspectorBridgeComponent>? Components);
     private sealed record InspectorBridgeFieldsResponse(bool Ok, List<InspectorBridgeField>? Fields);
     private sealed record InspectorBridgeSearchResponse(bool Ok, List<InspectorSearchResultDto>? Results);
-    private sealed record InspectorBridgeMutationResponse(bool Ok, string? Message);
+    private sealed record InspectorBridgeMutationResponse(bool Ok, string? Message, string? Content);
     private sealed record InspectorBridgeComponent(int Index, string Name, bool Enabled);
     private sealed record InspectorBridgeField(string Name, string Value, string Type, bool IsBoolean, List<string>? EnumOptions);
     private sealed record InspectorComponentFetchResult(

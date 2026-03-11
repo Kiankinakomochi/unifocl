@@ -72,6 +72,7 @@ namespace UniFocl.EditorBridge
         public string message = string.Empty;
         public int nodeId;
         public bool isActive;
+        public string content = string.Empty;
     }
 
     [Serializable]
@@ -169,6 +170,7 @@ namespace UniFocl.EditorBridge
     {
         public bool ok;
         public string message = string.Empty;
+        public string content = string.Empty;
     }
 
     [Serializable]
@@ -198,6 +200,26 @@ namespace UniFocl.EditorBridge
     {
         public bool dryRun;
         public bool requireRollback = true;
+    }
+
+    [Serializable]
+    internal sealed class MutationPathChange
+    {
+        public string action = string.Empty;
+        public string path = string.Empty;
+        public string nextPath = string.Empty;
+        public string metaPath = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class MutationDryRunDiffPayload
+    {
+        public string summary = string.Empty;
+        public string format = "unified";
+        public string before = string.Empty;
+        public string after = string.Empty;
+        public string[] lines = Array.Empty<string>();
+        public MutationPathChange[] changes = Array.Empty<MutationPathChange>();
     }
 
     [Serializable]

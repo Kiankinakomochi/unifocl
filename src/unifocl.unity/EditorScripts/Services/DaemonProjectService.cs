@@ -75,6 +75,28 @@ namespace UniFocl.EditorBridge
                         kind = "dry-run"
                     }));
                 }
+
+                if (decision.IsDryRun && !SupportsFileDryRunPreview(request.action))
+                {
+                    return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = true,
+                        message = $"dry-run preview is not implemented for action: {request.action}",
+                        kind = "dry-run",
+                        content = DaemonDryRunDiffService.BuildFileDiffPayload(
+                            $"no-op preview for {request.action}",
+                            new[]
+                            {
+                                new MutationPathChange
+                                {
+                                    action = request.action,
+                                    path = request.assetPath,
+                                    nextPath = request.newAssetPath,
+                                    metaPath = string.IsNullOrWhiteSpace(request.assetPath) ? string.Empty : request.assetPath + ".meta"
+                                }
+                            })
+                    }));
+                }
             }
 
             try
@@ -204,6 +226,29 @@ namespace UniFocl.EditorBridge
                 if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) is not null)
                 {
                     return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset already exists: {assetPath}" });
+                }
+
+                if (request.intent is not null && request.intent.flags.dryRun)
+                {
+                    var payload = DaemonDryRunDiffService.BuildFileDiffPayload(
+                        "project script create preview",
+                        new[]
+                        {
+                            new MutationPathChange
+                            {
+                                action = "create",
+                                path = assetPath,
+                                nextPath = assetPath,
+                                metaPath = assetPath + ".meta"
+                            }
+                        });
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = true,
+                        message = "dry-run preview",
+                        kind = "dry-run",
+                        content = payload
+                    });
                 }
 
                 var absolutePath = Path.Combine(GetProjectRoot(), assetPath.Replace('/', Path.DirectorySeparatorChar));
@@ -3027,6 +3072,13 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
             return !string.IsNullOrWhiteSpace(pathPart);
         }
 
+        private static bool SupportsFileDryRunPreview(string action)
+        {
+            return action.Equals("rename-asset", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("remove-asset", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("mk-script", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string ExecuteWithRollbackStash(
             ProjectCommandRequest request,
             string mutationName,
@@ -3039,6 +3091,18 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                 if (request.intent is null)
                 {
                     return executeMutation();
+                }
+
+                if (request.intent.flags.dryRun)
+                {
+                    var payload = BuildFileDryRunPayload(mutationName, preMutationTargets, rollbackCleanupTargets);
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = true,
+                        message = "dry-run preview",
+                        kind = "dry-run",
+                        content = payload
+                    });
                 }
 
                 var projectRoot = GetProjectRoot();
@@ -3095,6 +3159,77 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                     });
                 }
             });
+        }
+
+        private static string BuildFileDryRunPayload(
+            string mutationName,
+            IEnumerable<string> preMutationTargets,
+            IEnumerable<string>? rollbackCleanupTargets)
+        {
+            var sourceTargets = preMutationTargets
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var destinationTargets = rollbackCleanupTargets?
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<string>();
+            var changes = new List<MutationPathChange>();
+
+            if (mutationName.Equals("rename-asset", StringComparison.OrdinalIgnoreCase))
+            {
+                var source = sourceTargets.FirstOrDefault() ?? string.Empty;
+                var destination = destinationTargets.FirstOrDefault() ?? string.Empty;
+                changes.Add(new MutationPathChange
+                {
+                    action = "rename",
+                    path = source,
+                    nextPath = destination,
+                    metaPath = source + ".meta"
+                });
+                changes.Add(new MutationPathChange
+                {
+                    action = "rename-meta",
+                    path = source + ".meta",
+                    nextPath = destination + ".meta",
+                    metaPath = source + ".meta"
+                });
+            }
+            else if (mutationName.Equals("remove-asset", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var source in sourceTargets)
+                {
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "remove",
+                        path = source,
+                        nextPath = "(trash)",
+                        metaPath = source + ".meta"
+                    });
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "remove-meta",
+                        path = source + ".meta",
+                        nextPath = "(trash)",
+                        metaPath = source + ".meta"
+                    });
+                }
+            }
+            else
+            {
+                foreach (var source in sourceTargets)
+                {
+                    changes.Add(new MutationPathChange
+                    {
+                        action = mutationName,
+                        path = source,
+                        nextPath = source,
+                        metaPath = source + ".meta"
+                    });
+                }
+            }
+
+            return DaemonDryRunDiffService.BuildFileDiffPayload($"{mutationName} preview", changes);
         }
 
         private static string ExecuteWithFileSystemCriticalSection(Func<string> operation)

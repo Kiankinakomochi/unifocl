@@ -69,13 +69,9 @@ namespace UniFocl.EditorBridge
                     });
                 }
 
-                if (!decision.ShouldExecute)
+                if (decision.IsDryRun)
                 {
-                    return JsonUtility.ToJson(new InspectorMutationResponse
-                    {
-                        ok = true,
-                        message = decision.Message
-                    });
+                    return ExecuteDryRunMutation(request);
                 }
             }
 
@@ -163,6 +159,71 @@ namespace UniFocl.EditorBridge
             {
                 ok = ok,
                 message = ok ? string.Empty : (error ?? "inspector mutation failed")
+            };
+        }
+
+        private static string ExecuteDryRunMutation(InspectorBridgeRequest request)
+        {
+            var target = ResolveTarget(request.targetPath);
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "inspector target was not found"
+                });
+            }
+
+            var beforeJson = DaemonDryRunDiffService.SnapshotObject(target);
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl inspector dry-run");
+            try
+            {
+                using var dryRunScope = DaemonDryRunContext.Enter();
+                var mutation = ExecuteMutationCore(request);
+                if (!mutation.ok)
+                {
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    return JsonUtility.ToJson(mutation);
+                }
+
+                var afterJson = DaemonDryRunDiffService.SnapshotObject(target);
+                Undo.RevertAllDownToGroup(undoGroup);
+                mutation.message = "dry-run preview";
+                mutation.content = DaemonDryRunDiffService.BuildJsonDiffPayload("inspector mutation preview", beforeJson, afterJson);
+                return JsonUtility.ToJson(mutation);
+            }
+            catch (Exception ex)
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"inspector dry-run failed: {ex.Message}"
+                });
+            }
+        }
+
+        private static InspectorMutationResponse ExecuteMutationCore(InspectorBridgeRequest request)
+        {
+            return request.action switch
+            {
+                "add-component" => BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError),
+                "remove-component" => BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError),
+                "toggle-component" => BuildMutationResponse(
+                    ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
+                    toggleComponentError),
+                "toggle-field" => BuildMutationResponse(
+                    ToggleField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, out var toggleFieldError),
+                    toggleFieldError),
+                "set-field" => BuildMutationResponse(
+                    SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
+                    setFieldError),
+                _ => new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"unsupported inspector action for mutation core: {request.action}"
+                }
             };
         }
 
