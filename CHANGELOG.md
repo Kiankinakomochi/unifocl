@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0 - 2026-03-11
+
+### Changed
+- Officialized `0.19.0` by closing the development cycle suffix.
+- Hardened trackable progress rendering performance in project mode by reducing redraw cadence for high-frequency spinner/progress updates.
+- Hardened build monitor progress rendering by suppressing redundant frame redraws when monitor output is unchanged, with periodic refresh fallback.
+
 ## 0.18.0 - 2026-03-11
 
 ### Changed
