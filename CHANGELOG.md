@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 - 2026-03-11
+
+### Changed
+- Officialized `0.16.0` by closing the development cycle suffix.
+- Added README guidance for local Unity compatcheck bootstrap via `./scripts/setup-compatcheck-local.sh`, including generated local artifacts and expected behavior.
+
 ## 0.15.0 - 2026-03-11
 
 ### Changed

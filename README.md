@@ -66,6 +66,25 @@ dotnet build -c Release
 
 ---
 
+## Local Compatcheck Bootstrap
+
+When you need to run Unity editor compatibility checks locally (especially after bridge/editor code changes), use:
+
+```bash
+./scripts/setup-compatcheck-local.sh
+```
+
+What this command does:
+* Detects a local Unity editor install.
+* Creates/bootstraps a benchmark Unity project under `.local/compatcheck-benchmark`.
+* Writes local path settings to `local.config.json`.
+* Runs:
+  * `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
+
+Local artifacts are intentionally uncommitted (`local.config.json`, `.local/`).
+
+---
+
 ## Agentic Mode (Machine-Oriented Workflows)
 
 unifocl supports an **agentic execution path** for LLMs, automations, and tool wrappers that need deterministic I/O instead of interactive TUI behavior.
