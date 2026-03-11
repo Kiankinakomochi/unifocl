@@ -12,6 +12,7 @@ internal sealed class DaemonControlService
     private const int DefaultInactivityTimeoutSeconds = 600;
     private const int ProcessOutputTailMaxLines = 40;
     private static readonly TimeSpan ProjectCommandReadyTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
     private static readonly HttpClient Http = new();
     private DaemonStartupFailure? _lastStartupFailure;
 
@@ -416,6 +417,7 @@ internal sealed class DaemonControlService
     {
         var port = ResolveProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
+        var unityEditorActive = IsUnityClientActiveForProject(projectPath);
 
         // Unity's InitializeOnLoad Bridge mode endpoint can already be serving this port even when it's not in runtime registry.
         if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
@@ -423,10 +425,36 @@ internal sealed class DaemonControlService
             var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(port, TimeSpan.FromSeconds(3));
             if (!projectCommandReady)
             {
-                log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} responds to ping but project commands are unresponsive; restarting bridge");
-                await TrySendControlAsync(port, "STOP", "STOPPING");
-                session.AttachedPort = null;
-                await Task.Delay(200);
+                if (unityEditorActive)
+                {
+                    log($"[grey]daemon[/]: endpoint 127.0.0.1:{port} is reachable; waiting for Unity editor bridge command readiness");
+                    var bridgeWait = await WaitForUnityBridgeAttachWithDiagnosticsAsync(projectPath, port, session, log, UnityBridgeAttachWaitTimeout);
+                    if (bridgeWait.Attached)
+                    {
+                        return true;
+                    }
+
+                    if (bridgeWait.EditorClosedDuringWait)
+                    {
+                        log("[yellow]daemon[/]: Unity editor closed while waiting for Bridge mode; continuing with Host mode startup");
+                    }
+                    else
+                    {
+                        _lastStartupFailure = new DaemonStartupFailure(
+                            IsCompileError: false,
+                            Summary: $"Unity editor bridge endpoint is reachable but project commands are not ready on port {port} ({bridgeWait.DiagnosticSummary})",
+                            Lines: []);
+                        log($"[red]daemon[/]: Unity editor bridge is not ready on [white]127.0.0.1:{port}[/] ({Markup.Escape(bridgeWait.DiagnosticSummary)})");
+                        return false;
+                    }
+                }
+                else
+                {
+                    log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} responds to ping but project commands are unresponsive; restarting bridge");
+                    await TrySendControlAsync(port, "STOP", "STOPPING");
+                    session.AttachedPort = null;
+                    await Task.Delay(200);
+                }
             }
             else
             {
@@ -448,6 +476,32 @@ internal sealed class DaemonControlService
                 await TrySendControlAsync(port, "STOP", "STOPPING");
                 session.AttachedPort = null;
                 await Task.Delay(200);
+            }
+        }
+
+        if (unityEditorActive)
+        {
+            log($"[grey]daemon[/]: Unity editor lock detected for project; waiting for Bridge mode endpoint on [white]127.0.0.1:{port}[/]");
+            var bridgeWait = await WaitForUnityBridgeAttachWithDiagnosticsAsync(projectPath, port, session, log, UnityBridgeAttachWaitTimeout);
+            if (bridgeWait.Attached)
+            {
+                return true;
+            }
+
+            if (bridgeWait.EditorClosedDuringWait)
+            {
+                log("[yellow]daemon[/]: Unity editor closed while waiting for Bridge mode; continuing with Host mode startup");
+            }
+            else
+            {
+                _lastStartupFailure = new DaemonStartupFailure(
+                    IsCompileError: false,
+                    Summary: $"Unity editor lock detected for project, but bridge endpoint 127.0.0.1:{port} is not attachable ({bridgeWait.DiagnosticSummary})",
+                    Lines: []);
+                log($"[red]daemon[/]: Unity editor is already running for this project, but Bridge mode endpoint [white]127.0.0.1:{port}[/] is not attachable");
+                log($"[yellow]daemon[/]: bridge diagnostics -> {Markup.Escape(bridgeWait.DiagnosticSummary)}");
+                log("[yellow]daemon[/]: Host mode launch is skipped while Unity lock is active to avoid Unity file-lock startup failure");
+                return false;
             }
         }
 
@@ -519,7 +573,11 @@ internal sealed class DaemonControlService
         return true;
     }
 
-    public async Task<bool> HasStableManagedProjectDaemonAsync(string projectPath, DaemonRuntime runtime, CliSessionState session)
+    public async Task<bool> HasStableProjectDaemonAsync(
+        string projectPath,
+        DaemonRuntime runtime,
+        CliSessionState session,
+        bool requireManagedRuntime = false)
     {
         var port = ResolveProjectDaemonPort(projectPath);
         if (session.AttachedPort != port)
@@ -527,10 +585,13 @@ internal sealed class DaemonControlService
             return false;
         }
 
-        var instance = runtime.GetByPort(port);
-        if (instance is null || string.IsNullOrWhiteSpace(instance.UnityPath))
+        if (requireManagedRuntime)
         {
-            return false;
+            var instance = runtime.GetByPort(port);
+            if (instance is null || string.IsNullOrWhiteSpace(instance.UnityPath))
+            {
+                return false;
+            }
         }
 
         if (!await TrySendControlAsync(port, "PING", "PONG"))
@@ -539,6 +600,11 @@ internal sealed class DaemonControlService
         }
 
         return await WaitForProjectCommandReadyAsync(port, TimeSpan.FromSeconds(8));
+    }
+
+    public async Task<bool> HasStableManagedProjectDaemonAsync(string projectPath, DaemonRuntime runtime, CliSessionState session)
+    {
+        return await HasStableProjectDaemonAsync(projectPath, runtime, session, requireManagedRuntime: true);
     }
 
     private static bool SupportsBridgeMode(DaemonInstance? instance)
@@ -1613,6 +1679,223 @@ internal sealed class DaemonControlService
 
         return null;
     }
+
+    private static async Task<UnityBridgeAttachWaitResult> WaitForUnityBridgeAttachWithDiagnosticsAsync(
+        string projectPath,
+        int port,
+        CliSessionState session,
+        Action<string> log,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow.Add(timeout);
+        var nextDiagnosticAt = DateTime.UtcNow;
+        var nextProgressAt = DateTime.UtcNow.AddSeconds(10);
+        var lastSignature = string.Empty;
+        var latestDiagnostics = new UnityBridgeBootDiagnostics(
+            "package-import=unknown, script-compile=unknown, domain-reload=unknown",
+            "initial");
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!IsUnityClientActiveForProject(projectPath))
+            {
+                return new UnityBridgeAttachWaitResult(
+                    Attached: false,
+                    DiagnosticSummary: "unity editor closed during bridge wait",
+                    EditorClosedDuringWait: true);
+            }
+
+            if (await TrySendControlAsync(port, "PING", "PONG"))
+            {
+                session.AttachedPort = port;
+                await TrySendControlAsync(port, "TOUCH", "OK");
+                var readyAfterAttach = await WaitForProjectCommandReadyAsync(
+                    port,
+                    ProjectCommandReadyTimeout,
+                    elapsed => log($"[grey]daemon[/]: waiting for editor bridge endpoint... {elapsed.TotalSeconds:0}s elapsed"));
+                if (readyAfterAttach)
+                {
+                    return new UnityBridgeAttachWaitResult(true, latestDiagnostics.Summary, EditorClosedDuringWait: false);
+                }
+            }
+
+            var now = DateTime.UtcNow;
+            if (now >= nextDiagnosticAt)
+            {
+                latestDiagnostics = CollectUnityBridgeBootDiagnostics(projectPath);
+                var signature = latestDiagnostics.Signature;
+                if (!signature.Equals(lastSignature, StringComparison.Ordinal))
+                {
+                    log($"[grey]daemon[/]: bridge-wait diagnostics -> {Markup.Escape(latestDiagnostics.Summary)}");
+                    lastSignature = signature;
+                }
+
+                nextDiagnosticAt = now.AddSeconds(3);
+            }
+
+            if (now >= nextProgressAt)
+            {
+                var remaining = deadline - now;
+                if (remaining < TimeSpan.Zero)
+                {
+                    remaining = TimeSpan.Zero;
+                }
+
+                log($"[grey]daemon[/]: still waiting for Unity bridge startup ({remaining.TotalSeconds:0}s timeout remaining)");
+                nextProgressAt = now.AddSeconds(10);
+            }
+
+            await Task.Delay(500);
+        }
+
+        return new UnityBridgeAttachWaitResult(false, latestDiagnostics.Summary, EditorClosedDuringWait: false);
+    }
+
+    private static UnityBridgeBootDiagnostics CollectUnityBridgeBootDiagnostics(string projectPath)
+    {
+        var packageState = "unknown";
+        var compileState = "unknown";
+        var domainReloadState = "unknown";
+
+        if (TryReadUnityEditorLogTail(256 * 1024, out var editorLogTail))
+        {
+            if (ContainsAny(editorLogTail, "Package Manager", "Resolving packages", "Registering", "UPM", "package resolution"))
+            {
+                packageState = "in-progress";
+            }
+            else
+            {
+                packageState = "idle";
+            }
+
+            if (ContainsAny(editorLogTail, "Script compilation", "Compiling", "Assembly-CSharp", "compiler errors", "Compilation failed"))
+            {
+                compileState = "in-progress-or-failed";
+            }
+            else
+            {
+                compileState = "idle";
+            }
+
+            if (ContainsAny(editorLogTail, "Domain Reload", "ReloadAssembly", "Reloading assemblies"))
+            {
+                domainReloadState = "in-progress";
+            }
+            else
+            {
+                domainReloadState = "idle";
+            }
+        }
+
+        var packageJsonPath = Path.Combine(projectPath, "Packages", "packages-lock.json");
+        if (File.Exists(packageJsonPath))
+        {
+            var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(packageJsonPath);
+            if (age < TimeSpan.FromSeconds(30))
+            {
+                packageState = "recently-updated";
+            }
+        }
+
+        var scriptAssembliesDir = Path.Combine(projectPath, "Library", "ScriptAssemblies");
+        if (Directory.Exists(scriptAssembliesDir))
+        {
+            var newestAssemblyWrite = Directory.EnumerateFiles(scriptAssembliesDir, "*.dll", SearchOption.TopDirectoryOnly)
+                .Select(File.GetLastWriteTimeUtc)
+                .DefaultIfEmpty(DateTime.MinValue)
+                .Max();
+            if (newestAssemblyWrite != DateTime.MinValue && DateTime.UtcNow - newestAssemblyWrite < TimeSpan.FromSeconds(30))
+            {
+                compileState = "recently-updated";
+            }
+        }
+
+        var summary =
+            $"package-import={packageState}, script-compile={compileState}, domain-reload={domainReloadState}";
+        return new UnityBridgeBootDiagnostics(
+            summary,
+            $"{packageState}|{compileState}|{domainReloadState}");
+    }
+
+    private static bool TryReadUnityEditorLogTail(int maxBytes, out string text)
+    {
+        text = string.Empty;
+        var path = ResolveUnityEditorLogPath();
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length == 0)
+            {
+                return false;
+            }
+
+            var length = (int)Math.Min(maxBytes, stream.Length);
+            stream.Seek(-length, SeekOrigin.End);
+            var buffer = new byte[length];
+            var read = stream.Read(buffer, 0, buffer.Length);
+            if (read <= 0)
+            {
+                return false;
+            }
+
+            text = Encoding.UTF8.GetString(buffer, 0, read);
+            return !string.IsNullOrWhiteSpace(text);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? ResolveUnityEditorLogPath()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(home))
+            {
+                return Path.Combine(home, "Library", "Logs", "Unity", "Editor.log");
+            }
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!string.IsNullOrWhiteSpace(localAppData))
+            {
+                return Path.Combine(localAppData, "Unity", "Editor", "Editor.log");
+            }
+        }
+
+        var unixHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(unixHome))
+        {
+            return Path.Combine(unixHome, ".config", "unity3d", "Editor.log");
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAny(string text, params string[] markers)
+    {
+        foreach (var marker in markers)
+        {
+            if (text.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private readonly record struct UnityBridgeAttachWaitResult(bool Attached, string DiagnosticSummary, bool EditorClosedDuringWait);
+    private readonly record struct UnityBridgeBootDiagnostics(string Summary, string Signature);
 
     private static string BuildAgenticCapabilitiesPayload()
     {

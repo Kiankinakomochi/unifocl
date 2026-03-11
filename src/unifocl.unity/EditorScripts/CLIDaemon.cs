@@ -103,6 +103,10 @@ namespace UniFocl.EditorBridge
 
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.update += OnEditorUpdate;
+            EditorApplication.quitting -= OnEditorQuitting;
+            EditorApplication.quitting += OnEditorQuitting;
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
 
             _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
 
@@ -187,6 +191,8 @@ namespace UniFocl.EditorBridge
 
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
                 {
+                    var shutdownMode = _isBatchMode ? "host-session shutdown" : "bridge-session detach";
+                    Debug.Log($"[unifocl] daemon /stop requested from CLI ({shutdownMode}); stopping daemon listener.");
                     await WriteTextResponseAsync(context.Response, "STOPPING");
                     if (_isBatchMode
                         && (_mainThreadManagedThreadId == 0 || Environment.CurrentManagedThreadId != _mainThreadManagedThreadId))
@@ -200,6 +206,11 @@ namespace UniFocl.EditorBridge
                     else
                     {
                         StopInternal(quitEditor: _isBatchMode);
+                        if (!_isBatchMode)
+                        {
+                            // Bridge mode lives inside Unity GUI; restart listener so future /open can reattach without restarting the editor.
+                            EditorApplication.delayCall += RestartBridgeModeListenerAfterDetach;
+                        }
                     }
                     return;
                 }
@@ -467,6 +478,8 @@ namespace UniFocl.EditorBridge
             _listener = null;
 
             EditorApplication.update -= OnEditorUpdate;
+            EditorApplication.quitting -= OnEditorQuitting;
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
 
             FailPendingMainThreadWork();
 
@@ -477,6 +490,46 @@ namespace UniFocl.EditorBridge
 
             _isBatchMode = false;
             _mainThreadManagedThreadId = 0;
+        }
+
+        private static void OnEditorQuitting()
+        {
+            if (!_running)
+            {
+                return;
+            }
+
+            Debug.Log("[unifocl] editor quitting detected; shutting down daemon listener and releasing port.");
+            StopInternal(quitEditor: false);
+        }
+
+        private static void OnBeforeAssemblyReload()
+        {
+            if (!_running)
+            {
+                return;
+            }
+
+            Debug.Log("[unifocl] domain reload detected; shutting down daemon listener before reload.");
+            StopInternal(quitEditor: false);
+        }
+
+        private static void RestartBridgeModeListenerAfterDetach()
+        {
+            try
+            {
+                if (_running || Application.isBatchMode || HasDaemonServiceArg())
+                {
+                    return;
+                }
+
+                Debug.Log("[unifocl] restarting bridge listener after detach request");
+                TryStartInitializeOnLoadBridge();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[unifocl] failed to restart bridge listener after detach: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         private static void RequestEditorExit(bool wasBatchMode, bool isMainThread)
