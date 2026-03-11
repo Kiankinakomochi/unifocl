@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.0 - 2026-03-11
+
+### Changed
+- Officialized `0.14.0` by closing the development cycle suffix.
+- Fixed Unity bridge detach/reopen lifecycle in editor GUI mode by auto-restarting the bridge listener after `/stop`, allowing `/open` reattach without restarting Unity.
+- Fixed Unity bridge wait polling to stop immediately when Unity editor closes and continue with Host mode startup instead of waiting until timeout.
+- Added Unity editor lifecycle teardown hooks to explicitly close bridge listener ports on editor quit and before assembly/domain reload, preventing stale zombie endpoints.
+
 ## 0.13.0a1 - 2026-03-11
 
 ### Changed

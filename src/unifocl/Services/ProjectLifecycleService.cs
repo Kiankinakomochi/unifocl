@@ -937,7 +937,8 @@ internal sealed class ProjectLifecycleService
             session,
             log,
             requireBridgeMode: true,
-            preferHostMode: true,
+            // Prefer attaching to live editor Bridge mode when available; Host mode remains fallback.
+            preferHostMode: false,
             allowUnsafe: allowUnsafe);
         if (!started)
         {
@@ -945,22 +946,20 @@ internal sealed class ProjectLifecycleService
             log("[red]open[/]: daemon is not stable; open aborted before entering project UI");
             return false;
         }
-        else
-        {
-            var stableReservation = await daemonControlService.HasStableManagedProjectDaemonAsync(projectPath, daemonRuntime, session);
-            if (!stableReservation)
-            {
-                session.AttachedPort = null;
-                log("[red]daemon[/]: managed daemon reservation check failed (missing pid metadata, attachment, or project endpoint responsiveness)");
-                log("[red]open[/]: open aborted before entering project UI");
-                return false;
-            }
 
-            SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
-            log($"[grey]daemon[/]: managed daemon ready on [white]127.0.0.1:{daemonPort}[/]");
-            session.SafeModeEnabled = false;
-            session.LastCompileError = null;
+        var stableReservation = await daemonControlService.HasStableProjectDaemonAsync(projectPath, daemonRuntime, session);
+        if (!stableReservation)
+        {
+            session.AttachedPort = null;
+            log("[red]daemon[/]: daemon reservation check failed (missing attachment or project endpoint responsiveness)");
+            log("[red]open[/]: open aborted before entering project UI");
+            return false;
         }
+
+        SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
+        log($"[grey]daemon[/]: managed daemon ready on [white]127.0.0.1:{daemonPort}[/]");
+        session.SafeModeEnabled = false;
+        session.LastCompileError = null;
 
         session.CurrentProjectPath = projectPath;
         session.Mode = CliMode.Project;
