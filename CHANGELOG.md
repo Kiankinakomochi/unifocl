@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.18.0 - 2026-03-11
+
+### Changed
+- Officialized `0.18.0` by closing the development cycle suffix.
+- Added typed index-jump navigation across non-fuzzy interactive selectors:
+  - hierarchy focus mode (`idx` jump to visible object index)
+  - project focus mode (`idx` jump to visible entry index)
+  - inspector focus mode (`idx` jump for component list and field list)
+  - recent project selection mode (`idx` jump to entry)
+  - UPM selection/action menus in project mode (`idx` jump to package/action)
+- Updated keybind/help and focus-mode UI hints to document `idx` jump behavior in interactive selection flows.
+- Added explicit field index rendering in inspector field-list focus view to make typed-jump targets visible.
+
 ## 0.17.0 - 2026-03-11
 
 ### Changed

@@ -139,12 +139,14 @@ internal sealed class ProjectViewService
 
         var outputs = new List<string>
         {
-            "[i] project focus mode enabled (up/down select, tab open/reveal, shift+tab back, esc exit)"
+            "[i] project focus mode enabled (up/down select, idx jump, tab open/reveal, shift+tab back, esc exit)"
         };
         AppendTranscript(session.ProjectView, outputs);
         outputs.Clear();
 
         var selectedEntryPosition = 0;
+        var typedIndexBuffer = string.Empty;
+        long typedIndexLastInputTick = 0;
         while (true)
         {
             RefreshTree(session.CurrentProjectPath, session.ProjectView);
@@ -171,6 +173,26 @@ internal sealed class ProjectViewService
             }
 
             var intent = KeyboardIntentReader.ReadIntent();
+            if (SelectionIndexJumpHelper.TryApply(
+                    intent,
+                    index =>
+                    {
+                        var targetPosition = entries.FindIndex(entry => entry.Index == index);
+                        if (targetPosition < 0)
+                        {
+                            return false;
+                        }
+
+                        selectedEntryPosition = targetPosition;
+                        session.ProjectView.FocusHighlightedEntryIndex = entries[targetPosition].Index;
+                        return true;
+                    },
+                    ref typedIndexBuffer,
+                    ref typedIndexLastInputTick))
+            {
+                continue;
+            }
+
             switch (intent)
             {
                 case KeyboardIntent.Up:
@@ -258,9 +280,11 @@ internal sealed class ProjectViewService
         state.UpmActionMenuVisible = false;
         state.UpmActionSelectedIndex = 0;
         state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, Math.Max(0, state.LastUpmPackages.Count - 1));
-        AppendTranscript(state, ["[i] upm selection mode enabled (up/down select, enter action menu, esc/F7 exit)"]);
+        AppendTranscript(state, ["[i] upm selection mode enabled (up/down select, idx jump, enter action menu, esc/F7 exit)"]);
         RenderFrame(state);
 
+        var typedIndexBuffer = string.Empty;
+        long typedIndexLastInputTick = 0;
         while (true)
         {
             if (state.LastUpmPackages.Count == 0)
@@ -276,7 +300,8 @@ internal sealed class ProjectViewService
             RenderFrame(state);
 
             var key = Console.ReadKey(intercept: true);
-            if (key.Key is ConsoleKey.Escape or ConsoleKey.F7)
+            var intent = KeyboardIntentReader.FromConsoleKey(key);
+            if (intent is KeyboardIntent.Escape or KeyboardIntent.FocusProject)
             {
                 if (state.UpmActionMenuVisible)
                 {
@@ -291,7 +316,36 @@ internal sealed class ProjectViewService
                 return;
             }
 
-            if (key.Key == ConsoleKey.UpArrow)
+            if (SelectionIndexJumpHelper.TryApply(
+                    intent,
+                    index =>
+                    {
+                        if (state.UpmActionMenuVisible)
+                        {
+                            if ((uint)index > 2)
+                            {
+                                return false;
+                            }
+
+                            state.UpmActionSelectedIndex = index;
+                            return true;
+                        }
+
+                        if ((uint)index >= state.LastUpmPackages.Count)
+                        {
+                            return false;
+                        }
+
+                        state.UpmFocusSelectedIndex = index;
+                        return true;
+                    },
+                    ref typedIndexBuffer,
+                    ref typedIndexLastInputTick))
+            {
+                continue;
+            }
+
+            if (intent == KeyboardIntent.Up)
             {
                 if (state.UpmActionMenuVisible)
                 {
@@ -307,7 +361,7 @@ internal sealed class ProjectViewService
                 continue;
             }
 
-            if (key.Key == ConsoleKey.DownArrow)
+            if (intent == KeyboardIntent.Down)
             {
                 if (state.UpmActionMenuVisible)
                 {
@@ -323,7 +377,7 @@ internal sealed class ProjectViewService
                 continue;
             }
 
-            if (key.Key != ConsoleKey.Enter)
+            if (intent != KeyboardIntent.Enter)
             {
                 continue;
             }

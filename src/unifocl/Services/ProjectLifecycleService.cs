@@ -443,7 +443,7 @@ internal sealed class ProjectLifecycleService
             return await OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, allowUnsafe, log);
         }
 
-        log("[grey]recent[/]: press [white]F7[/] to enter selection mode ([white]↑/↓[/] move, [white]Enter[/] open, [white]F7[/] exit)");
+        log("[grey]recent[/]: press [white]F7[/] to enter selection mode ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]F7[/] exit)");
         return true;
     }
 
@@ -512,13 +512,37 @@ internal sealed class ProjectLifecycleService
 
         var selectedIndex = 0;
         var lastRenderedSelectedIndex = -1;
-        log("[i] recent selection mode enabled ([white]↑/↓[/] move, [white]Enter[/] open, [white]F7[/] exit)");
+        var typedIndexBuffer = string.Empty;
+        long typedIndexLastInputTick = 0;
+        log("[i] recent selection mode enabled ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]F7[/] exit)");
         LogRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex, log);
 
         while (true)
         {
             var key = Console.ReadKey(intercept: true);
-            if (key.Key == ConsoleKey.UpArrow)
+            var intent = KeyboardIntentReader.FromConsoleKey(key);
+            if (SelectionIndexJumpHelper.TryApply(
+                    intent,
+                    index =>
+                    {
+                        // Recent list displays 1-based indices.
+                        var target = index - 1;
+                        if ((uint)target >= entries.Count)
+                        {
+                            return false;
+                        }
+
+                        selectedIndex = target;
+                        LogRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex, log);
+                        return true;
+                    },
+                    ref typedIndexBuffer,
+                    ref typedIndexLastInputTick))
+            {
+                continue;
+            }
+
+            if (intent == KeyboardIntent.Up)
             {
                 var nextSelectedIndex = selectedIndex <= 0 ? entries.Count - 1 : selectedIndex - 1;
                 LogRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex, log);
@@ -526,7 +550,7 @@ internal sealed class ProjectLifecycleService
                 continue;
             }
 
-            if (key.Key == ConsoleKey.DownArrow)
+            if (intent == KeyboardIntent.Down)
             {
                 var nextSelectedIndex = selectedIndex >= entries.Count - 1 ? 0 : selectedIndex + 1;
                 LogRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex, log);
@@ -534,13 +558,13 @@ internal sealed class ProjectLifecycleService
                 continue;
             }
 
-            if (key.Key is ConsoleKey.F7 or ConsoleKey.Escape)
+            if (intent is KeyboardIntent.FocusProject or KeyboardIntent.Escape)
             {
                 log("[i] recent selection mode disabled");
                 return;
             }
 
-            if (key.Key != ConsoleKey.Enter)
+            if (intent != KeyboardIntent.Enter)
             {
                 continue;
             }

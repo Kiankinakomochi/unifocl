@@ -108,7 +108,7 @@ internal sealed class InspectorTuiRenderer
     {
         var lines = new List<RenderRow>
         {
-            new($"{PadRight("FIELD", 20)}{PadRight("VALUE", 26)}TYPE", false),
+            new($"{PadRight("IDX", 4)}{PadRight("FIELD", 16)}{PadRight("VALUE", 26)}TYPE", false),
             new(new string('─', Math.Max(1, innerWidth - 1)), false)
         };
 
@@ -121,15 +121,17 @@ internal sealed class InspectorTuiRenderer
             lines.Add(new RenderRow($"EDITING {context.InteractiveEditFieldName} ({mode}){part}", false));
         }
 
-        foreach (var field in context.Fields)
+        for (var i = 0; i < context.Fields.Count; i++)
         {
+            var field = context.Fields[i];
             var selected = string.Equals(highlightedFieldName, field.Name, StringComparison.OrdinalIgnoreCase);
             var marker = selected ? "[bold deepskyblue1]▸[/]" : "[grey]·[/]";
             var typeCell = Markup.Escape($"[{field.Type}]");
             var valueCell = BuildValueCell(context, field);
-            var fieldCell = PadRight(Markup.Escape(field.Name), 19);
+            var indexCell = PadRight(Markup.Escape(i.ToString()), 3);
+            var fieldCell = PadRight(Markup.Escape(field.Name), 15);
             var renderedValue = PadRight(Markup.Escape(valueCell), 26);
-            lines.Add(new RenderRow($"{marker}{fieldCell}{renderedValue}{typeCell}", false, true));
+            lines.Add(new RenderRow($"{marker}{indexCell}{fieldCell}{renderedValue}{typeCell}", false, true));
         }
 
         if (context.Fields.Count == 0)
@@ -226,7 +228,7 @@ internal sealed class InspectorTuiRenderer
             ? context.PromptPath
             : context.TargetPath;
         var focusLabel = focusModeEnabled
-            ? " | FOCUS: ON (up/down, tab, enter edit, shift+tab, esc, f7)"
+            ? " | FOCUS: ON (up/down, idx jump, tab, enter edit, shift+tab, esc, f7)"
             : " | Focus Key: F7";
         return $"UnityCLI v{CliVersion.SemVer} | MODE: INSPECTOR | Target: {target}{focusLabel}";
     }

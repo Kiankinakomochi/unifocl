@@ -131,7 +131,7 @@ internal sealed class HierarchyTui
             if (firstIntent == KeyboardIntent.FocusProject
                 || firstKey.Key == FocusModeKey)
             {
-                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, tab expand, enter inspect, shift+tab collapse, esc/F7 exit)");
+                commandLog.Add("[i] hierarchy focus mode enabled (up/down select, idx jump, tab expand, enter inspect, shift+tab collapse, esc/F7 exit)");
                 var focusInspectTarget = await RunKeyboardFocusModeAsync(port, snapshot, cwdId, commandLog, updatedSnapshot =>
                 {
                     snapshot = updatedSnapshot;
@@ -569,6 +569,8 @@ internal sealed class HierarchyTui
         var selectedEntryPosition = 0;
         int? highlightedNodeId = null;
         int? pendingExpandedNodeId = null;
+        var typedIndexBuffer = string.Empty;
+        long typedIndexLastInputTick = 0;
 
         while (true)
         {
@@ -621,6 +623,26 @@ internal sealed class HierarchyTui
             RenderFrame(port, snapshot.Scene, highlightedTree, commandLog, cwdPath, focusModeEnabled: true);
 
             var intent = KeyboardIntentReader.ReadIntent();
+            if (SelectionIndexJumpHelper.TryApply(
+                    intent,
+                    index =>
+                    {
+                        var targetPosition = visibleEntries.FindIndex(entry => entry.EntryIndex == index);
+                        if (targetPosition < 0)
+                        {
+                            return false;
+                        }
+
+                        selectedEntryPosition = targetPosition;
+                        highlightedNodeId = visibleEntries[targetPosition].NodeId;
+                        return true;
+                    },
+                    ref typedIndexBuffer,
+                    ref typedIndexLastInputTick))
+            {
+                continue;
+            }
+
             switch (intent)
             {
                 case KeyboardIntent.Up:
@@ -724,7 +746,7 @@ internal sealed class HierarchyTui
             : [];
 
         var focusLabel = focusModeEnabled
-            ? " | FOCUS: ON (up/down, tab expand, enter inspect, shift+tab collapse, esc)"
+            ? " | FOCUS: ON (up/down, idx jump, tab expand, enter inspect, shift+tab collapse, esc)"
             : $" | Focus Key: {FocusModeKey}";
 
         WriteFrameLine(borderTop);
