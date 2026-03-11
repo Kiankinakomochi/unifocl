@@ -359,6 +359,7 @@ while (true)
         if (matched.Trigger == "/clear")
         {
             streamLog.Clear();
+            ComposerFrameState.BootLogoCollapsed = false;
             SeedBootLog(streamLog);
             AnsiConsole.Clear();
             RenderInitialLog(streamLog);
@@ -592,7 +593,8 @@ static string? ReadInteractiveInput(
     var input = new StringBuilder();
     var selectedIntellisenseCandidateIndex = 0;
     var intellisenseDismissed = false;
-    var renderedLines = RenderComposerFrame(
+    SaveComposerAnchor();
+    RenderComposerFrame(
         input.ToString(),
         commands,
         projectCommands,
@@ -603,6 +605,7 @@ static string? ReadInteractiveInput(
 
     while (true)
     {
+        var composerResetRequested = false;
         _ = TryGetComposerIntellisenseCandidates(input.ToString(), commands, projectCommands, inspectorCommands, session, out var allCandidates);
         var candidates = intellisenseDismissed ? [] : allCandidates;
         if (candidates.Count == 0)
@@ -718,14 +721,29 @@ static string? ReadInteractiveInput(
             default:
                 if (!char.IsControl(key.KeyChar))
                 {
+                    CollapseBootLogoAfterFirstInput(streamLog, ref composerResetRequested);
                     input.Append(key.KeyChar);
                     intellisenseDismissed = false;
                 }
                 break;
         }
 
-        ClearComposerFrame(renderedLines);
-        renderedLines = RenderComposerFrame(
+        if (composerResetRequested)
+        {
+            SaveComposerAnchor();
+            RenderComposerFrame(
+                input.ToString(),
+                commands,
+                projectCommands,
+                inspectorCommands,
+                session,
+                selectedIntellisenseCandidateIndex,
+                intellisenseDismissed);
+            continue;
+        }
+
+        ClearComposerFrame();
+        RenderComposerFrame(
             input.ToString(),
             commands,
             projectCommands,
@@ -736,7 +754,43 @@ static string? ReadInteractiveInput(
     }
 }
 
-static int RenderComposerFrame(
+static void CollapseBootLogoAfterFirstInput(List<string> streamLog, ref bool composerResetRequested)
+{
+    if (ComposerFrameState.BootLogoCollapsed || Console.IsOutputRedirected)
+    {
+        return;
+    }
+
+    var hadLogoGlyph = streamLog.RemoveAll(line => line.Contains('█')) > 0;
+    if (!hadLogoGlyph)
+    {
+        ComposerFrameState.BootLogoCollapsed = true;
+        return;
+    }
+
+    for (var i = streamLog.Count - 1; i > 0; i--)
+    {
+        if (string.IsNullOrWhiteSpace(streamLog[i]) && string.IsNullOrWhiteSpace(streamLog[i - 1]))
+        {
+            streamLog.RemoveAt(i);
+        }
+    }
+
+    try
+    {
+        Console.Clear();
+    }
+    catch
+    {
+        // Keep interaction resilient when clear is unsupported.
+    }
+
+    RenderInitialLog(streamLog);
+    ComposerFrameState.BootLogoCollapsed = true;
+    composerResetRequested = true;
+}
+
+static void RenderComposerFrame(
     string input,
     List<CommandSpec> commands,
     List<CommandSpec> projectCommands,
@@ -749,7 +803,6 @@ static int RenderComposerFrame(
     lines.AddRange(BuildComposerUnityLogPane(session));
     lines.AddRange(new[]
     {
-        "[grey]Input[/]",
         $"{BuildPromptLabelMarkup(session)} [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
     });
 
@@ -799,12 +852,12 @@ static int RenderComposerFrame(
         lines.Add("[dim]Type / to open command palette. Use your mouse wheel to scroll log history.[/]");
     }
 
+    ConstrainComposerLinesToViewport(lines);
+
     foreach (var line in lines)
     {
         CliTheme.MarkupLine(line);
     }
-
-    return lines.Count;
 }
 
 static IEnumerable<string> BuildComposerUnityLogPane(CliSessionState session)
@@ -877,13 +930,137 @@ static string BuildPromptLabelMarkup(CliSessionState session)
     return "[bold deepskyblue1]unifocl[/]";
 }
 
-static void ClearComposerFrame(int renderedLines)
+static void SaveComposerAnchor()
 {
-    for (var i = 0; i < renderedLines; i++)
+    try
     {
-        Console.Write("\u001b[1A");
-        Console.Write("\r\u001b[2K");
+        if (Console.IsOutputRedirected)
+        {
+            return;
+        }
+
+        var (left, top) = Console.GetCursorPosition();
+        ComposerFrameState.AnchorLeft = left;
+        ComposerFrameState.AnchorTop = top;
+        ComposerFrameState.HasAnchor = true;
     }
+    catch
+    {
+        // Fallback for terminals that do not support cursor position APIs.
+        ComposerFrameState.HasAnchor = false;
+        Console.Write("\u001b7");
+    }
+}
+
+static void ClearComposerFrame()
+{
+    try
+    {
+        if (Console.IsOutputRedirected)
+        {
+            return;
+        }
+
+        if (ComposerFrameState.HasAnchor)
+        {
+            Console.SetCursorPosition(ComposerFrameState.AnchorLeft, ComposerFrameState.AnchorTop);
+            Console.Write("\u001b[0J");
+            return;
+        }
+    }
+    catch
+    {
+        // Fallback below.
+    }
+
+    // DEC restore cursor + clear to end of screen.
+    Console.Write("\u001b8\u001b[0J");
+}
+
+static void ConstrainComposerLinesToViewport(List<string> lines)
+{
+    if (Console.IsOutputRedirected || !ComposerFrameState.HasAnchor)
+    {
+        return;
+    }
+
+    int maxRows;
+    try
+    {
+        // Keep one free row to avoid terminal auto-scroll on the bottom line.
+        maxRows = Math.Max(1, Console.WindowHeight - ComposerFrameState.AnchorTop - 1);
+    }
+    catch
+    {
+        return;
+    }
+
+    if (maxRows <= 0 || lines.Count == 0)
+    {
+        return;
+    }
+
+    var keptLines = new List<string>(Math.Min(lines.Count, maxRows));
+    var usedRows = 0;
+    var hiddenLines = 0;
+
+    for (var i = 0; i < lines.Count; i++)
+    {
+        var candidate = lines[i];
+        var rows = EstimateVisualRows(candidate);
+        if (usedRows + rows > maxRows)
+        {
+            hiddenLines = lines.Count - i;
+            break;
+        }
+
+        keptLines.Add(candidate);
+        usedRows += rows;
+    }
+
+    if (hiddenLines <= 0)
+    {
+        return;
+    }
+
+    var hint = "[dim]… more hidden (resize terminal)[/]";
+    var hintRows = EstimateVisualRows(hint);
+    while (keptLines.Count > 0 && usedRows + hintRows > maxRows)
+    {
+        var removed = keptLines[^1];
+        keptLines.RemoveAt(keptLines.Count - 1);
+        usedRows -= EstimateVisualRows(removed);
+        hiddenLines++;
+    }
+
+    if (usedRows + hintRows <= maxRows)
+    {
+        keptLines.Add(hint);
+    }
+
+    lines.Clear();
+    lines.AddRange(keptLines);
+}
+
+static int EstimateVisualRows(string markupLine)
+{
+    int width;
+    try
+    {
+        width = Math.Max(1, Console.WindowWidth);
+    }
+    catch
+    {
+        width = 80;
+    }
+
+    var plain = AgenticFormatter.StripMarkup(markupLine);
+    if (plain.Length == 0)
+    {
+        return 1;
+    }
+
+    return Math.Max(1, (plain.Length + width - 1) / width);
 }
 
 static void RenderInitialLog(List<string> streamLog)
@@ -3016,4 +3193,12 @@ static void LogUnhandledException(List<string> streamLog, Exception ex, string p
     AppendLog(streamLog, $"[red]error[/]: unhandled {Markup.Escape(phase)} exception <{Markup.Escape(typeName)}>");
     AppendLog(streamLog, $"[red]error[/]: {Markup.Escape(ex.Message)}");
     AppendLog(streamLog, "[yellow]system[/]: recovered and continuing session");
+}
+
+static class ComposerFrameState
+{
+    public static bool HasAnchor { get; set; }
+    public static int AnchorLeft { get; set; }
+    public static int AnchorTop { get; set; }
+    public static bool BootLogoCollapsed { get; set; }
 }

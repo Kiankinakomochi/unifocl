@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0 - 2026-03-11
+
+### Changed
+- Officialized `0.17.0` by closing the development cycle suffix.
+- Fixed interactive composer drift in slash-command typing flows (for example `/b`, `/bu`, `/bui`) by hardening frame redraw anchoring and viewport-constrained rendering.
+- Normalized composer line output/newline handling for cross-platform terminal behavior (macOS/Windows) to prevent cursor-column drift during incremental redraw.
+- Removed the extra `Input` heading row from composer rendering and added first-input boot-logo collapse so input/suggestion rows remain available in small terminals.
+
 ## 0.16.0 - 2026-03-11
 
 ### Changed
