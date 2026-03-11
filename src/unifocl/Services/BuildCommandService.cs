@@ -7,6 +7,8 @@ using Spectre.Console;
 internal sealed class BuildCommandService
 {
     private static readonly TimeSpan BuildMonitorPeriodicRenderInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan UnityHubInstallTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan AdbInstallTimeout = TimeSpan.FromMinutes(2);
     private static readonly JsonSerializerOptions WriteJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -658,8 +660,11 @@ internal sealed class BuildCommandService
 
         log($"[grey]build[/]: installing module [white]{Markup.Escape(target.ModuleId)}[/] for Unity [white]{Markup.Escape(version)}[/]");
         var installArgs = $"-- --headless install-modules --version {version} --module {target.ModuleId}";
-        var exitCode = await RunProcessStreamingAsync(unityHubPath, installArgs, line =>
-            log($"[grey]hub[/]: {Markup.Escape(line)}"));
+        var exitCode = await RunProcessStreamingAsync(
+            unityHubPath,
+            installArgs,
+            line => log($"[grey]hub[/]: {Markup.Escape(line)}"),
+            timeout: UnityHubInstallTimeout);
         if (exitCode != 0)
         {
             log($"[x] install failed: Unity Hub exited with code {exitCode}");
@@ -729,7 +734,12 @@ internal sealed class BuildCommandService
         return false;
     }
 
-    private static async Task<int> RunProcessStreamingAsync(string fileName, string arguments, Action<string> onLine)
+    private static async Task<int> RunProcessStreamingAsync(
+        string fileName,
+        string arguments,
+        Action<string> onLine,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
     {
         var psi = new ProcessStartInfo(fileName, arguments)
         {
@@ -761,7 +771,34 @@ internal sealed class BuildCommandService
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        await process.WaitForExitAsync();
+
+        var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
+        using var timeoutCts = new CancellationTokenSource(effectiveTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, cancellationToken);
+        try
+        {
+            await process.WaitForExitAsync(linkedCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+            }
+
+            var reason = cancellationToken.IsCancellationRequested
+                ? "canceled by caller"
+                : $"timed out after {(int)effectiveTimeout.TotalSeconds}s";
+            onLine($"process termination requested: {reason}");
+            return -1;
+        }
+
         return process.ExitCode;
     }
 
@@ -855,21 +892,43 @@ internal sealed class BuildCommandService
         var lastRenderedFrameSignature = string.Empty;
         var lastRenderedAtUtc = DateTime.MinValue;
         var canceledByUser = false;
+        DateTime? unreachableSinceUtc = null;
 
         while (true)
         {
             var status = await _daemonClient.GetBuildStatusAsync(port);
             if (status is null)
             {
+                unreachableSinceUtc ??= DateTime.UtcNow;
                 RenderBuildMonitorFrame(
                     null,
                     recentLogLines,
                     errorsOnly,
-                    "daemon unreachable (retrying)",
+                    "daemon unreachable (Q/Esc: close monitor)",
                     null);
+
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(intercept: true);
+                    if (key.Key is ConsoleKey.Q or ConsoleKey.Escape)
+                    {
+                        session.ContextMode = CliContextMode.Project;
+                        return;
+                    }
+                }
+
+                if (DateTime.UtcNow - unreachableSinceUtc.Value > TimeSpan.FromSeconds(30))
+                {
+                    log("[yellow]build[/]: daemon remained unreachable for 30s; leaving build monitor");
+                    session.ContextMode = CliContextMode.Project;
+                    return;
+                }
+
                 await Task.Delay(1000);
                 continue;
             }
+
+            unreachableSinceUtc = null;
 
             if (DateTime.TryParse(status.LastHeartbeatUtc, out var parsedHeartbeat))
             {
@@ -1166,7 +1225,23 @@ internal sealed class BuildCommandService
                 return;
             }
 
-            process.WaitForExit();
+            if (!process.WaitForExit((int)AdbInstallTimeout.TotalMilliseconds))
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                }
+                catch
+                {
+                }
+
+                log($"[x] adb deploy failed: timed out after {(int)AdbInstallTimeout.TotalSeconds}s");
+                return;
+            }
+
             var output = process.StandardOutput.ReadToEnd();
             var error = process.StandardError.ReadToEnd();
             if (process.ExitCode == 0)

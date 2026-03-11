@@ -2052,6 +2052,7 @@ namespace UniFocl.EditorBridge
             var primaryHandled = false;
             var resolveHandled = false;
             var nextRefreshAt = 0d;
+            var timeoutCts = new CancellationTokenSource();
             Request? resolveRequest = null;
             var stage = "waiting-primary";
             var checkpointsLock = new object();
@@ -2121,6 +2122,14 @@ namespace UniFocl.EditorBridge
                 if (Interlocked.CompareExchange(ref finishedState, 1, 0) != 0)
                 {
                     return;
+                }
+
+                try
+                {
+                    timeoutCts.Cancel();
+                }
+                catch
+                {
                 }
 
                 CLIDaemon.UpdateProjectCommandStage(stage, "finished");
@@ -2256,11 +2265,26 @@ namespace UniFocl.EditorBridge
 
             EditorApplication.update += Tick;
             CLIDaemon.UpdateProjectCommandStage(stage, "update loop registered");
+            _ = completion.Task.ContinueWith(_ =>
+            {
+                try
+                {
+                    timeoutCts.Dispose();
+                }
+                catch
+                {
+                }
+            }, TaskScheduler.Default);
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(timeout).ConfigureAwait(false);
+                    await Task.Delay(timeout, timeoutCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
                 }
                 catch
                 {
