@@ -1,6 +1,21 @@
 using Spectre.Console;
 using System.Diagnostics;
 
+using var appCancellation = new CancellationTokenSource();
+ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+{
+    eventArgs.Cancel = true;
+    appCancellation.Cancel();
+};
+EventHandler processExitHandler = (_, _) => appCancellation.Cancel();
+Console.CancelKeyPress += cancelHandler;
+AppDomain.CurrentDomain.ProcessExit += processExitHandler;
+
+static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken cancellationToken)
+{
+    await operation().WaitAsync(cancellationToken);
+}
+
 var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 if (BuildLogTailService.TryRunFromArgs(launchArgs))
 {
@@ -16,7 +31,13 @@ if (DaemonControlService.TryParseDaemonServiceArgs(launchArgs, out var serviceOp
         return;
     }
 
-    await DaemonControlService.RunDaemonServiceAsync(serviceOptions!);
+    try
+    {
+        await DaemonControlService.RunDaemonServiceAsync(serviceOptions!, appCancellation.Token);
+    }
+    catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+    {
+    }
     return;
 }
 
@@ -43,17 +64,38 @@ if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execO
     }
 
     CliRuntimeState.SuppressConsoleOutput = execOptions!.Agentic;
-    var envelope = await CliOneShotExecutionService.ExecuteOneShotCommandAsync(
-        execOptions,
-        commands,
-        streamLog,
-        session,
-        daemonControlService,
-        daemonRuntime,
-        projectLifecycleService,
-        projectCommandRouterService,
-        hierarchyTui,
-        buildCommandService);
+    AgenticResponseEnvelope envelope;
+    try
+    {
+        envelope = await CliOneShotExecutionService.ExecuteOneShotCommandAsync(
+            execOptions,
+            commands,
+            streamLog,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            projectLifecycleService,
+            projectCommandRouterService,
+            hierarchyTui,
+            buildCommandService,
+            appCancellation.Token).WaitAsync(appCancellation.Token);
+    }
+    catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+    {
+        var canceled = new AgenticResponseEnvelope(
+            "error",
+            string.IsNullOrWhiteSpace(execOptions!.RequestId) ? Guid.NewGuid().ToString("N") : execOptions.RequestId!,
+            "none",
+            "exec",
+            null,
+            [new AgenticError("E_CANCELED", "execution canceled")],
+            [],
+            new AgenticMeta("agentic.v1", CliVersion.Protocol, 130, DateTime.UtcNow.ToString("O")));
+        var canceledPayload = AgenticFormatter.SerializeEnvelope(canceled, execOptions.Format);
+        Console.Out.WriteLine(canceledPayload);
+        Environment.ExitCode = 130;
+        return;
+    }
     var payload = AgenticFormatter.SerializeEnvelope(envelope, execOptions.Format);
     Console.Out.WriteLine(payload);
     Environment.ExitCode = envelope.Meta.ExitCode;
@@ -65,6 +107,11 @@ CliLogService.RenderInitialLog(streamLog);
 
 while (true)
 {
+    if (appCancellation.IsCancellationRequested)
+    {
+        break;
+    }
+
     string? rawInput;
     try
     {
@@ -80,11 +127,16 @@ while (true)
     {
         try
         {
-            await projectLifecycleService.PerformSafeExitCleanupAsync(
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+            await AwaitWithCancellationAsync(
+                () => projectLifecycleService.PerformSafeExitCleanupAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+        }
+        catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
@@ -105,11 +157,13 @@ while (true)
 
         if (input.Equals(":focus-recent", StringComparison.OrdinalIgnoreCase))
         {
-            await projectLifecycleService.TryHandleRecentSelectionToggleAsync(
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+            await AwaitWithCancellationAsync(
+                () => projectLifecycleService.TryHandleRecentSelectionToggleAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
             continue;
         }
 
@@ -117,21 +171,24 @@ while (true)
         {
             if (CliCommandParsingService.TryNormalizeProjectBuildCommand(input, out var normalizedBuildInput))
             {
-                await buildCommandService.HandleBuildCommandAsync(
-                    normalizedBuildInput,
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line));
+                await AwaitWithCancellationAsync(
+                    () => buildCommandService.HandleBuildCommandAsync(
+                        normalizedBuildInput,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => CliLogService.AppendLog(streamLog, line)),
+                    appCancellation.Token);
                 continue;
             }
 
             var handledProjectCommand = await projectCommandRouterService.TryHandleProjectCommandAsync(
-                input,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line))
+                .WaitAsync(appCancellation.Token);
             if (!handledProjectCommand)
             {
                 CliLogService.AppendLog(streamLog, "[grey]system[/]: unknown project command; use / for command palette");
@@ -141,30 +198,32 @@ while (true)
             {
                 session.AutoEnterHierarchyRequested = false;
                 session.ContextMode = CliContextMode.Hierarchy;
-                await hierarchyTui.RunAsync(
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line),
-                    async targetPath =>
-                    {
-                        var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
-                            ? $"inspect \"{targetPath}\""
-                            : $"inspect {targetPath}";
-                        await projectCommandRouterService.TryHandleProjectCommandAsync(
-                            inspectInput,
-                            session,
-                            daemonControlService,
-                            daemonRuntime,
-                            line => CliLogService.AppendLog(streamLog, line));
-                        if (session.Inspector is null)
+                await AwaitWithCancellationAsync(
+                    () => hierarchyTui.RunAsync(
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => CliLogService.AppendLog(streamLog, line),
+                        async targetPath =>
                         {
-                            return false;
-                        }
+                            var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
+                                ? $"inspect \"{targetPath}\""
+                                : $"inspect {targetPath}";
+                            await projectCommandRouterService.TryHandleProjectCommandAsync(
+                                inspectInput,
+                                session,
+                                daemonControlService,
+                                daemonRuntime,
+                                line => CliLogService.AppendLog(streamLog, line));
+                            if (session.Inspector is null)
+                            {
+                                return false;
+                            }
 
-                        session.ContextMode = CliContextMode.Inspector;
-                        return true;
-                    });
+                            session.ContextMode = CliContextMode.Inspector;
+                            return true;
+                        }),
+                    appCancellation.Token);
                 if (session.Mode == CliMode.Project)
                 {
                     session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
@@ -172,11 +231,12 @@ while (true)
                         && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
                     {
                         await projectCommandRouterService.TryHandleProjectCommandAsync(
-                            string.Empty,
-                            session,
-                            daemonControlService,
-                            daemonRuntime,
-                            line => CliLogService.AppendLog(streamLog, line));
+                                string.Empty,
+                                session,
+                                daemonControlService,
+                                daemonRuntime,
+                                line => CliLogService.AppendLog(streamLog, line))
+                            .WaitAsync(appCancellation.Token);
                     }
                 }
             }
@@ -216,30 +276,32 @@ while (true)
         if (matched.Trigger == "/hierarchy")
         {
             session.ContextMode = CliContextMode.Hierarchy;
-            await hierarchyTui.RunAsync(
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line),
-                async targetPath =>
-                {
-                    var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
-                        ? $"inspect \"{targetPath}\""
-                        : $"inspect {targetPath}";
-                    await projectCommandRouterService.TryHandleProjectCommandAsync(
-                        inspectInput,
-                        session,
-                        daemonControlService,
-                        daemonRuntime,
-                        line => CliLogService.AppendLog(streamLog, line));
-                    if (session.Inspector is null)
+            await AwaitWithCancellationAsync(
+                () => hierarchyTui.RunAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line),
+                    async targetPath =>
                     {
-                        return false;
-                    }
+                        var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
+                            ? $"inspect \"{targetPath}\""
+                            : $"inspect {targetPath}";
+                        await projectCommandRouterService.TryHandleProjectCommandAsync(
+                            inspectInput,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            line => CliLogService.AppendLog(streamLog, line));
+                        if (session.Inspector is null)
+                        {
+                            return false;
+                        }
 
-                    session.ContextMode = CliContextMode.Inspector;
-                    return true;
-                });
+                        session.ContextMode = CliContextMode.Inspector;
+                        return true;
+                    }),
+                appCancellation.Token);
             if (session.Mode == CliMode.Project)
             {
                 session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
@@ -247,11 +309,12 @@ while (true)
                     && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
                 {
                     await projectCommandRouterService.TryHandleProjectCommandAsync(
-                        string.Empty,
-                        session,
-                        daemonControlService,
-                        daemonRuntime,
-                        line => CliLogService.AppendLog(streamLog, line));
+                            string.Empty,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            line => CliLogService.AppendLog(streamLog, line))
+                        .WaitAsync(appCancellation.Token);
                 }
             }
             continue;
@@ -268,11 +331,12 @@ while (true)
             session.ContextMode = CliContextMode.Project;
             session.Inspector = null;
             await projectCommandRouterService.TryHandleProjectCommandAsync(
-                string.Empty,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                    string.Empty,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line))
+                .WaitAsync(appCancellation.Token);
             continue;
         }
 
@@ -288,11 +352,12 @@ while (true)
                 ? $"inspect {input["/inspect".Length..].Trim()}"
                 : "inspect";
             await projectCommandRouterService.TryHandleProjectCommandAsync(
-                inspectInput,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                    inspectInput,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line))
+                .WaitAsync(appCancellation.Token);
             if (session.Inspector is not null)
             {
                 session.ContextMode = CliContextMode.Inspector;
@@ -312,11 +377,12 @@ while (true)
                 ? $"upm {input["/upm".Length..].Trim()}"
                 : "upm";
             var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
-                upmInput,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+                    upmInput,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line))
+                .WaitAsync(appCancellation.Token);
             if (!handled)
             {
                 CliLogService.AppendLog(streamLog, "[yellow]upm[/]: unsupported /upm command");
@@ -327,12 +393,14 @@ while (true)
 
         if (matched.Trigger.StartsWith("/build", StringComparison.Ordinal))
         {
-            await buildCommandService.HandleBuildCommandAsync(
-                input,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line));
+            await AwaitWithCancellationAsync(
+                () => buildCommandService.HandleBuildCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
             continue;
         }
 
@@ -360,46 +428,54 @@ while (true)
 
         if (matched.Trigger == "/dump")
         {
-            await CliDumpService.HandleDumpCommandAsync(input, session, streamLog);
+            await AwaitWithCancellationAsync(
+                () => CliDumpService.HandleDumpCommandAsync(input, session, streamLog),
+                appCancellation.Token);
             continue;
         }
 
         CliLogService.AppendLog(streamLog, $"[bold deepskyblue1]unifocl[/] [grey]>[/] [white]{Markup.Escape(input)}[/]");
         if (matched.Trigger.StartsWith("/daemon", StringComparison.Ordinal))
         {
-            await daemonControlService.HandleDaemonCommandAsync(
-                input,
-                matched.Trigger,
-                daemonRuntime,
-                session,
-                line => CliLogService.AppendLog(streamLog, line),
-                streamLog);
+            await AwaitWithCancellationAsync(
+                () => daemonControlService.HandleDaemonCommandAsync(
+                    input,
+                    matched.Trigger,
+                    daemonRuntime,
+                    session,
+                    line => CliLogService.AppendLog(streamLog, line),
+                    streamLog),
+                appCancellation.Token);
             if (matched.Trigger == "/daemon attach")
             {
-                await buildCommandService.NotifyAttachedBuildIfAnyAsync(
-                    session,
-                    line => CliLogService.AppendLog(streamLog, line));
+                await AwaitWithCancellationAsync(
+                    () => buildCommandService.NotifyAttachedBuildIfAnyAsync(
+                        session,
+                        line => CliLogService.AppendLog(streamLog, line)),
+                    appCancellation.Token);
             }
             continue;
         }
         if (await projectLifecycleService.TryHandleLifecycleCommandAsync(
-                input,
-                matched,
-                session,
-                daemonControlService,
-                daemonRuntime,
-                line => CliLogService.AppendLog(streamLog, line)))
+                    input,
+                    matched,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line))
+                .WaitAsync(appCancellation.Token))
         {
             if ((matched.Trigger == "/open" || matched.Trigger == "/new" || matched.Trigger == "/clone" || matched.Trigger == "/recent")
                 && session.Mode == CliMode.Project
                 && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
             {
                 await projectCommandRouterService.TryHandleProjectCommandAsync(
-                    string.Empty,
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line));
+                        string.Empty,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        line => CliLogService.AppendLog(streamLog, line))
+                    .WaitAsync(appCancellation.Token);
             }
 
             continue;
@@ -408,8 +484,34 @@ while (true)
         CliLogService.AppendLog(streamLog, $"[yellow]command[/]: unsupported route -> {Markup.Escape(matched.Signature)}");
         CliLogService.AppendLog(streamLog, "[grey]hint[/]: run /help for available commands and mode-specific workflows");
     }
+    catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+    {
+        CliLogService.AppendLog(streamLog, "[yellow]system[/]: cancellation requested, shutting down");
+        break;
+    }
     catch (Exception ex)
     {
         CliLogService.LogUnhandledException(streamLog, ex, "command");
     }
+}
+
+try
+{
+    await projectLifecycleService.PerformSafeExitCleanupAsync(
+        session,
+        daemonControlService,
+        daemonRuntime,
+        line => CliLogService.AppendLog(streamLog, line));
+}
+catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
+{
+}
+catch (Exception ex)
+{
+    CliLogService.LogUnhandledException(streamLog, ex, "shutdown");
+}
+finally
+{
+    Console.CancelKeyPress -= cancelHandler;
+    AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
 }

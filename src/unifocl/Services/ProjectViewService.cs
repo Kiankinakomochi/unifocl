@@ -37,6 +37,8 @@ internal sealed partial class ProjectViewService
 
         ProjectViewTreeUtils.InitializeIfNeeded(session.ProjectView, session.CurrentProjectPath);
         var tokens = ProjectViewServiceUtils.Tokenize(input);
+        CliDryRunDiffService.TryStripDryRunFlag(tokens, out var dryRunRequested);
+        using var dryRunScope = CliDryRunScope.Push(dryRunRequested);
         if (tokens.Count == 0)
         {
             await SyncAssetIndexAsync(session);
@@ -129,6 +131,17 @@ internal sealed partial class ProjectViewService
         }
 
         return await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus);
+    }
+
+    private static bool TryAppendDryRunDiff(List<string> outputs, string? content)
+    {
+        if (!CliDryRunDiffService.TryCaptureDiffFromContent(content, out var diff) || diff is null)
+        {
+            return false;
+        }
+
+        CliDryRunDiffService.AppendUnifiedDiffToLog(outputs, diff);
+        return true;
     }
 
     private async Task<bool> HandleFuzzyFindAsync(CliSessionState session, IReadOnlyList<string> tokens, List<string> outputs)

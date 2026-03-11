@@ -119,7 +119,7 @@ internal sealed class DaemonControlService
         return true;
     }
 
-    public static async Task RunDaemonServiceAsync(DaemonServiceOptions options)
+    public static async Task RunDaemonServiceAsync(DaemonServiceOptions options, CancellationToken cancellationToken = default)
     {
         var runtimePath = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
         var runtime = new DaemonRuntime(runtimePath);
@@ -132,9 +132,10 @@ internal sealed class DaemonControlService
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
 
         runtime.Upsert(state);
-        using var cts = new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         var lastActivityUtc = DateTime.UtcNow;
+        var requestTasks = new ConcurrentBag<Task>();
 
         var heartbeatTask = Task.Run(async () =>
         {
@@ -173,181 +174,17 @@ internal sealed class DaemonControlService
                     break;
                 }
 
-                _ = Task.Run(async () =>
-                {
-                    var request = context.Request;
-                    var path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
-                    if (path.Length == 0)
-                    {
-                        path = "/";
-                    }
-
-                    try
-                    {
-                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
-                        {
-                            await WriteTextResponseAsync(context.Response, "PONG");
-                            return;
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
-                        {
-                            lastActivityUtc = DateTime.UtcNow;
-                            await WriteTextResponseAsync(context.Response, "OK");
-                            return;
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
-                        {
-                            await WriteTextResponseAsync(context.Response, "STOPPING");
-                            cts.Cancel();
-                            return;
-                        }
-
-                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/asset-index", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var revisionRaw = request.QueryString["revision"];
-                            var command = int.TryParse(revisionRaw, out var revision) && revision > 0
-                                ? $"ASSET_INDEX_SYNC {revision}"
-                                : "ASSET_INDEX_GET";
-                            if (assetIndexBridge.TryHandle(command, out var assetResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, assetResponse);
-                                return;
-                            }
-                        }
-
-                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (hierarchyBridge.TryHandle("HIERARCHY_GET", out var hierarchySnapshot))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, hierarchySnapshot);
-                                return;
-                            }
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var payload = await ReadRequestBodyAsync(request);
-                            if (hierarchyBridge.TryHandle($"HIERARCHY_CMD {payload}", out var hierarchyResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, hierarchyResponse);
-                                return;
-                            }
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var payload = await ReadRequestBodyAsync(request);
-                            if (hierarchyBridge.TryHandle($"HIERARCHY_FIND {payload}", out var hierarchySearch))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, hierarchySearch);
-                                return;
-                            }
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var payload = await ReadRequestBodyAsync(request);
-                            if (inspectorBridge.TryHandle($"INSPECT {payload}", out var inspectorResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, inspectorResponse);
-                                return;
-                            }
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var payload = await ReadRequestBodyAsync(request);
-                            if (projectBridge.TryHandle($"PROJECT_CMD {payload}", out var projectResponse))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, projectResponse);
-                                return;
-                            }
-                        }
-
-                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/capabilities", StringComparison.OrdinalIgnoreCase))
-                        {
-                            lastActivityUtc = DateTime.UtcNow;
-                            await WriteJsonResponseAsync(context.Response, BuildAgenticCapabilitiesPayload());
-                            return;
-                        }
-
-                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/status", StringComparison.OrdinalIgnoreCase))
-                        {
-                            lastActivityUtc = DateTime.UtcNow;
-                            var requestId = request.QueryString["requestId"] ?? string.Empty;
-                            await WriteJsonResponseAsync(context.Response, BuildAgenticStatusPayload(requestId));
-                            return;
-                        }
-
-                        if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.StartsWith("/agent/dump/", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var category = path["/agent/dump/".Length..].Trim();
-                            var format = request.QueryString["format"];
-                            var dumpCommand = string.IsNullOrWhiteSpace(format)
-                                ? $"/dump {category}"
-                                : $"/dump {category} --format {format}";
-                            var payload = await ExecuteAgenticExecAsync(new AgenticExecutionRequest(
-                                dumpCommand,
-                                "project",
-                                string.Empty,
-                                string.IsNullOrWhiteSpace(format) ? "json" : format!,
-                                Guid.NewGuid().ToString("N")), options);
-                            lastActivityUtc = DateTime.UtcNow;
-                            await WriteJsonResponseAsync(context.Response, payload);
-                            return;
-                        }
-
-                        if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var payload = await ReadRequestBodyAsync(request);
-                            AgenticExecutionRequest? parsed;
-                            try
-                            {
-                                parsed = JsonSerializer.Deserialize<AgenticExecutionRequest>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                            }
-                            catch
-                            {
-                                parsed = null;
-                            }
-
-                            if (parsed is null || string.IsNullOrWhiteSpace(parsed.CommandText))
-                            {
-                                lastActivityUtc = DateTime.UtcNow;
-                                await WriteJsonResponseAsync(context.Response, BuildAgenticValidationError("invalid /agent/exec payload"));
-                                return;
-                            }
-
-                            var responsePayload = await ExecuteAgenticExecAsync(parsed, options);
-                            lastActivityUtc = DateTime.UtcNow;
-                            await WriteJsonResponseAsync(context.Response, responsePayload);
-                            return;
-                        }
-
-                        lastActivityUtc = DateTime.UtcNow;
-                        await WriteTextResponseAsync(context.Response, "ERR", statusCode: 404);
-                    }
-                    catch
-                    {
-                        if (context.Response.OutputStream.CanWrite)
-                        {
-                            try
-                            {
-                                await WriteTextResponseAsync(context.Response, "ERR", statusCode: 500);
-                            }
-                            catch
-                            {
-                            }
-                        }
-                    }
-                }, cts.Token);
+                var requestTask = HandleDaemonRequestAsync(
+                    context,
+                    hierarchyBridge,
+                    assetIndexBridge,
+                    inspectorBridge,
+                    projectBridge,
+                    options,
+                    cts.Token,
+                    () => lastActivityUtc = DateTime.UtcNow,
+                    () => cts.Cancel());
+                requestTasks.Add(requestTask);
             }
         }
         catch (OperationCanceledException)
@@ -359,13 +196,6 @@ internal sealed class DaemonControlService
         finally
         {
             cts.Cancel();
-            try
-            {
-                await heartbeatTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
 
             if (listener is not null)
             {
@@ -377,34 +207,277 @@ internal sealed class DaemonControlService
                 {
                 }
             }
+
+            try
+            {
+                await heartbeatTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            await AwaitBackgroundTasksAsync(requestTasks, TimeSpan.FromSeconds(5));
             runtime.Remove(options.Port);
         }
     }
 
-    private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
+    private static async Task HandleDaemonRequestAsync(
+        HttpListenerContext context,
+        HierarchyDaemonBridge hierarchyBridge,
+        AssetIndexDaemonBridge assetIndexBridge,
+        InspectorDaemonBridge inspectorBridge,
+        ProjectDaemonBridge projectBridge,
+        DaemonServiceOptions options,
+        CancellationToken cancellationToken,
+        Action touchActivity,
+        Action requestShutdown)
     {
-        using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
-        return await reader.ReadToEndAsync();
+        var request = context.Request;
+        var path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
+        if (path.Length == 0)
+        {
+            path = "/";
+        }
+
+        try
+        {
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteTextResponseAsync(context.Response, "PONG", cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
+            {
+                touchActivity();
+                await WriteTextResponseAsync(context.Response, "OK", cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteTextResponseAsync(context.Response, "STOPPING", cancellationToken: cancellationToken);
+                requestShutdown();
+                return;
+            }
+
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/asset-index", StringComparison.OrdinalIgnoreCase))
+            {
+                var revisionRaw = request.QueryString["revision"];
+                var command = int.TryParse(revisionRaw, out var revision) && revision > 0
+                    ? $"ASSET_INDEX_SYNC {revision}"
+                    : "ASSET_INDEX_GET";
+                if (assetIndexBridge.TryHandle(command, out var assetResponse))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(context.Response, assetResponse, cancellationToken: cancellationToken);
+                    return;
+                }
+            }
+
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
+            {
+                if (hierarchyBridge.TryHandle("HIERARCHY_GET", out var hierarchySnapshot))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(context.Response, hierarchySnapshot, cancellationToken: cancellationToken);
+                    return;
+                }
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                if (hierarchyBridge.TryHandle($"HIERARCHY_CMD {payload}", out var hierarchyResponse))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(context.Response, hierarchyResponse, cancellationToken: cancellationToken);
+                    return;
+                }
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                if (hierarchyBridge.TryHandle($"HIERARCHY_FIND {payload}", out var hierarchySearch))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(context.Response, hierarchySearch, cancellationToken: cancellationToken);
+                    return;
+                }
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                if (inspectorBridge.TryHandle($"INSPECT {payload}", out var inspectorResponse))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(context.Response, inspectorResponse, cancellationToken: cancellationToken);
+                    return;
+                }
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                if (projectBridge.TryHandle($"PROJECT_CMD {payload}", out var projectResponse))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(context.Response, projectResponse, cancellationToken: cancellationToken);
+                    return;
+                }
+            }
+
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/capabilities", StringComparison.OrdinalIgnoreCase))
+            {
+                touchActivity();
+                await WriteJsonResponseAsync(context.Response, BuildAgenticCapabilitiesPayload(), cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/status", StringComparison.OrdinalIgnoreCase))
+            {
+                touchActivity();
+                var requestId = request.QueryString["requestId"] ?? string.Empty;
+                await WriteJsonResponseAsync(context.Response, BuildAgenticStatusPayload(requestId), cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.StartsWith("/agent/dump/", StringComparison.OrdinalIgnoreCase))
+            {
+                var category = path["/agent/dump/".Length..].Trim();
+                var format = request.QueryString["format"];
+                var dumpCommand = string.IsNullOrWhiteSpace(format)
+                    ? $"/dump {category}"
+                    : $"/dump {category} --format {format}";
+                var payload = await ExecuteAgenticExecAsync(new AgenticExecutionRequest(
+                    dumpCommand,
+                    "project",
+                    string.Empty,
+                    string.IsNullOrWhiteSpace(format) ? "json" : format!,
+                    Guid.NewGuid().ToString("N")), options, cancellationToken);
+                touchActivity();
+                await WriteJsonResponseAsync(context.Response, payload, cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                AgenticExecutionRequest? parsed;
+                try
+                {
+                    parsed = JsonSerializer.Deserialize<AgenticExecutionRequest>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                }
+                catch
+                {
+                    parsed = null;
+                }
+
+                if (parsed is null || string.IsNullOrWhiteSpace(parsed.CommandText))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(
+                        context.Response,
+                        BuildAgenticValidationError("invalid /agent/exec payload"),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var responsePayload = await ExecuteAgenticExecAsync(parsed, options, cancellationToken);
+                touchActivity();
+                await WriteJsonResponseAsync(context.Response, responsePayload, cancellationToken: cancellationToken);
+                return;
+            }
+
+            touchActivity();
+            await WriteTextResponseAsync(context.Response, "ERR", statusCode: 404, cancellationToken: cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            if (!cancellationToken.IsCancellationRequested && context.Response.OutputStream.CanWrite)
+            {
+                try
+                {
+                    await WriteTextResponseAsync(context.Response, "ERR", statusCode: 500, cancellationToken: cancellationToken);
+                }
+                catch
+                {
+                }
+            }
+        }
     }
 
-    private static async Task WriteTextResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
+    private static async Task AwaitBackgroundTasksAsync(IEnumerable<Task> tasks, TimeSpan timeout)
+    {
+        var pending = tasks.Where(task => task is not null).ToArray();
+        if (pending.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            await Task.WhenAll(pending).WaitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Best effort drain for background tasks; bounded to avoid shutdown hang.
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken = default)
+    {
+        using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
+        return await reader.ReadToEndAsync(cancellationToken);
+    }
+
+    private static async Task WriteTextResponseAsync(
+        HttpListenerResponse response,
+        string payload,
+        int statusCode = 200,
+        CancellationToken cancellationToken = default)
     {
         var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
         response.StatusCode = statusCode;
         response.ContentType = "text/plain; charset=utf-8";
         response.ContentLength64 = bytes.Length;
-        await response.OutputStream.WriteAsync(bytes);
-        response.Close();
+        try
+        {
+            await response.OutputStream.WriteAsync(bytes.AsMemory(), cancellationToken);
+        }
+        finally
+        {
+            response.Close();
+        }
     }
 
-    private static async Task WriteJsonResponseAsync(HttpListenerResponse response, string jsonPayload, int statusCode = 200)
+    private static async Task WriteJsonResponseAsync(
+        HttpListenerResponse response,
+        string jsonPayload,
+        int statusCode = 200,
+        CancellationToken cancellationToken = default)
     {
         var bytes = Encoding.UTF8.GetBytes(jsonPayload + Environment.NewLine);
         response.StatusCode = statusCode;
         response.ContentType = "application/json; charset=utf-8";
         response.ContentLength64 = bytes.Length;
-        await response.OutputStream.WriteAsync(bytes);
-        response.Close();
+        try
+        {
+            await response.OutputStream.WriteAsync(bytes.AsMemory(), cancellationToken);
+        }
+        finally
+        {
+            response.Close();
+        }
     }
 
     public async Task<bool> EnsureProjectDaemonAsync(
@@ -857,14 +930,17 @@ internal sealed class DaemonControlService
 
         var outputTail = new Queue<string>();
         var outputLines = new ConcurrentQueue<string>();
+        using var outputDrainCts = new CancellationTokenSource();
+        var outputDrainTasks = Array.Empty<Task>();
         if (startOptions.Headless)
         {
             var mode = startOptions.AllowUnsafe ? "unsafe (UPM disabled, ignore compile errors)" : "safe (UPM enabled)";
             log($"[grey]daemon[/]: starting Unity in Host mode on port {startOptions.Port} ({mode})");
         }
-        StartBackgroundOutputDrain(
+        outputDrainTasks = StartBackgroundOutputDrain(
             process,
             startOptions.Headless,
+            outputDrainCts.Token,
             line =>
             {
                 CaptureProcessOutputLine(outputTail, line);
@@ -912,6 +988,8 @@ internal sealed class DaemonControlService
             }
 
             runtime.Remove(startOptions.Port);
+            outputDrainCts.Cancel();
+            await AwaitBackgroundTasksAsync(outputDrainTasks, TimeSpan.FromSeconds(2));
             return false;
         }
 
@@ -929,6 +1007,8 @@ internal sealed class DaemonControlService
         }
 
         _lastStartupFailure = null;
+        outputDrainCts.Cancel();
+        await AwaitBackgroundTasksAsync(outputDrainTasks, TimeSpan.FromSeconds(2));
         log($"[green]daemon[/]: started [white]pid={process.Id}[/] [white]port={startOptions.Port}[/] [white]mode={(startOptions.Headless ? "host" : "bridge")}[/]");
         return true;
     }
@@ -1346,45 +1426,51 @@ internal sealed class DaemonControlService
         return directPsi;
     }
 
-    private static void StartBackgroundOutputDrain(Process process, bool headless, Action<string>? onLine = null)
+    private static Task[] StartBackgroundOutputDrain(
+        Process process,
+        bool headless,
+        CancellationToken cancellationToken,
+        Action<string>? onLine = null)
     {
         if (!headless)
         {
-            return;
+            return [];
         }
 
+        var tasks = new List<Task>(2);
         if (process.StartInfo.RedirectStandardOutput)
         {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    while (await process.StandardOutput.ReadLineAsync() is string line)
-                    {
-                        onLine?.Invoke(line);
-                    }
-                }
-                catch
-                {
-                }
-            });
+            tasks.Add(DrainProcessOutputAsync(process.StandardOutput, onLine, cancellationToken));
         }
 
         if (process.StartInfo.RedirectStandardError)
         {
-            _ = Task.Run(async () =>
+            tasks.Add(DrainProcessOutputAsync(process.StandardError, onLine, cancellationToken));
+        }
+
+        return [.. tasks];
+    }
+
+    private static async Task DrainProcessOutputAsync(StreamReader reader, Action<string>? onLine, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
             {
-                try
+                var line = await reader.ReadLineAsync().WaitAsync(cancellationToken);
+                if (line is null)
                 {
-                    while (await process.StandardError.ReadLineAsync() is string line)
-                    {
-                        onLine?.Invoke(line);
-                    }
+                    break;
                 }
-                catch
-                {
-                }
-            });
+
+                onLine?.Invoke(line);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch
+        {
         }
     }
 
@@ -1954,7 +2040,10 @@ internal sealed class DaemonControlService
         return JsonSerializer.Serialize(envelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 
-    private static async Task<string> ExecuteAgenticExecAsync(AgenticExecutionRequest request, DaemonServiceOptions daemonOptions)
+    private static async Task<string> ExecuteAgenticExecAsync(
+        AgenticExecutionRequest request,
+        DaemonServiceOptions daemonOptions,
+        CancellationToken cancellationToken = default)
     {
         var executable = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(executable))
@@ -2009,11 +2098,12 @@ internal sealed class DaemonControlService
             return BuildAgenticValidationError("failed to spawn agentic exec process");
         }
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, cancellationToken);
         var completed = true;
         try
         {
-            await process.WaitForExitAsync(cts.Token);
+            await process.WaitForExitAsync(linkedCts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -2037,9 +2127,11 @@ internal sealed class DaemonControlService
                 mode,
                 "exec",
                 null,
-                [new AgenticError("E_TIMEOUT", "agent exec timed out after 120s")],
+                [new AgenticError(
+                    cancellationToken.IsCancellationRequested ? "E_CANCELED" : "E_TIMEOUT",
+                    cancellationToken.IsCancellationRequested ? "agent exec canceled" : "agent exec timed out after 120s")],
                 [],
-                new AgenticMeta("agentic.v1", CliVersion.Protocol, 3, DateTime.UtcNow.ToString("O")));
+                new AgenticMeta("agentic.v1", CliVersion.Protocol, cancellationToken.IsCancellationRequested ? 5 : 3, DateTime.UtcNow.ToString("O")));
             return JsonSerializer.Serialize(timeoutEnvelope, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         }
 

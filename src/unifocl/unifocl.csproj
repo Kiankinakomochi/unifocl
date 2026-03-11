@@ -75,8 +75,10 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/CLIDaemon.cs" LogicalName="Payload/EditorScripts/CLIDaemon.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Models/DaemonBridgeModels.cs" LogicalName="Payload/EditorScripts/Models/DaemonBridgeModels.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonAssetIndexService.cs" LogicalName="Payload/EditorScripts/Services/DaemonAssetIndexService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonDryRunServices.cs" LogicalName="Payload/EditorScripts/Services/DaemonDryRunServices.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonHierarchyService.cs" LogicalName="Payload/EditorScripts/Services/DaemonHierarchyService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonInspectorService.cs" LogicalName="Payload/EditorScripts/Services/DaemonInspectorService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs" LogicalName="Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonSceneManager.cs" LogicalName="Payload/EditorScripts/Services/DaemonSceneManager.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonScenePersistenceService.cs" LogicalName="Payload/EditorScripts/Services/DaemonScenePersistenceService.cs" />

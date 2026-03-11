@@ -40,6 +40,23 @@ internal sealed class ProjectDaemonBridge
             return true;
         }
 
+        if (DaemonMutationActionCatalog.IsProjectMutation(request.Action))
+        {
+            if (!TryValidateMutationIntent(request.Intent, out var validationError))
+            {
+                response = SerializeError($"{StubbedBridgePrefix} {validationError}");
+                return true;
+            }
+
+            if (request.Intent!.Flags.DryRun)
+            {
+                response = JsonSerializer.Serialize(
+                    new ProjectCommandResponseDto(true, "dry-run accepted (stubbed bridge fallback)", "dry-run", null),
+                    _jsonOptions);
+                return true;
+            }
+        }
+
         var result = request.Action switch
         {
             "mk-script" => HandleCreateScript(request),
@@ -435,6 +452,42 @@ internal sealed class ProjectDaemonBridge
     private string SerializeError(string message)
     {
         return JsonSerializer.Serialize(new ProjectCommandResponseDto(false, message, null, null), _jsonOptions);
+    }
+
+    private static bool TryValidateMutationIntent(MutationIntentDto? intent, out string error)
+    {
+        if (intent is null)
+        {
+            error = "mutation intent envelope is required";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(intent.TransactionId))
+        {
+            error = "mutation intent transactionId is required";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(intent.Target))
+        {
+            error = "mutation intent target is required";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(intent.Property))
+        {
+            error = "mutation intent property is required";
+            return false;
+        }
+
+        if (!intent.Flags.RequireRollback)
+        {
+            error = "mutation intent must require rollback semantics";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
     }
 
     private static string BuildStubAssetPath(string cwd, string type, string? baseName, int index, int count)

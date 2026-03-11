@@ -6,6 +6,9 @@ using System.Text.RegularExpressions;
 
 internal sealed class ProjectLifecycleService
 {
+    private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
+
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
     private readonly RecentProjectHistoryService _recentProjectHistoryService = new();
@@ -273,7 +276,7 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]clone[/]: step 1/4 validate git binary");
-        var gitVersion = RunProcess("git", "--version", Directory.GetCurrentDirectory());
+        var gitVersion = await RunProcessAsync("git", "--version", Directory.GetCurrentDirectory(), GitVersionProbeTimeout);
         if (gitVersion.ExitCode != 0)
         {
             log("[red]error[/]: git is not available on PATH");
@@ -290,7 +293,11 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        var cloneResult = RunProcess("git", $"clone \"{gitUrl}\" \"{targetPath}\"", Directory.GetCurrentDirectory());
+        var cloneResult = await RunProcessAsync(
+            "git",
+            $"clone \"{gitUrl}\" \"{targetPath}\"",
+            Directory.GetCurrentDirectory(),
+            GitCloneTimeout);
         if (cloneResult.ExitCode != 0)
         {
             log($"[red]error[/]: git clone failed ({Markup.Escape(SummarizeProcessError(cloneResult))})");
@@ -2022,7 +2029,11 @@ internal sealed class ProjectLifecycleService
         return required;
     }
 
-    private static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
+    private static async Task<ProcessResult> RunProcessAsync(
+        string fileName,
+        string arguments,
+        string workingDirectory,
+        TimeSpan timeout)
     {
         try
         {
@@ -2043,9 +2054,34 @@ internal sealed class ProjectLifecycleService
                 return new ProcessResult(-1, string.Empty, "failed to start process");
             }
 
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                }
+                catch
+                {
+                }
+
+                return new ProcessResult(
+                    -1,
+                    string.Empty,
+                    $"process timed out after {(int)timeout.TotalSeconds}s ({fileName} {arguments})");
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
             return new ProcessResult(process.ExitCode, stdout, stderr);
         }
         catch (Exception ex)
