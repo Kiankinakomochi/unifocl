@@ -5,6 +5,7 @@ using Spectre.Console;
 internal sealed class ProjectViewService
 {
     private const int MaxTranscriptEntries = 5000;
+    private static readonly TimeSpan TrackableProgressRenderInterval = TimeSpan.FromMilliseconds(250);
     private readonly ProjectViewRenderer _renderer = new();
     private readonly HierarchyDaemonClient _daemonClient = new();
     private enum ProjectFocusTabResult
@@ -2160,7 +2161,7 @@ internal sealed class ProjectViewService
             state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, progress, elapsed);
             RenderFrame(state);
             tick++;
-            await Task.Delay(120);
+            await Task.Delay(TrackableProgressRenderInterval);
         }
 
         try

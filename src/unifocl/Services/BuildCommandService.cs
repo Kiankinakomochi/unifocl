@@ -6,6 +6,7 @@ using Spectre.Console;
 
 internal sealed class BuildCommandService
 {
+    private static readonly TimeSpan BuildMonitorPeriodicRenderInterval = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions WriteJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -851,6 +852,8 @@ internal sealed class BuildCommandService
         var lastHeartbeatUtc = DateTime.MinValue;
         var lastStatusSnapshot = string.Empty;
         var statusUnchangedSince = DateTime.UtcNow;
+        var lastRenderedFrameSignature = string.Empty;
+        var lastRenderedAtUtc = DateTime.MinValue;
         var canceledByUser = false;
 
         while (true)
@@ -909,7 +912,17 @@ internal sealed class BuildCommandService
             var stallHint = status.Running && (elapsedNoStatusChange > TimeSpan.FromSeconds(20) || heartbeatAge > TimeSpan.FromSeconds(20))
                 ? $"No status change for {(int)elapsedNoStatusChange.TotalSeconds}s (heartbeat age {(int)heartbeatAge.TotalSeconds}s)"
                 : null;
-            RenderBuildMonitorFrame(status, recentLogLines, errorsOnly, footer, stallHint);
+            var frameSignature = BuildMonitorFrameSignature(status, logOffset, errorsOnly, stallHint);
+            var now = DateTime.UtcNow;
+            var shouldRender = !frameSignature.Equals(lastRenderedFrameSignature, StringComparison.Ordinal)
+                               || (now - lastRenderedAtUtc) >= BuildMonitorPeriodicRenderInterval
+                               || !status.Running;
+            if (shouldRender)
+            {
+                RenderBuildMonitorFrame(status, recentLogLines, errorsOnly, footer, stallHint);
+                lastRenderedFrameSignature = frameSignature;
+                lastRenderedAtUtc = now;
+            }
 
             if (!status.Running)
             {
@@ -1112,6 +1125,28 @@ internal sealed class BuildCommandService
 
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"[dim]{Markup.Escape(footer)}[/]");
+    }
+
+    private static string BuildMonitorFrameSignature(
+        BuildStatusDto status,
+        long logOffset,
+        bool errorsOnly,
+        string? stallHint)
+    {
+        return string.Join(
+            '|',
+            status.Running ? "1" : "0",
+            status.Success ? "1" : "0",
+            status.Progress01.ToString("0.000"),
+            status.Kind ?? string.Empty,
+            status.Step ?? string.Empty,
+            status.Message ?? string.Empty,
+            status.LastDiagnostic ?? string.Empty,
+            status.LastException ?? string.Empty,
+            status.LogPath ?? string.Empty,
+            errorsOnly ? "1" : "0",
+            stallHint ?? string.Empty,
+            logOffset.ToString());
     }
 
     private static void TryRunAdbInstall(string apkPath, Action<string> log)
