@@ -57,6 +57,24 @@ namespace UniFocl.EditorBridge
                 });
             }
 
+            if (DaemonMutationTransactionCoordinator.IsInspectorMutation(request.action))
+            {
+                var decision = DaemonMutationTransactionCoordinator.ValidateInspectorIntent(request.action, request.intent);
+                if (!decision.Accepted)
+                {
+                    return JsonUtility.ToJson(new InspectorMutationResponse
+                    {
+                        ok = false,
+                        message = decision.Message
+                    });
+                }
+
+                if (decision.IsDryRun)
+                {
+                    return ExecuteDryRunMutation(request);
+                }
+            }
+
             try
             {
                 switch (request.action)
@@ -141,6 +159,71 @@ namespace UniFocl.EditorBridge
             {
                 ok = ok,
                 message = ok ? string.Empty : (error ?? "inspector mutation failed")
+            };
+        }
+
+        private static string ExecuteDryRunMutation(InspectorBridgeRequest request)
+        {
+            var target = ResolveTarget(request.targetPath);
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "inspector target was not found"
+                });
+            }
+
+            var beforeJson = DaemonDryRunDiffService.SnapshotObject(target);
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl inspector dry-run");
+            try
+            {
+                using var dryRunScope = DaemonDryRunContext.Enter();
+                var mutation = ExecuteMutationCore(request);
+                if (!mutation.ok)
+                {
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    return JsonUtility.ToJson(mutation);
+                }
+
+                var afterJson = DaemonDryRunDiffService.SnapshotObject(target);
+                Undo.RevertAllDownToGroup(undoGroup);
+                mutation.message = "dry-run preview";
+                mutation.content = DaemonDryRunDiffService.BuildJsonDiffPayload("inspector mutation preview", beforeJson, afterJson);
+                return JsonUtility.ToJson(mutation);
+            }
+            catch (Exception ex)
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"inspector dry-run failed: {ex.Message}"
+                });
+            }
+        }
+
+        private static InspectorMutationResponse ExecuteMutationCore(InspectorBridgeRequest request)
+        {
+            return request.action switch
+            {
+                "add-component" => BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError),
+                "remove-component" => BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError),
+                "toggle-component" => BuildMutationResponse(
+                    ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
+                    toggleComponentError),
+                "toggle-field" => BuildMutationResponse(
+                    ToggleField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, out var toggleFieldError),
+                    toggleFieldError),
+                "set-field" => BuildMutationResponse(
+                    SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
+                    setFieldError),
+                _ => new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"unsupported inspector action for mutation core: {request.action}"
+                }
             };
         }
 
@@ -502,27 +585,33 @@ namespace UniFocl.EditorBridge
 
             if (component is Behaviour behaviour)
             {
+                var nextValue = !behaviour.enabled;
                 Undo.RecordObject(behaviour, "unifocl toggle component enabled");
-                behaviour.enabled = !behaviour.enabled;
+                behaviour.enabled = nextValue;
                 EditorUtility.SetDirty(behaviour);
+                DaemonScenePersistenceService.RecordPrefabInstanceMutation(behaviour);
                 DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", behaviour.gameObject.scene);
                 return true;
             }
 
             if (component is Renderer renderer)
             {
+                var nextValue = !renderer.enabled;
                 Undo.RecordObject(renderer, "unifocl toggle renderer enabled");
-                renderer.enabled = !renderer.enabled;
+                renderer.enabled = nextValue;
                 EditorUtility.SetDirty(renderer);
+                DaemonScenePersistenceService.RecordPrefabInstanceMutation(renderer);
                 DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", renderer.gameObject.scene);
                 return true;
             }
 
             if (component is Collider collider)
             {
+                var nextValue = !collider.enabled;
                 Undo.RecordObject(collider, "unifocl toggle collider enabled");
-                collider.enabled = !collider.enabled;
+                collider.enabled = nextValue;
                 EditorUtility.SetDirty(collider);
+                DaemonScenePersistenceService.RecordPrefabInstanceMutation(collider);
                 DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", collider.gameObject.scene);
                 return true;
             }
@@ -570,6 +659,8 @@ namespace UniFocl.EditorBridge
 
             EditorUtility.SetDirty(target);
             EditorUtility.SetDirty(added);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(added);
             DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", target.scene);
             return true;
         }
@@ -592,6 +683,7 @@ namespace UniFocl.EditorBridge
 
             var scene = component.gameObject.scene;
             Undo.DestroyObjectImmediate(component);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(component.gameObject);
             DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", scene);
             return true;
         }
@@ -626,11 +718,13 @@ namespace UniFocl.EditorBridge
                 return false;
             }
 
-            Undo.RecordObject(component, "unifocl toggle field");
             serializedObject.Update();
-            property.boolValue = !property.boolValue;
+            var nextValue = !property.boolValue;
+            Undo.RecordObject(component, "unifocl toggle field");
+            property.boolValue = nextValue;
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(component);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(component);
             DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", component.gameObject.scene);
             return true;
         }
@@ -665,16 +759,22 @@ namespace UniFocl.EditorBridge
                 return false;
             }
 
-            Undo.RecordObject(component, "unifocl set field");
             serializedObject.Update();
-            if (!TryAssignPropertyValue(property, rawValue))
+            if (!TryAssignPropertyValue(property, rawValue, out var changed))
             {
                 error = $"failed to assign serialized field '{property.propertyPath}' ({property.propertyType}) from value '{rawValue}'";
                 return false;
             }
 
+            if (!changed)
+            {
+                return true;
+            }
+
+            Undo.RecordObject(component, "unifocl set field");
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(component);
+            DaemonScenePersistenceService.RecordPrefabInstanceMutation(component);
             DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", component.gameObject.scene);
             return true;
         }
@@ -965,13 +1065,15 @@ namespace UniFocl.EditorBridge
             return null;
         }
 
-        private static bool TryAssignPropertyValue(SerializedProperty property, string rawValue)
+        private static bool TryAssignPropertyValue(SerializedProperty property, string rawValue, out bool changed)
         {
+            changed = false;
             switch (property.propertyType)
             {
                 case SerializedPropertyType.Boolean:
                     if (bool.TryParse(rawValue, out var boolValue))
                     {
+                        changed = property.boolValue != boolValue;
                         property.boolValue = boolValue;
                         return true;
                     }
@@ -981,7 +1083,9 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Integer:
                     if (int.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intValue))
                     {
-                        property.intValue = ClampIntegerValue(property, intValue);
+                        var nextValue = ClampIntegerValue(property, intValue);
+                        changed = property.intValue != nextValue;
+                        property.intValue = nextValue;
                         return true;
                     }
 
@@ -995,20 +1099,25 @@ namespace UniFocl.EditorBridge
                             return false;
                         }
 
-                        property.floatValue = ClampFloatValue(property, floatValue);
+                        var nextValue = ClampFloatValue(property, floatValue);
+                        changed = !Mathf.Approximately(property.floatValue, nextValue);
+                        property.floatValue = nextValue;
                         return true;
                     }
 
                     return false;
 
                 case SerializedPropertyType.String:
+                    changed = !string.Equals(property.stringValue, rawValue, StringComparison.Ordinal);
                     property.stringValue = rawValue;
                     return true;
 
                 case SerializedPropertyType.Vector2:
                     if (TryParseVector(rawValue, 2, out var vector2))
                     {
-                        property.vector2Value = new Vector2(vector2[0], vector2[1]);
+                        var nextValue = new Vector2(vector2[0], vector2[1]);
+                        changed = property.vector2Value != nextValue;
+                        property.vector2Value = nextValue;
                         return true;
                     }
 
@@ -1017,7 +1126,9 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Vector3:
                     if (TryParseVector(rawValue, 3, out var vector3))
                     {
-                        property.vector3Value = new Vector3(vector3[0], vector3[1], vector3[2]);
+                        var nextValue = new Vector3(vector3[0], vector3[1], vector3[2]);
+                        changed = property.vector3Value != nextValue;
+                        property.vector3Value = nextValue;
                         return true;
                     }
 
@@ -1026,7 +1137,9 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Vector4:
                     if (TryParseVector(rawValue, 4, out var vector4))
                     {
-                        property.vector4Value = new Vector4(vector4[0], vector4[1], vector4[2], vector4[3]);
+                        var nextValue = new Vector4(vector4[0], vector4[1], vector4[2], vector4[3]);
+                        changed = property.vector4Value != nextValue;
+                        property.vector4Value = nextValue;
                         return true;
                     }
 
@@ -1035,16 +1148,19 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Color:
                     if (TryParseVector(rawValue, 4, out var rgba))
                     {
-                        property.colorValue = new Color(
+                        var nextValue = new Color(
                             Mathf.Clamp01(rgba[0]),
                             Mathf.Clamp01(rgba[1]),
                             Mathf.Clamp01(rgba[2]),
                             Mathf.Clamp01(rgba[3]));
+                        changed = property.colorValue != nextValue;
+                        property.colorValue = nextValue;
                         return true;
                     }
 
                     if (ColorUtility.TryParseHtmlString(rawValue, out var htmlColor))
                     {
+                        changed = property.colorValue != htmlColor;
                         property.colorValue = htmlColor;
                         return true;
                     }
@@ -1058,6 +1174,7 @@ namespace UniFocl.EditorBridge
                         {
                             if (enumNames[i].Equals(rawValue, StringComparison.OrdinalIgnoreCase))
                             {
+                                changed = property.enumValueIndex != i;
                                 property.enumValueIndex = i;
                                 return true;
                             }
@@ -1067,6 +1184,7 @@ namespace UniFocl.EditorBridge
                             && enumIndex >= 0
                             && enumIndex < enumNames.Length)
                         {
+                            changed = property.enumValueIndex != enumIndex;
                             property.enumValueIndex = enumIndex;
                             return true;
                         }
@@ -1077,6 +1195,7 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.ObjectReference:
                     if (TryResolveObjectReferenceValue(property, rawValue, out var objectReference))
                     {
+                        changed = property.objectReferenceValue != objectReference;
                         property.objectReferenceValue = objectReference;
                         return true;
                     }

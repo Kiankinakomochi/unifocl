@@ -60,6 +60,12 @@ internal sealed partial class ProjectViewService
                 return true;
             }
 
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
+                return true;
+            }
+
             var createdPaths = ProjectViewServiceUtils.ParseMkAssetCreatedPaths(response.Content);
             if (createdPaths.Count == 0)
             {
@@ -141,6 +147,12 @@ internal sealed partial class ProjectViewService
                 if (!response.Ok)
                 {
                     outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("create", response.Message));
+                    return true;
+                }
+
+                if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                    && TryAppendDryRunDiff(outputs, response.Content))
+                {
                     return true;
                 }
 
@@ -248,6 +260,12 @@ internal sealed partial class ProjectViewService
                         outputs.Add($"[i] removed {removedPaths.Count}/{targets.Count} before failure");
                     }
 
+                    return true;
+                }
+
+                if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                    && TryAppendDryRunDiff(outputs, response.Content))
+                {
                     return true;
                 }
 
@@ -446,6 +464,12 @@ internal sealed partial class ProjectViewService
             if (!response.Ok)
             {
                 outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("rename", response.Message));
+                return true;
+            }
+
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
                 return true;
             }
 

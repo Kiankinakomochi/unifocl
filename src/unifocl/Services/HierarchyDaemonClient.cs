@@ -51,7 +51,8 @@ internal sealed class HierarchyDaemonClient
 
     public async Task<HierarchyCommandResponseDto> ExecuteAsync(int port, HierarchyCommandRequestDto request)
     {
-        var payload = await SendPostJsonAsync($"http://127.0.0.1:{port}/hierarchy/command", request);
+        var requestWithIntent = MutationIntentFactory.EnsureHierarchyIntent(request);
+        var payload = await SendPostJsonAsync($"http://127.0.0.1:{port}/hierarchy/command", requestWithIntent);
         if (payload is null)
         {
             return new HierarchyCommandResponseDto(false, "daemon did not return a hierarchy response", null, null);
@@ -109,6 +110,7 @@ internal sealed class HierarchyDaemonClient
 
     public async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(int port, ProjectCommandRequestDto request, Action<string>? onStatus = null)
     {
+        request = MutationIntentFactory.EnsureProjectIntent(request);
         var isSceneLoad = request.Action.Equals("load-asset", StringComparison.OrdinalIgnoreCase);
         var isBuildDispatch = request.Action.StartsWith("build-", StringComparison.OrdinalIgnoreCase);
         var isUpmMutation = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)

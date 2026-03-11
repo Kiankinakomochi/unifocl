@@ -3,7 +3,8 @@ internal sealed record ProjectCommandRequestDto(
     string? AssetPath,
     string? NewAssetPath,
     string? Content,
-    string? RequestId = null);
+    string? RequestId = null,
+    MutationIntentDto? Intent = null);
 
 internal sealed record ProjectCommandResponseDto(
     bool Ok,

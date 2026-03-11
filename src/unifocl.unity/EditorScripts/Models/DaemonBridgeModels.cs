@@ -62,6 +62,7 @@ namespace UniFocl.EditorBridge
         public bool primitive;
         public string type = string.Empty;
         public int count;
+        public MutationIntentEnvelope intent;
     }
 
     [Serializable]
@@ -71,6 +72,7 @@ namespace UniFocl.EditorBridge
         public string message = string.Empty;
         public int nodeId;
         public bool isActive;
+        public string content = string.Empty;
     }
 
     [Serializable]
@@ -110,6 +112,7 @@ namespace UniFocl.EditorBridge
         public string query = string.Empty;
         public bool includeSceneReferences = true;
         public bool includeProjectReferences = true;
+        public MutationIntentEnvelope intent;
     }
 
     [Serializable]
@@ -167,6 +170,7 @@ namespace UniFocl.EditorBridge
     {
         public bool ok;
         public string message = string.Empty;
+        public string content = string.Empty;
     }
 
     [Serializable]
@@ -177,6 +181,45 @@ namespace UniFocl.EditorBridge
         public string newAssetPath = string.Empty;
         public string content = string.Empty;
         public string requestId = string.Empty;
+        public MutationIntentEnvelope intent;
+    }
+
+    [Serializable]
+    internal sealed class MutationIntentEnvelope
+    {
+        public string transactionId = string.Empty;
+        public string target = string.Empty;
+        public string property = string.Empty;
+        public string oldValue = string.Empty;
+        public string newValue = string.Empty;
+        public MutationIntentFlags flags = new();
+    }
+
+    [Serializable]
+    internal sealed class MutationIntentFlags
+    {
+        public bool dryRun;
+        public bool requireRollback = true;
+    }
+
+    [Serializable]
+    internal sealed class MutationPathChange
+    {
+        public string action = string.Empty;
+        public string path = string.Empty;
+        public string nextPath = string.Empty;
+        public string metaPath = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class MutationDryRunDiffPayload
+    {
+        public string summary = string.Empty;
+        public string format = "unified";
+        public string before = string.Empty;
+        public string after = string.Empty;
+        public string[] lines = Array.Empty<string>();
+        public MutationPathChange[] changes = Array.Empty<MutationPathChange>();
     }
 
     [Serializable]

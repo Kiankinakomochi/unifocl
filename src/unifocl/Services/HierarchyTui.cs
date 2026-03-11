@@ -258,6 +258,14 @@ internal sealed class HierarchyTui
             return true;
         }
 
+        CliDryRunDiffService.TryStripDryRunFlag(tokens, out var dryRunRequested);
+        using var dryRunScope = CliDryRunScope.Push(dryRunRequested);
+        if (tokens.Count == 0)
+        {
+            commandLog.Add("[!] command requires an action before --dry-run");
+            return true;
+        }
+
         tokens[0] = tokens[0].ToLowerInvariant() switch
         {
             "enter" => "cd",
@@ -332,6 +340,10 @@ internal sealed class HierarchyTui
             }
 
             commandLog.Add($"[+] created: {normalizedMakeType} x{makeCount}");
+            if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var makeDiff) && makeDiff is not null)
+            {
+                CliDryRunDiffService.AppendUnifiedDiffToLog(commandLog, makeDiff);
+            }
             return true;
         }
 
@@ -371,6 +383,10 @@ internal sealed class HierarchyTui
             }
 
             commandLog.Add($"[+] created: {normalizedMkType} x{mkCount}");
+            if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var mkDiff) && mkDiff is not null)
+            {
+                CliDryRunDiffService.AppendUnifiedDiffToLog(commandLog, mkDiff);
+            }
             return true;
         }
 
@@ -394,6 +410,10 @@ internal sealed class HierarchyTui
             var targetName = FindNode(snapshot.Root, targetId)?.Name ?? "Object";
             var activeState = response.IsActive == true ? "active" : "inactive";
             commandLog.Add($"[*] ok: {targetName} set to {activeState}");
+            if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var toggleDiff) && toggleDiff is not null)
+            {
+                CliDryRunDiffService.AppendUnifiedDiffToLog(commandLog, toggleDiff);
+            }
             return true;
         }
 
@@ -416,6 +436,10 @@ internal sealed class HierarchyTui
             }
 
             commandLog.Add($"[-] removed: {targetName} [{targetId}]");
+            if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var rmDiff) && rmDiff is not null)
+            {
+                CliDryRunDiffService.AppendUnifiedDiffToLog(commandLog, rmDiff);
+            }
             return true;
         }
 

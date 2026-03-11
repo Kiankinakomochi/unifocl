@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.23.0 - 2026-03-11
+
+### Changed
+- Officialized `0.23.0` by closing the development cycle suffix.
+- Added a README persistence-safety section documenting the shipped enterprise mutation contract:
+  - transactional mutation intent envelope and daemon transaction coordinator routing
+  - memory-layer idempotent serialized mutations with Undo rollback semantics
+  - project-layer stash-based filesystem rollback with `.meta` coverage and AssetDatabase refresh
+  - dry-run preview behavior and diff integration across CLI/TUI and `agentic.v1` responses
+
 ## 0.22.0 - 2026-03-11
 
 ### Changed

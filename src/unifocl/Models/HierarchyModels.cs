@@ -18,10 +18,12 @@ internal sealed record HierarchyCommandRequestDto(
     string? Name,
     bool Primitive,
     string? Type = null,
-    int? Count = null);
+    int? Count = null,
+    MutationIntentDto? Intent = null);
 
 internal sealed record HierarchyCommandResponseDto(
     bool Ok,
     string Message,
     int? NodeId,
-    [property: JsonPropertyName("isActive")] bool? IsActive);
+    [property: JsonPropertyName("isActive")] bool? IsActive,
+    string? Content = null);
