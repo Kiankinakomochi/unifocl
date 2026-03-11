@@ -346,16 +346,21 @@ src/unifocl/scripts/agent-worktree.sh provision \
   --worktree-path ../unifocl-agent-a \
   --branch codex/agent-a
 
-# 2) Start daemon on dynamically selected open port for that worktree/project
+# 2) Scaffold a minimal Unity project for agentic smoke tests
+src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project
+
+# 3) Start daemon on dynamically selected open port for that worktree/project
 src/unifocl/scripts/agent-worktree.sh start-daemon \
   --worktree-path ../unifocl-agent-a \
-  --project-path ../unifocl-agent-a
+  --project-path .local/agentic-smoke-project
 
-# 3) Execute deterministic machine command in that isolated workspace
+# 4) Execute deterministic machine command in that isolated workspace
 cd ../unifocl-agent-a
 dotnet run --project src/unifocl/unifocl.csproj -- \
   exec "/dump project --format json --depth 2 --limit 2000" \
-  --agentic --project "$(pwd)" --mode project
+  --agentic --project "$(pwd)/.local/agentic-smoke-project" --mode project
 ```
 
 Concurrency safeguards:
@@ -460,9 +465,13 @@ src/unifocl/scripts/agent-worktree.sh provision \
   --source-project . \
   --seed-library
 
+src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project
+
 src/unifocl/scripts/agent-worktree.sh start-daemon \
   --worktree-path ../unifocl-agent-a \
-  --project-path ../unifocl-agent-a
+  --project-path .local/agentic-smoke-project
 ```
 
 Lifecycle pipeline and operating boundaries:

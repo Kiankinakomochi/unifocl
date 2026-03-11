@@ -16,10 +16,23 @@ internal static class CliOneShotExecutionService
         CancellationToken cancellationToken = default)
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
+        var sessionSeed = AgenticStatePersistenceService.NormalizeSessionSeed(options.SessionSeed);
         var extraMeta = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["command"] = options.CommandText
+            ["command"] = options.CommandText,
+            ["sessionSeed"] = sessionSeed
         };
+
+        var persisted = AgenticStatePersistenceService.TryReadSessionSnapshot(sessionSeed);
+        if (persisted is not null)
+        {
+            ApplyPersistedSessionSnapshot(session, persisted);
+            extraMeta["sessionRestored"] = true;
+        }
+        else
+        {
+            extraMeta["sessionRestored"] = false;
+        }
 
         if (!string.IsNullOrWhiteSpace(options.ProjectPath))
         {
@@ -112,6 +125,7 @@ internal static class CliOneShotExecutionService
         };
         var action = CliCommandParsingService.ExtractActionLabel(options.CommandText);
         var diff = CliDryRunDiffService.ConsumeCurrentDiff();
+        AgenticStatePersistenceService.WriteSessionSnapshot(sessionSeed, session, requestId, options.CommandText);
 
         return new AgenticResponseEnvelope(
             errors.Count == 0 ? "success" : "error",
@@ -130,6 +144,26 @@ internal static class CliOneShotExecutionService
             diff);
     }
 
+    private static void ApplyPersistedSessionSnapshot(CliSessionState session, AgenticSessionSnapshot snapshot)
+    {
+        session.Mode = snapshot.Mode.Equals("project", StringComparison.OrdinalIgnoreCase)
+            ? CliMode.Project
+            : CliMode.Boot;
+        session.ContextMode = snapshot.ContextMode.ToLowerInvariant() switch
+        {
+            "project" => CliContextMode.Project,
+            "hierarchy" => CliContextMode.Hierarchy,
+            "inspector" => CliContextMode.Inspector,
+            _ => CliContextMode.None
+        };
+        session.CurrentProjectPath = snapshot.CurrentProjectPath;
+        session.AttachedPort = snapshot.AttachedPort;
+        session.FocusPath = string.IsNullOrWhiteSpace(snapshot.InspectorTargetPath)
+            ? snapshot.FocusPath
+            : snapshot.InspectorTargetPath!;
+        session.SafeModeEnabled = snapshot.SafeModeEnabled;
+    }
+
     private static async Task ExecuteCommandForOneShotAsync(
         string input,
         List<CommandSpec> commands,
@@ -146,6 +180,23 @@ internal static class CliOneShotExecutionService
         static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken token)
         {
             await operation().WaitAsync(token);
+        }
+
+        if (session.ContextMode == CliContextMode.Inspector
+            && session.Inspector is null
+            && !input.StartsWith("inspect ", StringComparison.OrdinalIgnoreCase)
+            && !input.Equals("inspect", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(session.FocusPath))
+        {
+            var escapedFocusPath = session.FocusPath!.Contains(' ', StringComparison.Ordinal)
+                ? $"\"{session.FocusPath}\""
+                : session.FocusPath;
+            await projectCommandRouterService.TryHandleProjectCommandAsync(
+                $"inspect {escapedFocusPath}",
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
         }
 
         if (input.Equals(":focus-recent", StringComparison.OrdinalIgnoreCase))

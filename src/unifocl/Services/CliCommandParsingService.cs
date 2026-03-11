@@ -29,6 +29,7 @@ internal static class CliCommandParsingService
         CliContextMode? contextMode = null;
         int? attachPort = null;
         string? requestId = null;
+        string? sessionSeed = null;
         var commandTokens = new List<string>();
 
         for (var i = 1; i < args.Length; i++)
@@ -125,6 +126,18 @@ internal static class CliCommandParsingService
                 continue;
             }
 
+            if (token.Equals("--session-seed", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    error = "missing value for --session-seed";
+                    return true;
+                }
+
+                sessionSeed = args[++i];
+                continue;
+            }
+
             commandTokens.Add(token);
         }
 
@@ -141,7 +154,8 @@ internal static class CliCommandParsingService
             projectPath,
             contextMode,
             attachPort,
-            requestId);
+            requestId,
+            sessionSeed);
         return true;
     }
 
