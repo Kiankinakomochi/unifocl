@@ -750,13 +750,17 @@ namespace UniFocl.EditorBridge
             var normalized = (targetPath ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized) || normalized == "/")
             {
-                return Selection.activeGameObject ?? roots[0];
+                return TryResolveSelectionWithinRoots(roots, out var selectedInScope)
+                    ? selectedInScope
+                    : roots[0];
             }
 
             var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
             if (segments.Count == 0)
             {
-                return Selection.activeGameObject ?? roots[0];
+                return TryResolveSelectionWithinRoots(roots, out var selectedInScope)
+                    ? selectedInScope
+                    : roots[0];
             }
 
             if (segments[0].Equals(rootLabel, StringComparison.OrdinalIgnoreCase))
@@ -766,7 +770,9 @@ namespace UniFocl.EditorBridge
 
             if (segments.Count == 0)
             {
-                return Selection.activeGameObject ?? roots[0];
+                return TryResolveSelectionWithinRoots(roots, out var selectedInScope)
+                    ? selectedInScope
+                    : roots[0];
             }
 
             if (TryResolveBySegments(roots, segments, out var resolved))
@@ -785,6 +791,29 @@ namespace UniFocl.EditorBridge
             }
 
             return FindByName(roots, segments[^1]);
+        }
+
+        private static bool TryResolveSelectionWithinRoots(
+            IReadOnlyList<GameObject> roots,
+            out GameObject selected)
+        {
+            selected = null!;
+            var active = Selection.activeGameObject;
+            if (active is null)
+            {
+                return false;
+            }
+
+            foreach (var root in roots)
+            {
+                if (root == active || active.transform.IsChildOf(root.transform))
+                {
+                    selected = active;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool TryResolveBySegments(

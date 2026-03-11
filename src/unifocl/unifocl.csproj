@@ -19,7 +19,6 @@
       <FilePath ParameterType="System.String" Required="true" />
     </ParameterGroup>
     <Task>
-      <Reference Include="System.Text.RegularExpressions" />
       <Code Type="Fragment" Language="cs"><![CDATA[
         if (!System.IO.File.Exists(FilePath))
         {
@@ -29,6 +28,13 @@
 
         var content = System.IO.File.ReadAllText(FilePath);
         var matcher = new System.Text.RegularExpressions.Regex(@"public const string DevCycle = ""a(?<n>\d+)"";");
+        var disabledMatcher = new System.Text.RegularExpressions.Regex(@"public const string DevCycle = """";");
+        if (disabledMatcher.IsMatch(content))
+        {
+            Log.LogMessage(Microsoft.Build.Framework.MessageImportance.Low, "DevCycle auto-increment skipped (DevCycle is empty).");
+            return true;
+        }
+
         var match = matcher.Match(content);
         if (!match.Success)
         {

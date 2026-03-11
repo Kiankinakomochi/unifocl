@@ -110,7 +110,7 @@ namespace UniFocl.EditorBridge
 
             _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
 
-            var dispatcherMode = _isBatchMode ? "batch-queue" : "delay-call";
+            var dispatcherMode = "update-queue";
             Debug.Log($"[unifocl] CLIDaemon started on http://127.0.0.1:{options.port}/ (batch={_isBatchMode}, autoExit={_autoExitEditor}, dispatcher={dispatcherMode})");
         }
 
@@ -304,6 +304,14 @@ namespace UniFocl.EditorBridge
             }
             catch (Exception ex)
             {
+                if (IsClientDisconnectException(ex))
+                {
+                    // The CLI side may timeout/cancel and close the socket while the editor is finishing work.
+                    // Treat this as benign transport churn rather than a daemon runtime failure.
+                    Debug.Log($"[unifocl] client disconnected before response write: {request.HttpMethod} {path} ({ex.GetType().Name})");
+                    return;
+                }
+
                 Debug.LogError($"[unifocl] request failed: {request.HttpMethod} {path} -> {ex}");
                 MarkProjectCommandFailed($"request exception: {ex.GetType().Name}: {ex.Message}");
                 try
@@ -396,22 +404,74 @@ namespace UniFocl.EditorBridge
 
         private static async Task WriteTextResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
         {
-            var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
-            response.StatusCode = statusCode;
-            response.ContentType = "text/plain; charset=utf-8";
-            response.ContentLength64 = bytes.Length;
-            await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
-            response.Close();
+            try
+            {
+                var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
+                response.StatusCode = statusCode;
+                response.ContentType = "text/plain; charset=utf-8";
+                response.ContentLength64 = bytes.Length;
+                await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+            }
+            finally
+            {
+                try
+                {
+                    response.Close();
+                }
+                catch
+                {
+                }
+            }
         }
 
         private static async Task WriteJsonResponseAsync(HttpListenerResponse response, string payload, int statusCode = 200)
         {
-            var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
-            response.StatusCode = statusCode;
-            response.ContentType = "application/json; charset=utf-8";
-            response.ContentLength64 = bytes.Length;
-            await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
-            response.Close();
+            try
+            {
+                var bytes = Encoding.UTF8.GetBytes(payload + Environment.NewLine);
+                response.StatusCode = statusCode;
+                response.ContentType = "application/json; charset=utf-8";
+                response.ContentLength64 = bytes.Length;
+                await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+            }
+            catch (Exception ex) when (IsClientDisconnectException(ex))
+            {
+                // Ignore write failures when peer already closed/cancelled the request.
+            }
+            finally
+            {
+                try
+                {
+                    response.Close();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static bool IsClientDisconnectException(Exception ex)
+        {
+            if (ex is ObjectDisposedException)
+            {
+                return true;
+            }
+
+            if (ex is HttpListenerException)
+            {
+                return true;
+            }
+
+            if (ex is IOException ioEx && ioEx.InnerException is System.Net.Sockets.SocketException socketEx)
+            {
+                return socketEx.SocketErrorCode is System.Net.Sockets.SocketError.Shutdown
+                    or System.Net.Sockets.SocketError.ConnectionAborted
+                    or System.Net.Sockets.SocketError.ConnectionReset
+                    or System.Net.Sockets.SocketError.NotConnected
+                    or System.Net.Sockets.SocketError.OperationAborted;
+            }
+
+            return false;
         }
 
         private static void MarkActivity()
@@ -423,12 +483,18 @@ namespace UniFocl.EditorBridge
         {
             RefreshEditorStateCache();
 
-            if (!_running || !_autoExitEditor)
+            if (!_running)
             {
                 return;
             }
 
+            // Always service bridge/main-thread work while daemon is running.
             DrainMainThreadWorkQueue();
+
+            if (!_autoExitEditor)
+            {
+                return;
+            }
 
             if (DateTime.UtcNow - _lastActivityUtc < TimeSpan.FromSeconds(_inactivityTtlSeconds))
             {
@@ -565,27 +631,8 @@ namespace UniFocl.EditorBridge
             }
 
             var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            if (_isBatchMode)
-            {
-                _mainThreadWorkQueue.Enqueue(new MainThreadWorkItem(work, completion));
-                return completion.Task;
-            }
-
-            EditorApplication.delayCall += Execute;
+            _mainThreadWorkQueue.Enqueue(new MainThreadWorkItem(work, completion));
             return completion.Task;
-
-            void Execute()
-            {
-                try
-                {
-                    completion.TrySetResult(work());
-                }
-                catch (Exception ex)
-                {
-                    completion.TrySetException(ex);
-                }
-            }
         }
 
         private static Task<string> ExecuteOnMainThreadAsync(Func<Task<string>> workAsync)
@@ -604,20 +651,10 @@ namespace UniFocl.EditorBridge
             }
 
             var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            if (_isBatchMode)
-            {
-                _mainThreadActionQueue.Enqueue(() =>
-                {
-                    _ = ExecuteAsyncWork();
-                });
-                return completion.Task;
-            }
-
-            EditorApplication.delayCall += () =>
+            _mainThreadActionQueue.Enqueue(() =>
             {
                 _ = ExecuteAsyncWork();
-            };
+            });
             return completion.Task;
 
             async Task ExecuteAsyncWork()

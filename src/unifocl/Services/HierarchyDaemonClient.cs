@@ -6,7 +6,7 @@ internal sealed class HierarchyDaemonClient
 {
     private static readonly HttpClient Http = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ProjectCommandTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan UpmMutationTimeout = TimeSpan.FromSeconds(135);
     private static readonly TimeSpan BuildStatusTimeout = TimeSpan.FromSeconds(2);
@@ -16,20 +16,37 @@ internal sealed class HierarchyDaemonClient
 
     public async Task<HierarchySnapshotDto?> GetSnapshotAsync(int port)
     {
-        var payload = await SendGetAsync($"http://127.0.0.1:{port}/hierarchy/snapshot");
-        if (payload is null)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            return null;
+            var payload = await SendGetAsync($"http://127.0.0.1:{port}/hierarchy/snapshot");
+            if (payload is null)
+            {
+                if (attempt < 2)
+                {
+                    await Task.Delay(180);
+                    continue;
+                }
+
+                return null;
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<HierarchySnapshotDto>(payload, JsonOptions);
+            }
+            catch
+            {
+                if (attempt < 2)
+                {
+                    await Task.Delay(180);
+                    continue;
+                }
+
+                return null;
+            }
         }
 
-        try
-        {
-            return JsonSerializer.Deserialize<HierarchySnapshotDto>(payload, JsonOptions);
-        }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 
     public async Task<HierarchyCommandResponseDto> ExecuteAsync(int port, HierarchyCommandRequestDto request)

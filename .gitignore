@@ -20,3 +20,7 @@ src/unifocl.unity/EditorScripts/Plugins/*.dll
 #exclude /.codex
 .codex/config.toml
 .codex/rules/default.rules
+
+# local machine bootstrap artifacts
+local.config.json
+.local/
