@@ -386,7 +386,13 @@ internal sealed class InspectorModeService
             return;
         }
 
-        var argument = tokens[1];
+        var argument = string.Join(' ', tokens.Skip(1)).Trim();
+        if (string.IsNullOrWhiteSpace(argument))
+        {
+            await EnterInspectorRootAsync(context, session, session.FocusPath, input);
+            return;
+        }
+
         if (int.TryParse(argument, out var componentIndex) && context.Components.Count > 0)
         {
             await EnterComponentAsync(context, session, componentIndex, input);
@@ -473,7 +479,7 @@ internal sealed class InspectorModeService
             }
 
             var newEnabled = !entry.Enabled;
-            var bridged = await TrySendInspectorMutationAsync(
+            var mutation = await TrySendInspectorMutationWithMessageAsync(
                 session,
                 new InspectorBridgeRequest(
                     "toggle-component",
@@ -485,7 +491,7 @@ internal sealed class InspectorModeService
                     null));
 
             AddStream(context, $"{context.PromptLabel} > {input}");
-            if (bridged)
+            if (mutation.Ok)
             {
                 context.Components.Remove(entry);
                 context.Components.Add(entry with { Enabled = newEnabled });
@@ -494,7 +500,7 @@ internal sealed class InspectorModeService
             }
             else
             {
-                AddStream(context, "[!] failed to toggle component in Bridge mode");
+                AddStream(context, $"[!] {DescribeInspectorMutationFailure(mutation.Message)}");
             }
 
             _renderer.Render(context);
@@ -520,7 +526,7 @@ internal sealed class InspectorModeService
         }
 
         var newValue = field.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "false" : "true";
-        var mutationOk = await TrySendInspectorMutationAsync(
+        var fieldMutation = await TrySendInspectorMutationWithMessageAsync(
             session,
             new InspectorBridgeRequest(
                 "toggle-field",
@@ -531,14 +537,14 @@ internal sealed class InspectorModeService
                 null,
                 null));
         AddStream(context, $"{context.PromptLabel} > {input}");
-        if (mutationOk)
+        if (fieldMutation.Ok)
         {
             ReplaceField(context, field with { Value = newValue });
             AddStream(context, $"[=] ok: {field.Name} updated to {newValue}");
         }
         else
         {
-            AddStream(context, "[!] failed to toggle field in Bridge mode");
+            AddStream(context, $"[!] {DescribeInspectorMutationFailure(fieldMutation.Message)}");
         }
 
         _renderer.Render(context);
@@ -596,7 +602,7 @@ internal sealed class InspectorModeService
             if (fetchedFields is null)
             {
                 AddStream(context, $"{context.PromptLabel} > {input}");
-                AddStream(context, "[!] unable to fetch inspector fields from Bridge mode");
+                AddStream(context, "[!] unable to fetch inspector fields from daemon inspect endpoint (host/stub mode or transport failure)");
                 _renderer.Render(context);
                 return;
             }
@@ -703,7 +709,7 @@ internal sealed class InspectorModeService
             newValue = resolvedValue;
         }
 
-        var mutationOk = await TrySendInspectorMutationAsync(
+        var mutation = await TrySendInspectorMutationWithMessageAsync(
             session,
             new InspectorBridgeRequest(
                 "set-field",
@@ -715,9 +721,9 @@ internal sealed class InspectorModeService
                 null));
 
         AddStream(context, $"{context.PromptLabel} > {input}");
-        if (!mutationOk)
+        if (!mutation.Ok)
         {
-            AddStream(context, "[!] failed to set field in Bridge mode");
+            AddStream(context, $"[!] {DescribeInspectorMutationFailure(mutation.Message)}");
             _renderer.Render(context);
             return;
         }
@@ -958,7 +964,7 @@ internal sealed class InspectorModeService
             }
         }
 
-        AddStream(context, "[!] failed to query fuzzy results from Bridge mode");
+        AddStream(context, "[!] failed to query fuzzy results from daemon inspect endpoint");
         _renderer.Render(context);
     }
 
@@ -1101,8 +1107,8 @@ internal sealed class InspectorModeService
         if (!mutation.Ok)
         {
             var detail = string.IsNullOrWhiteSpace(mutation.Message)
-                ? "failed to add component in Bridge mode"
-                : mutation.Message!;
+                ? "failed to add component via daemon inspect endpoint"
+                : DescribeInspectorMutationFailure(mutation.Message);
             AddStream(context, $"[!] {detail}");
             _renderer.Render(context);
             return;
@@ -1153,8 +1159,8 @@ internal sealed class InspectorModeService
         if (!mutation.Ok)
         {
             var detail = string.IsNullOrWhiteSpace(mutation.Message)
-                ? "failed to remove component in Bridge mode"
-                : mutation.Message!;
+                ? "failed to remove component via daemon inspect endpoint"
+                : DescribeInspectorMutationFailure(mutation.Message);
             AddStream(context, $"[!] {detail}");
             _renderer.Render(context);
             return;
@@ -1474,12 +1480,17 @@ internal sealed class InspectorModeService
         context.LastReferenceSearchResults.Clear();
         session.ContextMode = CliContextMode.Inspector;
         session.FocusPath = targetPath;
-        await PopulateComponentsAsync(context, session, forceRefresh: true);
+        var componentFetch = await PopulateComponentsAsync(context, session, forceRefresh: true);
         AddStream(context, $"{context.PromptLabel} > {rawCommand}");
         AddStream(context, $"[i] entering inspector for: {context.TargetPath.TrimStart('/')}");
         if (context.Components.Count == 0)
         {
-            AddStream(context, "[!] no inspector components returned (check Bridge mode attachment/target path)");
+            AddStream(context, "[!] no inspector components returned");
+            var diagnostics = await BuildInspectorComponentFetchDiagnosticsAsync(session, context.TargetPath, componentFetch);
+            foreach (var line in diagnostics)
+            {
+                AddStream(context, line);
+            }
         }
 
         _renderer.Render(context);
@@ -1520,22 +1531,29 @@ internal sealed class InspectorModeService
         _renderer.Render(context);
     }
 
-    private async Task PopulateComponentsAsync(
+    private async Task<InspectorComponentFetchResult> PopulateComponentsAsync(
         InspectorContext context,
         CliSessionState session,
         bool forceRefresh)
     {
         if (!forceRefresh && context.Components.Count > 0)
         {
-            return;
+            return new InspectorComponentFetchResult(
+                true,
+                context.Components.ToList(),
+                null,
+                null,
+                null);
         }
 
         var fromBridge = await TryFetchComponentsFromBridgeAsync(session, context.TargetPath);
         context.Components.Clear();
-        if (fromBridge is not null)
+        if (fromBridge.Components.Count > 0)
         {
-            context.Components.AddRange(fromBridge);
+            context.Components.AddRange(fromBridge.Components);
         }
+
+        return fromBridge;
     }
 
     private async Task PopulateFieldsAsync(
@@ -2198,7 +2216,7 @@ internal sealed class InspectorModeService
         InspectorFieldEntry field,
         string value)
     {
-        var mutationOk = await TrySendInspectorMutationAsync(
+        var mutation = await TrySendInspectorMutationWithMessageAsync(
             session,
             new InspectorBridgeRequest(
                 "set-field",
@@ -2208,9 +2226,9 @@ internal sealed class InspectorModeService
                 field.Name,
                 value,
                 null));
-        if (!mutationOk)
+        if (!mutation.Ok)
         {
-            AddStream(context, $"[!] failed to set field in Bridge mode: {field.Name}");
+            AddStream(context, $"[!] {DescribeInspectorMutationFailure(mutation.Message)}: {field.Name}");
             return false;
         }
 
@@ -2338,31 +2356,155 @@ internal sealed class InspectorModeService
         return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
     }
 
-    private async Task<List<InspectorComponentEntry>?> TryFetchComponentsFromBridgeAsync(CliSessionState session, string targetPath)
+    private async Task<InspectorComponentFetchResult> TryFetchComponentsFromBridgeAsync(CliSessionState session, string targetPath)
     {
+        if (session.AttachedPort is null)
+        {
+            return new InspectorComponentFetchResult(
+                false,
+                [],
+                "no attached daemon port in current session",
+                null,
+                null);
+        }
+
         var payload = new InspectorBridgeRequest("list-components", targetPath, null, null, null, null, null);
         var responseJson = await SendBridgeRequestAsync(payload, session);
         if (string.IsNullOrWhiteSpace(responseJson))
         {
-            return null;
+            return new InspectorComponentFetchResult(
+                false,
+                [],
+                "bridge request returned empty payload (timeout, transport failure, or non-success status)",
+                null,
+                null);
         }
 
         try
         {
             var response = JsonSerializer.Deserialize<InspectorBridgeComponentsResponse>(responseJson, _jsonOptions);
-            if (response?.Ok != true || response.Components is null)
+            if (response is null)
             {
-                return null;
+                return new InspectorComponentFetchResult(
+                    false,
+                    [],
+                    "bridge payload deserialized to null response object",
+                    null,
+                    ClipDiagnosticPayload(responseJson));
             }
 
-            return response.Components
+            if (!response.Ok)
+            {
+                return new InspectorComponentFetchResult(
+                    false,
+                    [],
+                    "bridge responded with ok=false for list-components",
+                    false,
+                    ClipDiagnosticPayload(responseJson));
+            }
+
+            if (response.Components is null)
+            {
+                return new InspectorComponentFetchResult(
+                    false,
+                    [],
+                    "bridge responded with ok=true but components payload is missing",
+                    true,
+                    ClipDiagnosticPayload(responseJson));
+            }
+
+            var components = response.Components
                 .Select(component => new InspectorComponentEntry(component.Index, component.Name, component.Enabled))
                 .ToList();
+            return new InspectorComponentFetchResult(
+                true,
+                components,
+                null,
+                true,
+                ClipDiagnosticPayload(responseJson));
         }
         catch
         {
-            return null;
+            return new InspectorComponentFetchResult(
+                false,
+                [],
+                "bridge returned non-parseable JSON payload for list-components",
+                null,
+                ClipDiagnosticPayload(responseJson));
         }
+    }
+
+    private async Task<List<string>> BuildInspectorComponentFetchDiagnosticsAsync(
+        CliSessionState session,
+        string targetPath,
+        InspectorComponentFetchResult fetchResult)
+    {
+        var lines = new List<string>
+        {
+            $"[x] inspector diagnostics: targetPath='{targetPath}', attachedPort={(session.AttachedPort?.ToString() ?? "none")}"
+        };
+
+        if (!fetchResult.Success)
+        {
+            lines.Add($"[x] inspector diagnostics: bridge failure -> {fetchResult.FailureReason ?? "unknown"}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(fetchResult.RawPayload))
+        {
+            lines.Add($"[x] inspector diagnostics: bridge payload: {Markup.Escape(fetchResult.RawPayload)}");
+        }
+
+        if (session.AttachedPort is null)
+        {
+            return lines;
+        }
+
+        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+        if (snapshot is null)
+        {
+            lines.Add("[x] inspector diagnostics: hierarchy snapshot fetch failed on attached daemon");
+            return lines;
+        }
+
+        lines.Add($"[x] inspector diagnostics: hierarchy scene/root='{snapshot.Scene}'");
+        if (TryFindNodeByInspectorPath(snapshot.Root, targetPath, includeRoot: false, out var resolvedNode))
+        {
+            lines.Add($"[x] inspector diagnostics: target resolved in hierarchy (node id {resolvedNode.Id}, name '{resolvedNode.Name}')");
+            if (fetchResult.Success && fetchResult.Components.Count == 0)
+            {
+                lines.Add("[x] inspector diagnostics: hierarchy target exists but bridge returned 0 components; this indicates inspector-side target resolution mismatch");
+            }
+        }
+        else
+        {
+            var candidateRoots = snapshot.Root.Children
+                .Take(3)
+                .Select(node => node.Name)
+                .ToList();
+            var hint = candidateRoots.Count == 0
+                ? "no hierarchy root children are available"
+                : $"top-level candidates: {string.Join(", ", candidateRoots)}";
+            lines.Add($"[x] inspector diagnostics: target path does not resolve in current hierarchy snapshot ({hint})");
+        }
+
+        return lines;
+    }
+
+    private static string ClipDiagnosticPayload(string payload)
+    {
+        const int maxLength = 220;
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return string.Empty;
+        }
+
+        var compact = payload.Replace(Environment.NewLine, " ", StringComparison.Ordinal).Trim();
+        if (compact.Length <= maxLength)
+        {
+            return compact;
+        }
+
+        return compact[..maxLength] + "...";
     }
 
     private async Task<List<InspectorFieldEntry>?> TryFetchFieldsFromBridgeAsync(CliSessionState session, string targetPath, int componentIndex)
@@ -2425,12 +2567,6 @@ internal sealed class InspectorModeService
         return null;
     }
 
-    private async Task<bool> TrySendInspectorMutationAsync(CliSessionState session, InspectorBridgeRequest request)
-    {
-        var result = await TrySendInspectorMutationWithMessageAsync(session, request);
-        return result.Ok;
-    }
-
     private async Task<(bool Ok, string? Message)> TrySendInspectorMutationWithMessageAsync(CliSessionState session, InspectorBridgeRequest request)
     {
         var response = await SendBridgeRequestAsync(request, session);
@@ -2448,6 +2584,21 @@ internal sealed class InspectorModeService
         {
             return (false, null);
         }
+    }
+
+    private static string DescribeInspectorMutationFailure(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "inspector mutation failed (daemon inspect endpoint returned no detail)";
+        }
+
+        if (message.Contains("requires Bridge mode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "inspector mutation requires Unity Bridge mode, but current daemon is Host/stub mode. Re-run /init and reattach the project daemon";
+        }
+
+        return message;
     }
 
     private async Task<string?> SendBridgeRequestAsync(InspectorBridgeRequest request, CliSessionState? session = null)
@@ -2858,4 +3009,10 @@ internal sealed class InspectorModeService
     private sealed record InspectorBridgeMutationResponse(bool Ok, string? Message);
     private sealed record InspectorBridgeComponent(int Index, string Name, bool Enabled);
     private sealed record InspectorBridgeField(string Name, string Value, string Type, bool IsBoolean, List<string>? EnumOptions);
+    private sealed record InspectorComponentFetchResult(
+        bool Success,
+        List<InspectorComponentEntry> Components,
+        string? FailureReason,
+        bool? BridgeOk,
+        string? RawPayload);
 }

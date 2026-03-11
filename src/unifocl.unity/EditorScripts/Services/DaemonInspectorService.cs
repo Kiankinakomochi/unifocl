@@ -683,12 +683,11 @@ namespace UniFocl.EditorBridge
 
         private static GameObject? ResolveTarget(string? targetPath)
         {
-            if (!DaemonSceneManager.TryGetActiveScene(out var scene))
+            if (!DaemonHierarchyService.TryGetCurrentHierarchyRoots(out var rootLabel, out var roots))
             {
                 return null;
             }
 
-            var roots = scene.GetRootGameObjects();
             if (roots.Length == 0)
             {
                 return null;
@@ -706,7 +705,7 @@ namespace UniFocl.EditorBridge
                 return Selection.activeGameObject ?? roots[0];
             }
 
-            if (segments[0].Equals(scene.name, StringComparison.OrdinalIgnoreCase))
+            if (segments[0].Equals(rootLabel, StringComparison.OrdinalIgnoreCase))
             {
                 segments.RemoveAt(0);
             }
@@ -716,10 +715,39 @@ namespace UniFocl.EditorBridge
                 return Selection.activeGameObject ?? roots[0];
             }
 
+            if (TryResolveBySegments(roots, segments, out var resolved))
+            {
+                return resolved;
+            }
+
+            // Path roots can drift (scene/prefab root label changes); progressively trim leading segments.
+            for (var offset = 1; offset < segments.Count; offset++)
+            {
+                var tail = segments.Skip(offset).ToList();
+                if (TryResolveBySegments(roots, tail, out resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return FindByName(roots, segments[^1]);
+        }
+
+        private static bool TryResolveBySegments(
+            IReadOnlyList<GameObject> roots,
+            IReadOnlyList<string> segments,
+            out GameObject resolved)
+        {
+            resolved = null!;
+            if (segments.Count == 0)
+            {
+                return false;
+            }
+
             var current = roots.FirstOrDefault(root => root.name.Equals(segments[0], StringComparison.Ordinal));
             if (current is null)
             {
-                return FindByName(roots, segments[^1]);
+                return false;
             }
 
             for (var i = 1; i < segments.Count; i++)
@@ -727,13 +755,14 @@ namespace UniFocl.EditorBridge
                 var next = FindDirectChildByName(current.transform, segments[i]);
                 if (next is null)
                 {
-                    return FindByName(roots, segments[^1]);
+                    return false;
                 }
 
                 current = next;
             }
 
-            return current;
+            resolved = current;
+            return true;
         }
 
         private static GameObject? FindDirectChildByName(Transform parent, string name)

@@ -1,8 +1,10 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
@@ -18,6 +20,8 @@ namespace UniFocl.EditorBridge
         private static int _snapshotVersion = 1;
         private static int _lastSnapshotHash;
         private static bool _hasSnapshotHash;
+        private static GameObject? _loadedPrefabRoot;
+        private static string _loadedPrefabPath = string.Empty;
 
         private sealed class UiTextMirror
         {
@@ -34,6 +38,133 @@ namespace UniFocl.EditorBridge
                 var snapshot = BuildSnapshot();
                 return JsonUtility.ToJson(snapshot);
             }
+        }
+
+        public static bool TryLoadPrefabSnapshotRoot(string prefabPath, out string? error)
+        {
+            error = null;
+            lock (Sync)
+            {
+                var normalizedPath = NormalizeAssetPath(prefabPath);
+                if (string.IsNullOrWhiteSpace(normalizedPath))
+                {
+                    error = "prefab path is empty";
+                    return false;
+                }
+
+                if (_loadedPrefabRoot is not null
+                    && _loadedPrefabRoot
+                    && _loadedPrefabPath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                try
+                {
+                    ClearLoadedPrefabSnapshotRootNoLock();
+                    _loadedPrefabRoot = PrefabUtility.LoadPrefabContents(normalizedPath);
+                    _loadedPrefabPath = normalizedPath;
+                    if (_loadedPrefabRoot is null)
+                    {
+                        error = $"prefab load failed: {normalizedPath}";
+                        _loadedPrefabPath = string.Empty;
+                        return false;
+                    }
+
+                    _snapshotVersion++;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    _loadedPrefabRoot = null;
+                    _loadedPrefabPath = string.Empty;
+                    return false;
+                }
+            }
+        }
+
+        public static void ClearLoadedPrefabSnapshotRoot()
+        {
+            lock (Sync)
+            {
+                ClearLoadedPrefabSnapshotRootNoLock();
+            }
+        }
+
+        public static void PersistLoadedPrefabSnapshotRootIfAny(string source, bool markDirty)
+        {
+            lock (Sync)
+            {
+                if (_loadedPrefabRoot is null
+                    || !_loadedPrefabRoot
+                    || string.IsNullOrWhiteSpace(_loadedPrefabPath))
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (markDirty)
+                    {
+                        EditorUtility.SetDirty(_loadedPrefabRoot);
+                    }
+
+                    var saved = PrefabUtility.SaveAsPrefabAsset(_loadedPrefabRoot, _loadedPrefabPath);
+                    if (saved is null)
+                    {
+                        Debug.LogWarning(
+                            $"[unifocl] Failed to save loaded prefab contents after {source}: '{_loadedPrefabPath}'.");
+                        return;
+                    }
+
+                    AssetDatabase.SaveAssets();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning(
+                        $"[unifocl] Failed to persist loaded prefab contents after {source}: {ex.Message}");
+                }
+            }
+        }
+
+        public static bool TryGetCurrentHierarchyRoots(out string rootLabel, out GameObject[] roots)
+        {
+            lock (Sync)
+            {
+                if (_loadedPrefabRoot is not null && _loadedPrefabRoot)
+                {
+                    var prefabName = string.IsNullOrWhiteSpace(_loadedPrefabPath)
+                        ? _loadedPrefabRoot.name
+                        : Path.GetFileNameWithoutExtension(_loadedPrefabPath);
+                    rootLabel = $"Prefab: {prefabName}";
+                    roots = new[] { _loadedPrefabRoot };
+                    return true;
+                }
+
+                var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
+                if (prefabStage?.prefabContentsRoot is not null)
+                {
+                    var prefabPath = (prefabStage.assetPath ?? string.Empty).Replace('\\', '/');
+                    var prefabName = string.IsNullOrWhiteSpace(prefabPath)
+                        ? prefabStage.prefabContentsRoot.name
+                        : Path.GetFileNameWithoutExtension(prefabPath);
+                    rootLabel = $"Prefab: {prefabName}";
+                    roots = new[] { prefabStage.prefabContentsRoot };
+                    return true;
+                }
+
+                if (DaemonSceneManager.TryGetActiveScene(out var scene))
+                {
+                    rootLabel = ResolveSceneName(scene);
+                    roots = scene.GetRootGameObjects();
+                    return true;
+                }
+            }
+
+            rootLabel = "No Scene";
+            roots = Array.Empty<GameObject>();
+            return false;
         }
 
         public static string ExecuteCommand(string payload)
@@ -695,14 +826,22 @@ namespace UniFocl.EditorBridge
 
         private static HierarchySnapshotResponse BuildSnapshot()
         {
-            var hasActiveScene = DaemonSceneManager.TryGetActiveScene(out var scene);
-            var sceneName = ResolveSceneName(scene);
-            var children = hasActiveScene
-                ? scene.GetRootGameObjects()
-                    .Select(ToDto)
-                    .OrderBy(node => node.name, StringComparer.OrdinalIgnoreCase)
-                    .ToArray()
-                : Array.Empty<HierarchyNodeDto>();
+            string sceneName;
+            HierarchyNodeDto[] children;
+            if (TryBuildLoadedPrefabSnapshot(out sceneName, out children))
+            {
+            }
+            else if (!TryBuildPrefabStageSnapshot(out sceneName, out children))
+            {
+                var hasActiveScene = DaemonSceneManager.TryGetActiveScene(out var scene);
+                sceneName = ResolveSceneName(scene);
+                children = hasActiveScene
+                    ? scene.GetRootGameObjects()
+                        .Select(ToDto)
+                        .OrderBy(node => node.name, StringComparer.OrdinalIgnoreCase)
+                        .ToArray()
+                    : Array.Empty<HierarchyNodeDto>();
+            }
 
             var hash = ComputeHierarchyHash(sceneName, children);
             if (_hasSnapshotHash)
@@ -731,6 +870,72 @@ namespace UniFocl.EditorBridge
                     children = children
                 }
             };
+        }
+
+        private static bool TryBuildLoadedPrefabSnapshot(out string sceneName, out HierarchyNodeDto[] children)
+        {
+            sceneName = string.Empty;
+            children = Array.Empty<HierarchyNodeDto>();
+
+            if (_loadedPrefabRoot is null || !_loadedPrefabRoot)
+            {
+                return false;
+            }
+
+            var prefabName = string.IsNullOrWhiteSpace(_loadedPrefabPath)
+                ? _loadedPrefabRoot.name
+                : Path.GetFileNameWithoutExtension(_loadedPrefabPath);
+            sceneName = $"Prefab: {prefabName}";
+            children = new[]
+            {
+                ToDto(_loadedPrefabRoot)
+            };
+            return true;
+        }
+
+        private static bool TryBuildPrefabStageSnapshot(out string sceneName, out HierarchyNodeDto[] children)
+        {
+            sceneName = string.Empty;
+            children = Array.Empty<HierarchyNodeDto>();
+
+            var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
+            if (prefabStage?.prefabContentsRoot is null)
+            {
+                return false;
+            }
+
+            var prefabPath = (prefabStage.assetPath ?? string.Empty).Replace('\\', '/');
+            var prefabName = string.IsNullOrWhiteSpace(prefabPath)
+                ? prefabStage.prefabContentsRoot.name
+                : Path.GetFileNameWithoutExtension(prefabPath);
+            sceneName = $"Prefab: {prefabName}";
+            children = new[]
+            {
+                ToDto(prefabStage.prefabContentsRoot)
+            };
+            return true;
+        }
+
+        private static void ClearLoadedPrefabSnapshotRootNoLock()
+        {
+            if (_loadedPrefabRoot is not null && _loadedPrefabRoot)
+            {
+                try
+                {
+                    PrefabUtility.UnloadPrefabContents(_loadedPrefabRoot);
+                }
+                catch
+                {
+                }
+            }
+
+            _loadedPrefabRoot = null;
+            _loadedPrefabPath = string.Empty;
+        }
+
+        private static string NormalizeAssetPath(string? path)
+        {
+            return (path ?? string.Empty).Replace('\\', '/');
         }
 
         private static HierarchyNodeDto ToDto(GameObject gameObject)

@@ -469,7 +469,7 @@ internal sealed class DaemonControlService
         var unityPath = ResolveDefaultUnityPath(projectPath);
         if (requireBridgeMode && string.IsNullOrWhiteSpace(unityPath))
         {
-            log("[red]daemon[/]: scene load requires Bridge mode, but no Unity editor path is configured");
+            log("[red]daemon[/]: hierarchy asset load requires Bridge mode, but no Unity editor path is configured");
             return false;
         }
 

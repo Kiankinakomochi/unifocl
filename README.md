@@ -370,7 +370,7 @@ When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash t
 | `enter <idx>` | `cd` | Enter the selected node, folder, or component by index. |
 | `up` | `..` | Navigate up one level to the parent. |
 | `make <type> <name>`| `mk` | Create an item (e.g., `mk script Player`, `mk gameobject`). |
-| `load <idx/name>` | | Load/open a scene or script. |
+| `load <idx/name>` | | Load/open a scene, prefab, or script. |
 | `remove <idx>` | `rm` | Remove the selected item. |
 | `rename <idx> <new>`| `rn` | Rename the selected item. |
 | `set <field> <val>` | `s` | Set a field or property value. |
