@@ -8,12 +8,14 @@ internal sealed class HierarchyDaemonBridge
 
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _projectPath;
+    private readonly string _assetsRoot;
 
     public HierarchyDaemonBridge(string? projectPath)
     {
         _projectPath = string.IsNullOrWhiteSpace(projectPath)
             ? Directory.GetCurrentDirectory()
             : projectPath;
+        _assetsRoot = Path.GetFullPath(Path.Combine(_projectPath, "Assets"));
     }
 
     public bool TryHandle(string? commandLine, out string response)
@@ -73,21 +75,26 @@ internal sealed class HierarchyDaemonBridge
         _ = TryBuildTree(out _, out var index);
         var limit = request.Limit <= 0 ? 20 : Math.Min(request.Limit, 200);
         var query = request.Query?.Trim() ?? string.Empty;
+        if (request.ParentId is int requestedParentId && !index.ContainsKey(requestedParentId))
+        {
+            return new HierarchySearchResponseDto(false, [], $"parent not found: {requestedParentId}");
+        }
+
+        var parentPathPrefix = request.ParentId is int parentId && index.TryGetValue(parentId, out var parentNode)
+            ? parentNode.Path
+            : null;
         if (query.Length == 0)
         {
             var defaultResults = index.Values
                 .Where(node => node.Id != RootNodeId)
-                .Where(node => request.ParentId is null || node.Path.StartsWith(index.GetValueOrDefault(request.ParentId.Value)?.Path ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                .Where(node => string.IsNullOrWhiteSpace(parentPathPrefix)
+                    || node.Path.StartsWith(parentPathPrefix!, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(node => node.Path, StringComparer.OrdinalIgnoreCase)
                 .Take(limit)
                 .Select(node => new HierarchySearchResultDto(node.Id, "/" + node.Path, true, 1d))
                 .ToList();
             return new HierarchySearchResponseDto(true, defaultResults, null);
         }
-
-        var parentPathPrefix = request.ParentId is int parentId && index.TryGetValue(parentId, out var parentNode)
-            ? parentNode.Path
-            : null;
         var scored = new List<HierarchySearchResultDto>();
         foreach (var node in index.Values)
         {
@@ -225,10 +232,9 @@ internal sealed class HierarchyDaemonBridge
             return new HierarchyCommandResponseDto(false, "failed to resolve parent directory", null, null);
         }
 
-        var safeName = request.Name.Trim();
-        if (safeName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        if (!TryNormalizeNodeName(request.Name, out var safeName, out var normalizeError))
         {
-            return new HierarchyCommandResponseDto(false, "rename target contains invalid file-name characters", null, null);
+            return new HierarchyCommandResponseDto(false, normalizeError, null, null);
         }
 
         if (!node.IsDirectory && string.IsNullOrWhiteSpace(Path.GetExtension(safeName)))
@@ -237,7 +243,12 @@ internal sealed class HierarchyDaemonBridge
             safeName += ext;
         }
 
-        var destinationPath = Path.Combine(parentPath, safeName);
+        var destinationPath = Path.GetFullPath(Path.Combine(parentPath, safeName));
+        if (!IsPathWithinAssets(destinationPath))
+        {
+            return new HierarchyCommandResponseDto(false, "rename target escaped Assets root", null, null);
+        }
+
         if (File.Exists(destinationPath) || Directory.Exists(destinationPath))
         {
             return new HierarchyCommandResponseDto(false, $"rename target already exists: {safeName}", null, null);
@@ -282,15 +293,33 @@ internal sealed class HierarchyDaemonBridge
             return new HierarchyCommandResponseDto(false, "cannot move Assets root", null, null);
         }
 
-        var parentDirectory = parent.IsDirectory
-            ? parent.AbsolutePath
-            : (Directory.GetParent(parent.AbsolutePath)?.FullName ?? string.Empty);
+        if (!parent.IsDirectory)
+        {
+            return new HierarchyCommandResponseDto(false, "destination parent must be a directory", null, null);
+        }
+
+        var parentDirectory = parent.AbsolutePath;
         if (string.IsNullOrWhiteSpace(parentDirectory) || !Directory.Exists(parentDirectory))
         {
             return new HierarchyCommandResponseDto(false, "destination parent directory does not exist", null, null);
         }
 
-        var destinationPath = Path.Combine(parentDirectory, Path.GetFileName(target.AbsolutePath));
+        var destinationPath = Path.GetFullPath(Path.Combine(parentDirectory, Path.GetFileName(target.AbsolutePath)));
+        if (!IsPathWithinAssets(destinationPath))
+        {
+            return new HierarchyCommandResponseDto(false, "move destination escaped Assets root", null, null);
+        }
+
+        if (destinationPath.Equals(target.AbsolutePath, StringComparison.Ordinal))
+        {
+            return new HierarchyCommandResponseDto(false, "target already exists at destination", null, null);
+        }
+
+        if (target.IsDirectory && IsSubPath(destinationPath, target.AbsolutePath))
+        {
+            return new HierarchyCommandResponseDto(false, "cannot move a directory into itself or its descendants", null, null);
+        }
+
         if (File.Exists(destinationPath) || Directory.Exists(destinationPath))
         {
             return new HierarchyCommandResponseDto(false, "destination path already exists", null, null);
@@ -340,14 +369,18 @@ internal sealed class HierarchyDaemonBridge
             return new HierarchyCommandResponseDto(false, "mk parent directory not found", null, null);
         }
 
-        var baseName = string.IsNullOrWhiteSpace(request.Name) ? type : request.Name!.Trim();
-        if (baseName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        var rawBaseName = string.IsNullOrWhiteSpace(request.Name) ? type : request.Name!.Trim();
+        if (!TryNormalizeNodeName(rawBaseName, out var baseName, out var normalizeError))
         {
-            return new HierarchyCommandResponseDto(false, "mk name contains invalid file-name characters", null, null);
+            return new HierarchyCommandResponseDto(false, normalizeError, null, null);
         }
 
-        var createAsFolder = type.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase)
-                             || type.Equals("EmptyChild", StringComparison.OrdinalIgnoreCase);
+        if (type.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase))
+        {
+            return HandleMakeEmptyParent(request, index, parentDirectory, baseName);
+        }
+
+        var spec = ResolveMakeSpec(type);
         var firstCreatedPath = string.Empty;
         try
         {
@@ -355,16 +388,21 @@ internal sealed class HierarchyDaemonBridge
             {
                 var suffix = count == 1 ? string.Empty : $"_{i + 1}";
                 var stem = baseName + suffix;
-                var createdPath = createAsFolder
-                    ? ResolveUniquePath(Path.Combine(parentDirectory, stem), isDirectory: true)
-                    : ResolveUniquePath(Path.Combine(parentDirectory, stem + ".prefab"), isDirectory: false);
-                if (createAsFolder)
+                var fileName = spec.IsDirectory ? stem : $"{stem}{spec.Extension}";
+                var createdPath = ResolveUniquePath(Path.Combine(parentDirectory, fileName), spec.IsDirectory);
+                createdPath = Path.GetFullPath(createdPath);
+                if (!IsPathWithinAssets(createdPath))
+                {
+                    return new HierarchyCommandResponseDto(false, "mk target escaped Assets root", null, null);
+                }
+
+                if (spec.IsDirectory)
                 {
                     Directory.CreateDirectory(createdPath);
                 }
                 else
                 {
-                    var template = $"// host-mode hierarchy placeholder generated by unifocl ({type})";
+                    var template = $"// host-mode hierarchy placeholder generated by unifocl ({type}){Environment.NewLine}{spec.TemplateHint}";
                     File.WriteAllText(createdPath, template + Environment.NewLine);
                 }
 
@@ -593,10 +631,133 @@ internal sealed class HierarchyDaemonBridge
         return null;
     }
 
+    private HierarchyCommandResponseDto HandleMakeEmptyParent(
+        HierarchyCommandRequestDto request,
+        Dictionary<int, HostHierarchyNode> index,
+        string parentDirectory,
+        string baseName)
+    {
+        if (request.TargetId is null || !index.TryGetValue(request.TargetId.Value, out var targetNode))
+        {
+            return new HierarchyCommandResponseDto(false, "EmptyParent requires targetId", null, null);
+        }
+
+        if (targetNode.Id == RootNodeId)
+        {
+            return new HierarchyCommandResponseDto(false, "cannot wrap Assets root with EmptyParent", null, null);
+        }
+
+        var containerPath = ResolveUniquePath(Path.Combine(parentDirectory, baseName), isDirectory: true);
+        containerPath = Path.GetFullPath(containerPath);
+        if (!IsPathWithinAssets(containerPath))
+        {
+            return new HierarchyCommandResponseDto(false, "EmptyParent target escaped Assets root", null, null);
+        }
+
+        try
+        {
+            Directory.CreateDirectory(containerPath);
+            var movedPath = Path.Combine(containerPath, Path.GetFileName(targetNode.AbsolutePath));
+            if (targetNode.IsDirectory)
+            {
+                Directory.Move(targetNode.AbsolutePath, movedPath);
+            }
+            else
+            {
+                File.Move(targetNode.AbsolutePath, movedPath);
+            }
+
+            MoveMetaIfPresent(targetNode.AbsolutePath, movedPath);
+            if (!TryBuildTree(out _, out var updatedIndex))
+            {
+                return new HierarchyCommandResponseDto(true, "created EmptyParent wrapper in host mode", null, null);
+            }
+
+            var nodeId = ResolveNodeIdByAbsolutePath(updatedIndex, containerPath);
+            return new HierarchyCommandResponseDto(true, "created EmptyParent wrapper in host mode", nodeId, null);
+        }
+        catch (Exception ex)
+        {
+            return new HierarchyCommandResponseDto(false, $"failed to create EmptyParent wrapper: {ex.Message}", null, null);
+        }
+    }
+
+    private static bool TryNormalizeNodeName(string? raw, out string safeName, out string error)
+    {
+        safeName = string.Empty;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            error = "name must not be empty";
+            return false;
+        }
+
+        var trimmed = raw.Trim();
+        if (trimmed is "." or "..")
+        {
+            error = "name must not be '.' or '..'";
+            return false;
+        }
+
+        if (trimmed.Contains('/', StringComparison.Ordinal) || trimmed.Contains('\\', StringComparison.Ordinal))
+        {
+            error = "name must not contain path separators";
+            return false;
+        }
+
+        if (trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            error = "name contains invalid file-name characters";
+            return false;
+        }
+
+        safeName = trimmed;
+        return true;
+    }
+
+    private bool IsPathWithinAssets(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        return fullPath.Equals(_assetsRoot, StringComparison.Ordinal)
+               || fullPath.StartsWith(_assetsRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    private static bool IsSubPath(string candidatePath, string parentPath)
+    {
+        var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var parent = Path.GetFullPath(parentPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return candidate.Equals(parent, StringComparison.Ordinal)
+               || candidate.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    private static HostMakeSpec ResolveMakeSpec(string type)
+    {
+        if (type.Equals("Empty", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("EmptyChild", StringComparison.OrdinalIgnoreCase))
+        {
+            return new HostMakeSpec(true, string.Empty, "directory placeholder");
+        }
+
+        if (type.Equals("Text", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("TMP", StringComparison.OrdinalIgnoreCase))
+        {
+            return new HostMakeSpec(false, ".txt", "ui text placeholder");
+        }
+
+        if (type.Equals("Sprite", StringComparison.OrdinalIgnoreCase))
+        {
+            return new HostMakeSpec(false, ".sprite", "sprite placeholder");
+        }
+
+        return new HostMakeSpec(false, ".prefab", "prefab placeholder");
+    }
+
     private sealed record HostHierarchyNode(int Id, string Path, string AbsolutePath, bool IsDirectory, string? Name = null)
     {
         public string Name { get; } = string.IsNullOrWhiteSpace(Name)
             ? System.IO.Path.GetFileName(Path)
             : Name!;
     }
+
+    private sealed record HostMakeSpec(bool IsDirectory, string Extension, string TemplateHint);
 }
