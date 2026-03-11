@@ -57,6 +57,28 @@ namespace UniFocl.EditorBridge
                 });
             }
 
+            if (DaemonMutationTransactionCoordinator.IsInspectorMutation(request.action))
+            {
+                var decision = DaemonMutationTransactionCoordinator.ValidateInspectorIntent(request.action, request.intent);
+                if (!decision.Accepted)
+                {
+                    return JsonUtility.ToJson(new InspectorMutationResponse
+                    {
+                        ok = false,
+                        message = decision.Message
+                    });
+                }
+
+                if (!decision.ShouldExecute)
+                {
+                    return JsonUtility.ToJson(new InspectorMutationResponse
+                    {
+                        ok = true,
+                        message = decision.Message
+                    });
+                }
+            }
+
             try
             {
                 switch (request.action)

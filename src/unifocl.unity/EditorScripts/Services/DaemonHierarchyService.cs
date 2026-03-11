@@ -184,6 +184,20 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "missing hierarchy command payload" });
             }
 
+            if (DaemonMutationTransactionCoordinator.IsHierarchyMutation(request.action))
+            {
+                var decision = DaemonMutationTransactionCoordinator.ValidateHierarchyIntent(request.action, request.intent);
+                if (!decision.Accepted)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = decision.Message });
+                }
+
+                if (!decision.ShouldExecute)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = true, message = decision.Message });
+                }
+            }
+
             lock (Sync)
             {
                 if (request.action.Equals("mk", StringComparison.OrdinalIgnoreCase))

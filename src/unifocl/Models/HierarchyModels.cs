@@ -18,7 +18,8 @@ internal sealed record HierarchyCommandRequestDto(
     string? Name,
     bool Primitive,
     string? Type = null,
-    int? Count = null);
+    int? Count = null,
+    MutationIntentDto? Intent = null);
 
 internal sealed record HierarchyCommandResponseDto(
     bool Ok,

@@ -57,6 +57,25 @@ namespace UniFocl.EditorBridge
                 return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "missing project command payload" }));
             }
 
+            if (DaemonMutationTransactionCoordinator.IsProjectMutation(request.action))
+            {
+                var decision = DaemonMutationTransactionCoordinator.ValidateProjectIntent(request.action, request.intent);
+                if (!decision.Accepted)
+                {
+                    return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = decision.Message }));
+                }
+
+                if (!decision.ShouldExecute)
+                {
+                    return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = true,
+                        message = decision.Message,
+                        kind = "dry-run"
+                    }));
+                }
+            }
+
             try
             {
                 return request.action switch

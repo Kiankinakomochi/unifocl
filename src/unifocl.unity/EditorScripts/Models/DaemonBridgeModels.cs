@@ -62,6 +62,7 @@ namespace UniFocl.EditorBridge
         public bool primitive;
         public string type = string.Empty;
         public int count;
+        public MutationIntentEnvelope intent;
     }
 
     [Serializable]
@@ -110,6 +111,7 @@ namespace UniFocl.EditorBridge
         public string query = string.Empty;
         public bool includeSceneReferences = true;
         public bool includeProjectReferences = true;
+        public MutationIntentEnvelope intent;
     }
 
     [Serializable]
@@ -177,6 +179,25 @@ namespace UniFocl.EditorBridge
         public string newAssetPath = string.Empty;
         public string content = string.Empty;
         public string requestId = string.Empty;
+        public MutationIntentEnvelope intent;
+    }
+
+    [Serializable]
+    internal sealed class MutationIntentEnvelope
+    {
+        public string transactionId = string.Empty;
+        public string target = string.Empty;
+        public string property = string.Empty;
+        public string oldValue = string.Empty;
+        public string newValue = string.Empty;
+        public MutationIntentFlags flags = new();
+    }
+
+    [Serializable]
+    internal sealed class MutationIntentFlags
+    {
+        public bool dryRun;
+        public bool requireRollback = true;
     }
 
     [Serializable]

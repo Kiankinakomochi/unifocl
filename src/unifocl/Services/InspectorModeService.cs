@@ -2689,6 +2689,20 @@ internal sealed class InspectorModeService
             return null;
         }
 
+        if (DaemonMutationActionCatalog.IsInspectorMutation(request.Action) && request.Intent is null)
+        {
+            request = request with
+            {
+                Intent = MutationIntentFactory.CreateInspectorIntent(
+                    request.Action,
+                    request.TargetPath,
+                    request.ComponentIndex,
+                    request.ComponentName,
+                    request.FieldName,
+                    request.Value)
+            };
+        }
+
         for (var attempt = 0; attempt < 3; attempt++)
         {
             try
@@ -3102,7 +3116,8 @@ internal sealed class InspectorModeService
         string? Value,
         string? Query,
         bool IncludeSceneReferences = true,
-        bool IncludeProjectReferences = true);
+        bool IncludeProjectReferences = true,
+        MutationIntentDto? Intent = null);
 
     private sealed record InspectorBridgeComponentsResponse(bool Ok, List<InspectorBridgeComponent>? Components);
     private sealed record InspectorBridgeFieldsResponse(bool Ok, List<InspectorBridgeField>? Fields);
