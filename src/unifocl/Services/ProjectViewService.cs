@@ -38,7 +38,7 @@ internal sealed class ProjectViewService
         }
 
         InitializeIfNeeded(session.ProjectView, session.CurrentProjectPath);
-        var tokens = Tokenize(input);
+        var tokens = ProjectViewServiceUtils.Tokenize(input);
         if (tokens.Count == 0)
         {
             await SyncAssetIndexAsync(session);
@@ -488,7 +488,7 @@ internal sealed class ProjectViewService
     private static void RefreshTree(string projectPath, ProjectViewState state)
     {
         state.VisibleEntries.Clear();
-        var cwdAbsolute = ResolveAbsolutePath(projectPath, state.RelativeCwd);
+        var cwdAbsolute = ProjectViewServiceUtils.ResolveAbsolutePath(projectPath, state.RelativeCwd);
         if (!Directory.Exists(cwdAbsolute))
         {
             return;
@@ -516,13 +516,13 @@ internal sealed class ProjectViewService
 
         foreach (var file in files)
         {
-            var relativeChild = CombineRelative(relativePath, file.Name);
+            var relativeChild = ProjectViewServiceUtils.CombineRelative(relativePath, file.Name);
             state.VisibleEntries.Add(new ProjectTreeEntry(index++, depth, file.Name, relativeChild, false));
         }
 
         foreach (var directory in directories)
         {
-            var relativeChild = CombineRelative(relativePath, directory.Name);
+            var relativeChild = ProjectViewServiceUtils.CombineRelative(relativePath, directory.Name);
             state.VisibleEntries.Add(new ProjectTreeEntry(index++, depth, directory.Name, relativeChild, true));
             if (state.ExpandedDirectories.Contains(relativeChild))
             {
@@ -700,11 +700,11 @@ internal sealed class ProjectViewService
 
             if (!response.Ok)
             {
-                outputs.Add(FormatProjectCommandFailure("create", response.Message));
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("create", response.Message));
                 return true;
             }
 
-            var createdPaths = ParseMkAssetCreatedPaths(response.Content);
+            var createdPaths = ProjectViewServiceUtils.ParseMkAssetCreatedPaths(response.Content);
             if (createdPaths.Count == 0)
             {
                 outputs.Add($"[+] created: {canonicalType}");
@@ -752,23 +752,23 @@ internal sealed class ProjectViewService
         state.DbState = ProjectDbState.LockedImporting;
         try
         {
-            var template = ResolveTemplate(projectPath);
+            var template = ProjectViewServiceUtils.ResolveTemplate(projectPath);
             outputs.Add($"[*] template: found '{template.TemplateName}' in {template.TemplateSource}");
             for (var i = 0; i < count; i++)
             {
-                var rawName = ResolveScriptCreateName(canonicalType, name, i, count);
-                var typeName = SanitizeTypeName(rawName);
+                var rawName = ProjectViewServiceUtils.ResolveScriptCreateName(canonicalType, name, i, count);
+                var typeName = ProjectViewServiceUtils.SanitizeTypeName(rawName);
                 if (string.IsNullOrWhiteSpace(typeName))
                 {
                     outputs.Add("[x] invalid script name");
                     return true;
                 }
 
-                var uniqueTypeName = ResolveUniqueScriptTypeName(projectPath, parentPath, typeName);
-                var targetRelative = CombineRelative(parentPath, $"{uniqueTypeName}.cs");
+                var uniqueTypeName = ProjectViewServiceUtils.ResolveUniqueScriptTypeName(projectPath, parentPath, typeName);
+                var targetRelative = ProjectViewServiceUtils.CombineRelative(parentPath, $"{uniqueTypeName}.cs");
 
                 var content = canonicalType.Equals("ScriptableObjectScript", StringComparison.OrdinalIgnoreCase)
-                    ? BuildScriptableObjectTemplate(uniqueTypeName)
+                    ? ProjectViewServiceUtils.BuildScriptableObjectTemplate(uniqueTypeName)
                     : template.Content.Replace("#NAME#", uniqueTypeName);
 
                 var response = await RunTrackableProgressAsync(
@@ -784,7 +784,7 @@ internal sealed class ProjectViewService
                             content)));
                 if (!response.Ok)
                 {
-                    outputs.Add(FormatProjectCommandFailure("create", response.Message));
+                    outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("create", response.Message));
                     return true;
                 }
 
@@ -816,7 +816,7 @@ internal sealed class ProjectViewService
         }
 
         var targets = new List<ProjectTreeEntry>();
-        if (TryParseRemoveIndexRange(selector, out var startIndex, out var endIndex, out var rangeError))
+        if (ProjectViewServiceUtils.TryParseRemoveIndexRange(selector, out var startIndex, out var endIndex, out var rangeError))
         {
             if (!string.IsNullOrWhiteSpace(rangeError))
             {
@@ -867,7 +867,7 @@ internal sealed class ProjectViewService
                     () => ExecuteProjectCommandAsync(
                         session,
                         new ProjectCommandRequestDto("remove-asset", sourcePath, null, null)));
-                if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+                if (!response.Ok && ProjectViewServiceUtils.IsAssetNotFoundFailure(response.Message))
                 {
                     var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourcePath, allowDirectoryFallback: target.IsDirectory);
                     if (!string.IsNullOrWhiteSpace(fallbackPath)
@@ -886,7 +886,7 @@ internal sealed class ProjectViewService
 
                 if (!response.Ok)
                 {
-                    outputs.Add(FormatProjectCommandFailure("remove", response.Message));
+                    outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("remove", response.Message));
                     if (targets.Count > 1)
                     {
                         outputs.Add($"[i] removed {removedPaths.Count}/{targets.Count} before failure");
@@ -925,44 +925,6 @@ internal sealed class ProjectViewService
         }
     }
 
-    private static bool TryParseRemoveIndexRange(
-        string selector,
-        out int startIndex,
-        out int endIndex,
-        out string? error)
-    {
-        startIndex = 0;
-        endIndex = 0;
-        error = null;
-        var trimmed = selector.Trim();
-        var separator = trimmed.IndexOf(':');
-        if (separator < 0)
-        {
-            return false;
-        }
-
-        var startRaw = trimmed[..separator];
-        var endRaw = separator + 1 < trimmed.Length ? trimmed[(separator + 1)..] : string.Empty;
-        if (!int.TryParse(startRaw, out startIndex) || !int.TryParse(endRaw, out endIndex))
-        {
-            error = "range must be numeric: <start:end>";
-            return true;
-        }
-
-        if (startIndex < 0 || endIndex < 0)
-        {
-            error = "range indices must be non-negative";
-            return true;
-        }
-
-        if (startIndex > endIndex)
-        {
-            error = "range start must be <= end";
-            return true;
-        }
-
-        return true;
-    }
 
     private async Task<bool> HandleLoadViaBridgeAsync(
         string selector,
@@ -978,7 +940,7 @@ internal sealed class ProjectViewService
             return true;
         }
 
-        var target = FindEntryBySelector(state, selector);
+        var target = ProjectViewServiceUtils.FindEntryBySelector(state, selector);
         if (target is null)
         {
             outputs.Add($"[x] no entry matches: {selector}");
@@ -992,8 +954,8 @@ internal sealed class ProjectViewService
         }
 
         var extension = Path.GetExtension(target.Name);
-        var isHierarchyAssetLoad = IsHierarchyAssetExtension(extension);
-        var loadAssetKind = ResolveLoadAssetKind(extension);
+        var isHierarchyAssetLoad = ProjectViewServiceUtils.IsHierarchyAssetExtension(extension);
+        var loadAssetKind = ProjectViewServiceUtils.ResolveLoadAssetKind(extension);
         EmitImmediateLoadFeedback(state, target.Name);
         EmitLoadDiagnostic(state, $"selector '{selector}' resolved to '{target.RelativePath}'");
         EmitLoadDiagnostic(state, "ensuring Bridge mode context");
@@ -1035,7 +997,7 @@ internal sealed class ProjectViewService
                 session,
                 new ProjectCommandRequestDto("load-asset", target.RelativePath, null, null),
                 status => EmitLoadDiagnostic(state, status)));
-        if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+        if (!response.Ok && ProjectViewServiceUtils.IsAssetNotFoundFailure(response.Message))
         {
             var fallbackPath = await ResolveAssetFallbackPathAsync(session, target.RelativePath, allowDirectoryFallback: false);
             if (!string.IsNullOrWhiteSpace(fallbackPath)
@@ -1068,7 +1030,7 @@ internal sealed class ProjectViewService
                 return true;
             }
 
-            outputs.Add(FormatProjectCommandFailure("load", response.Message));
+            outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("load", response.Message));
             return true;
         }
 
@@ -1104,7 +1066,7 @@ internal sealed class ProjectViewService
         }
 
         var sourceRelativePath = target.RelativePath;
-        var destinationRelative = ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
+        var destinationRelative = ProjectViewServiceUtils.ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
 
         state.DbState = ProjectDbState.LockedImporting;
         try
@@ -1112,14 +1074,14 @@ internal sealed class ProjectViewService
             var response = await ExecuteProjectCommandAsync(
                 session,
                 new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null));
-            if (!response.Ok && IsAssetNotFoundFailure(response.Message))
+            if (!response.Ok && ProjectViewServiceUtils.IsAssetNotFoundFailure(response.Message))
             {
                 var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourceRelativePath, allowDirectoryFallback: target.IsDirectory);
                 if (!string.IsNullOrWhiteSpace(fallbackPath)
                     && !fallbackPath.Equals(sourceRelativePath, StringComparison.OrdinalIgnoreCase))
                 {
                     sourceRelativePath = fallbackPath;
-                    destinationRelative = ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
+                    destinationRelative = ProjectViewServiceUtils.ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
                     response = await ExecuteProjectCommandAsync(
                         session,
                         new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null));
@@ -1128,7 +1090,7 @@ internal sealed class ProjectViewService
 
             if (!response.Ok)
             {
-                outputs.Add(FormatProjectCommandFailure("rename", response.Message));
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("rename", response.Message));
                 return true;
             }
 
@@ -1173,18 +1135,18 @@ internal sealed class ProjectViewService
             return response;
         }
 
-        if (DidResponseChannelInterruptAfterCompletion(response.Message))
+        if (ProjectViewServiceUtils.DidResponseChannelInterruptAfterCompletion(response.Message))
         {
             outputs.Add("[yellow]upm[/]: command completed in daemon, but response channel was interrupted; verifying package state");
             return response;
         }
 
-        if (!ShouldRecoverUpmTimeout(response.Message))
+        if (!ProjectViewServiceUtils.ShouldRecoverUpmTimeout(response.Message))
         {
             return response;
         }
 
-        if (DidDaemonRuntimeRestart(response.Message))
+        if (ProjectViewServiceUtils.DidDaemonRuntimeRestart(response.Message))
         {
             outputs.Add("[yellow]upm[/]: daemon runtime restarted during command; retrying once on refreshed runtime");
         }
@@ -1223,44 +1185,13 @@ internal sealed class ProjectViewService
         return retried;
     }
 
-    private static bool ShouldRecoverUpmTimeout(string? message)
-    {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return false;
-        }
-
-        return message.Contains("daemon project command timed out", StringComparison.OrdinalIgnoreCase)
-               && message.Contains("daemonPing=ok", StringComparison.OrdinalIgnoreCase)
-               || DidDaemonRuntimeRestart(message);
-    }
-
-    private static bool DidDaemonRuntimeRestart(string? message)
-    {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return false;
-        }
-
-        return message.Contains("daemon runtime restarted during project command", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool DidResponseChannelInterruptAfterCompletion(string? message)
-    {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return false;
-        }
-
-        return message.Contains("completed successfully but response channel was interrupted", StringComparison.OrdinalIgnoreCase);
-    }
 
     private async Task<(bool Confirmed, string? Version)> TryConfirmUpmUpdateSucceededAsync(
         CliSessionState session,
         string packageId,
         string? expectedVersion)
     {
-        if (string.IsNullOrWhiteSpace(packageId) || !IsRegistryPackageId(packageId))
+        if (string.IsNullOrWhiteSpace(packageId) || !ProjectViewServiceUtils.IsRegistryPackageId(packageId))
         {
             return (false, null);
         }
@@ -1284,7 +1215,7 @@ internal sealed class ProjectViewService
                 continue;
             }
 
-            var current = TryFindUpmPackageById(response.Content, packageId);
+            var current = ProjectViewServiceUtils.TryFindUpmPackageById(response.Content, packageId);
             if (current is null)
             {
                 continue;
@@ -1306,64 +1237,13 @@ internal sealed class ProjectViewService
         return (false, null);
     }
 
-    private static ProjectTreeEntry? FindEntryBySelector(ProjectViewState state, string selector)
-    {
-        var normalizedSelector = NormalizeLoadSelector(selector);
-        if (int.TryParse(normalizedSelector, out var index))
-        {
-            var visible = state.VisibleEntries.FirstOrDefault(entry => entry.Index == index);
-            if (visible is not null)
-            {
-                return visible;
-            }
-
-            var fuzzy = state.LastFuzzyMatches.FirstOrDefault(entry => entry.Index == index);
-            if (fuzzy is not null)
-            {
-                var name = Path.GetFileName(fuzzy.Path);
-                return new ProjectTreeEntry(fuzzy.Index, 0, name, fuzzy.Path, false);
-            }
-
-            return null;
-        }
-
-        var normalized = normalizedSelector.Replace('\\', '/');
-        return state.VisibleEntries.FirstOrDefault(entry =>
-            entry.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase)
-            || entry.RelativePath.Equals(normalized, StringComparison.OrdinalIgnoreCase)
-            || entry.RelativePath.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string NormalizeLoadSelector(string selector)
-    {
-        var normalized = selector.Trim();
-        if (normalized.Length >= 2
-            && ((normalized.StartsWith('<') && normalized.EndsWith('>'))
-                || (normalized.StartsWith('"') && normalized.EndsWith('"'))
-                || (normalized.StartsWith('\'') && normalized.EndsWith('\''))))
-        {
-            normalized = normalized[1..^1].Trim();
-        }
-
-        return normalized;
-    }
-
-    private static string ComputeRenameDestinationPath(string sourceRelativePath, bool isDirectory, string newName)
-    {
-        var parentRelative = Path.GetDirectoryName(sourceRelativePath)?.Replace('\\', '/') ?? string.Empty;
-        var sourceName = Path.GetFileName(sourceRelativePath);
-        var finalName = isDirectory
-            ? newName
-            : (Path.HasExtension(newName) ? newName : $"{newName}{Path.GetExtension(sourceName)}");
-        return string.IsNullOrEmpty(parentRelative) ? finalName : $"{parentRelative}/{finalName}";
-    }
 
     private async Task<string?> ResolveAssetFallbackPathAsync(CliSessionState session, string targetRelativePath, bool allowDirectoryFallback)
     {
         var targetPath = targetRelativePath.Replace('\\', '/');
         if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
-            var targetAbsolutePath = ResolveAbsolutePath(session.CurrentProjectPath, targetPath);
+            var targetAbsolutePath = ProjectViewServiceUtils.ResolveAbsolutePath(session.CurrentProjectPath, targetPath);
             if (File.Exists(targetAbsolutePath) || Directory.Exists(targetAbsolutePath))
             {
                 return targetPath;
@@ -1435,66 +1315,6 @@ internal sealed class ProjectViewService
         return matchingDirectories.Count == 1 ? matchingDirectories[0] : null;
     }
 
-    private static bool IsAssetNotFoundFailure(string? message)
-    {
-        return !string.IsNullOrWhiteSpace(message)
-               && message.Contains("asset not found", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ResolvePackageDisplayName(string? displayName, string packageId)
-    {
-        if (!string.IsNullOrWhiteSpace(displayName))
-        {
-            return displayName.Trim();
-        }
-
-        var tail = packageId.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? packageId;
-        return string.Join(' ', tail
-            .Split('-', StringSplitOptions.RemoveEmptyEntries)
-            .Select(token => token.Length == 0
-                ? token
-                : char.ToUpperInvariant(token[0]) + token[1..]));
-    }
-
-    private static string ResolveUpmStatusColor(UpmPackageEntry package)
-    {
-        if (package.IsDeprecated)
-        {
-            return CliTheme.Error;
-        }
-
-        if (package.IsOutdated)
-        {
-            return CliTheme.Warning;
-        }
-
-        if (package.IsPreview)
-        {
-            return CliTheme.Info;
-        }
-
-        return CliTheme.Success;
-    }
-
-    private static string ResolveUpmStatusLabel(UpmPackageEntry package)
-    {
-        if (package.IsDeprecated)
-        {
-            return "deprecated";
-        }
-
-        if (package.IsOutdated)
-        {
-            return "update available";
-        }
-
-        if (package.IsPreview)
-        {
-            return "preview";
-        }
-
-        return "stable";
-    }
 
     private async Task<bool> HandleFuzzyFindAsync(CliSessionState session, IReadOnlyList<string> tokens, List<string> outputs)
     {
@@ -1513,12 +1333,12 @@ internal sealed class ProjectViewService
         }
 
         var query = string.Join(' ', tokens.Skip(1));
-        var (typeFilter, term) = ParseProjectQuery(query);
+        var (typeFilter, term) = ProjectViewServiceUtils.ParseProjectQuery(query);
         var matches = new List<ProjectFuzzyMatch>();
 
         foreach (var entry in state.AssetPathByInstanceId)
         {
-            if (!PassesTypeFilter(entry.Value, typeFilter))
+            if (!ProjectViewServiceUtils.PassesTypeFilter(entry.Value, typeFilter))
             {
                 continue;
             }
@@ -1586,7 +1406,7 @@ internal sealed class ProjectViewService
             var rawTarget = tokens.Count >= 3
                 ? string.Join(' ', tokens.Skip(2))
                 : string.Empty;
-            if (!TryNormalizeUpmInstallTarget(rawTarget, out var target, out var targetType, out var validationError))
+            if (!ProjectViewServiceUtils.TryNormalizeUpmInstallTarget(rawTarget, out var target, out var targetType, out var validationError))
             {
                 outputs.Add($"[x] upm install failed: {validationError}");
                 outputs.Add("accepted targets:");
@@ -1609,7 +1429,7 @@ internal sealed class ProjectViewService
 
             if (targetType.Equals("registry", StringComparison.OrdinalIgnoreCase))
             {
-                var (registryPackageId, _) = SplitRegistryTarget(target);
+                var (registryPackageId, _) = ProjectViewServiceUtils.SplitRegistryTarget(target);
                 var listResponse = await RunTrackableProgressAsync(
                     session,
                     "checking installed packages",
@@ -1625,11 +1445,11 @@ internal sealed class ProjectViewService
                                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))));
                 if (!listResponse.Ok)
                 {
-                    outputs.Add(FormatProjectCommandFailure("upm install", listResponse.Message));
+                    outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm install", listResponse.Message));
                     return true;
                 }
 
-                var existingPackage = TryFindUpmPackageById(listResponse.Content, registryPackageId);
+                var existingPackage = ProjectViewServiceUtils.TryFindUpmPackageById(listResponse.Content, registryPackageId);
                 if (existingPackage is not null)
                 {
                     var existingPackageId = string.IsNullOrWhiteSpace(existingPackage.PackageId) ? registryPackageId : existingPackage.PackageId!;
@@ -1661,7 +1481,7 @@ internal sealed class ProjectViewService
                             outputs));
                     if (!removeResponse.Ok)
                     {
-                        outputs.Add(FormatProjectCommandFailure("upm clean remove", removeResponse.Message));
+                        outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm clean remove", removeResponse.Message));
                         return true;
                     }
 
@@ -1685,7 +1505,7 @@ internal sealed class ProjectViewService
 
             if (!installResponse.Ok)
             {
-                outputs.Add(FormatProjectCommandFailure("upm install", installResponse.Message));
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm install", installResponse.Message));
                 return true;
             }
 
@@ -1726,8 +1546,8 @@ internal sealed class ProjectViewService
             var rawId = tokens.Count >= 3
                 ? string.Join(' ', tokens.Skip(2))
                 : string.Empty;
-            var packageId = NormalizeLoadSelector(rawId);
-            if (!IsRegistryPackageId(packageId))
+            var packageId = ProjectViewServiceUtils.NormalizeLoadSelector(rawId);
+            if (!ProjectViewServiceUtils.IsRegistryPackageId(packageId))
             {
                 outputs.Add("[x] upm remove failed: package id is required (e.g., com.unity.addressables)");
                 return true;
@@ -1759,7 +1579,7 @@ internal sealed class ProjectViewService
                     outputs));
             if (!removeResponse.Ok)
             {
-                outputs.Add(FormatProjectCommandFailure("upm remove", removeResponse.Message));
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm remove", removeResponse.Message));
                 return true;
             }
 
@@ -1793,11 +1613,11 @@ internal sealed class ProjectViewService
                     new ProjectCommandRequestDto("upm-list", null, null, updateListPayload)));
             if (!updateListResponse.Ok)
             {
-                outputs.Add(FormatProjectCommandFailure("upm update", updateListResponse.Message));
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm update", updateListResponse.Message));
                 return true;
             }
 
-            var updatePackages = TryParseUpmPackages(updateListResponse.Content);
+            var updatePackages = ProjectViewServiceUtils.TryParseUpmPackages(updateListResponse.Content);
             if (updatePackages is null)
             {
                 outputs.Add("[x] upm update failed: invalid package payload");
@@ -1805,7 +1625,7 @@ internal sealed class ProjectViewService
             }
 
             var requestedId = tokens.Count >= 3
-                ? NormalizeLoadSelector(string.Join(' ', tokens.Skip(2)))
+                ? ProjectViewServiceUtils.NormalizeLoadSelector(string.Join(' ', tokens.Skip(2)))
                 : string.Empty;
 
             if (!string.IsNullOrWhiteSpace(requestedId))
@@ -1832,7 +1652,7 @@ internal sealed class ProjectViewService
                 }
 
                 var singleUpdatePayload = JsonSerializer.Serialize(
-                    new UpmInstallRequestPayload(ComposeRegistryInstallTarget(requestedId, target.LatestCompatibleVersion)),
+                    new UpmInstallRequestPayload(ProjectViewServiceUtils.ComposeRegistryInstallTarget(requestedId, target.LatestCompatibleVersion)),
                     new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
                 var singleUpdateResponse = await RunTrackableProgressAsync(
                     session,
@@ -1854,19 +1674,19 @@ internal sealed class ProjectViewService
                     {
                         var confirmedOldVersion = string.IsNullOrWhiteSpace(target.Version) ? "-" : target.Version!;
                         var confirmedVersion = string.IsNullOrWhiteSpace(verified.Version)
-                            ? ResolveUpmUpdatedVersion(singleUpdateResponse.Content, target.LatestCompatibleVersion)
+                            ? ProjectViewServiceUtils.ResolveUpmUpdatedVersion(singleUpdateResponse.Content, target.LatestCompatibleVersion)
                             : verified.Version!;
                         outputs.Add("[i] update command timed out, but package state confirms success");
                         outputs.Add($"[+] updated package: {Markup.Escape(requestedId)} [grey]v{Markup.Escape(confirmedOldVersion)} -> v{Markup.Escape(confirmedVersion)}[/]");
                         return true;
                     }
 
-                    outputs.Add(FormatProjectCommandFailure("upm update", singleUpdateResponse.Message));
+                    outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm update", singleUpdateResponse.Message));
                     return true;
                 }
 
                 var oldVersion = string.IsNullOrWhiteSpace(target.Version) ? "-" : target.Version!;
-                var newVersion = ResolveUpmUpdatedVersion(singleUpdateResponse.Content, target.LatestCompatibleVersion);
+                var newVersion = ProjectViewServiceUtils.ResolveUpmUpdatedVersion(singleUpdateResponse.Content, target.LatestCompatibleVersion);
                 outputs.Add($"[+] updated package: {Markup.Escape(requestedId)} [grey]v{Markup.Escape(oldVersion)} -> v{Markup.Escape(newVersion)}[/]");
                 return true;
             }
@@ -1890,7 +1710,7 @@ internal sealed class ProjectViewService
             {
                 var packageId = package.PackageId!;
                 var bulkPayload = JsonSerializer.Serialize(
-                    new UpmInstallRequestPayload(ComposeRegistryInstallTarget(packageId, package.LatestCompatibleVersion)),
+                    new UpmInstallRequestPayload(ProjectViewServiceUtils.ComposeRegistryInstallTarget(packageId, package.LatestCompatibleVersion)),
                     new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
                 var bulkResponse = await RunTrackableProgressAsync(
                     session,
@@ -1906,7 +1726,7 @@ internal sealed class ProjectViewService
                 {
                     successCount++;
                     var oldVersion = string.IsNullOrWhiteSpace(package.Version) ? "-" : package.Version!;
-                    var newVersion = ResolveUpmUpdatedVersion(bulkResponse.Content, package.LatestCompatibleVersion);
+                    var newVersion = ProjectViewServiceUtils.ResolveUpmUpdatedVersion(bulkResponse.Content, package.LatestCompatibleVersion);
                     outputs.Add($"[+] updated: {Markup.Escape(packageId)} [grey]v{Markup.Escape(oldVersion)} -> v{Markup.Escape(newVersion)}[/]");
                 }
                 else
@@ -1920,7 +1740,7 @@ internal sealed class ProjectViewService
                         successCount++;
                         var oldVersion = string.IsNullOrWhiteSpace(package.Version) ? "-" : package.Version!;
                         var confirmedVersion = string.IsNullOrWhiteSpace(verified.Version)
-                            ? ResolveUpmUpdatedVersion(bulkResponse.Content, package.LatestCompatibleVersion)
+                            ? ProjectViewServiceUtils.ResolveUpmUpdatedVersion(bulkResponse.Content, package.LatestCompatibleVersion)
                             : verified.Version!;
                         outputs.Add("[i] update command timed out, but package state confirms success");
                         outputs.Add($"[+] updated: {Markup.Escape(packageId)} [grey]v{Markup.Escape(oldVersion)} -> v{Markup.Escape(confirmedVersion)}[/]");
@@ -1928,7 +1748,7 @@ internal sealed class ProjectViewService
                     else
                     {
                         failureCount++;
-                        outputs.Add(FormatProjectCommandFailure($"upm update {packageId}", bulkResponse.Message));
+                        outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure($"upm update {packageId}", bulkResponse.Message));
                     }
                 }
             }
@@ -1998,7 +1818,7 @@ internal sealed class ProjectViewService
 
         if (!response.Ok)
         {
-            outputs.Add(FormatProjectCommandFailure("upm list", response.Message));
+            outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("upm list", response.Message));
             return true;
         }
 
@@ -2023,12 +1843,12 @@ internal sealed class ProjectViewService
 
         var indexedPackages = (parsed?.Packages ?? [])
             .Where(p => !string.IsNullOrWhiteSpace(p.PackageId))
-            .OrderBy(p => ResolvePackageDisplayName(p.DisplayName, p.PackageId!), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => ProjectViewServiceUtils.ResolvePackageDisplayName(p.DisplayName, p.PackageId!), StringComparer.OrdinalIgnoreCase)
             .ThenBy(p => p.PackageId, StringComparer.OrdinalIgnoreCase)
             .Select((package, index) => new UpmPackageEntry(
                 index,
                 package.PackageId!,
-                ResolvePackageDisplayName(package.DisplayName, package.PackageId!),
+                ProjectViewServiceUtils.ResolvePackageDisplayName(package.DisplayName, package.PackageId!),
                 string.IsNullOrWhiteSpace(package.Version) ? "-" : package.Version!,
                 string.IsNullOrWhiteSpace(package.Source) ? "unknown" : package.Source!,
                 string.IsNullOrWhiteSpace(package.LatestCompatibleVersion) ? null : package.LatestCompatibleVersion,
@@ -2049,150 +1869,14 @@ internal sealed class ProjectViewService
 
         foreach (var package in indexedPackages)
         {
-            var statusColor = ResolveUpmStatusColor(package);
-            var statusLabel = ResolveUpmStatusLabel(package);
+            var statusColor = ProjectViewServiceUtils.ResolveUpmStatusColor(package);
+            var statusLabel = ProjectViewServiceUtils.ResolveUpmStatusLabel(package);
             outputs.Add(
                 $"[{CliTheme.TextSecondary}]{package.Index}.[/] {Markup.Escape(package.DisplayName)} ({Markup.Escape(package.PackageId)}) v{Markup.Escape(package.Version)} [{CliTheme.TextSecondary}]{Markup.Escape(package.Source)}[/] [{statusColor}]{Markup.Escape(statusLabel)}[/]");
         }
         return true;
     }
 
-    private static bool TryNormalizeUpmInstallTarget(
-        string rawTarget,
-        out string normalizedTarget,
-        out string targetType,
-        out string error)
-    {
-        normalizedTarget = NormalizeLoadSelector(rawTarget);
-        targetType = string.Empty;
-        error = string.Empty;
-        if (string.IsNullOrWhiteSpace(normalizedTarget))
-        {
-            error = "missing target";
-            return false;
-        }
-
-        if (IsRegistryPackageId(normalizedTarget))
-        {
-            targetType = "registry";
-            return true;
-        }
-
-        if (IsGitPackageUrl(normalizedTarget))
-        {
-            targetType = "git";
-            return true;
-        }
-
-        if (IsLocalFilePackagePath(normalizedTarget))
-        {
-            targetType = "file";
-            return true;
-        }
-
-        error = "target must be registry ID, Git URL, or file: path";
-        return false;
-    }
-
-    private static bool IsRegistryPackageId(string value)
-    {
-        var (packageId, version) = SplitRegistryTarget(value);
-        if (string.IsNullOrWhiteSpace(packageId))
-        {
-            return false;
-        }
-
-        if (version is not null && string.IsNullOrWhiteSpace(version))
-        {
-            return false;
-        }
-
-        var segments = packageId.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 2)
-        {
-            return false;
-        }
-
-        foreach (var segment in segments)
-        {
-            if (segment.Length == 0)
-            {
-                return false;
-            }
-
-            if (!char.IsLetterOrDigit(segment[0]))
-            {
-                return false;
-            }
-
-            foreach (var ch in segment)
-            {
-                if (!char.IsLetterOrDigit(ch) && ch != '-' && ch != '_')
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
-    private static (string PackageId, string? Version) SplitRegistryTarget(string value)
-    {
-        var at = value.IndexOf('@');
-        if (at < 0)
-        {
-            return (value, null);
-        }
-
-        var packageId = value[..at];
-        var version = at + 1 < value.Length ? value[(at + 1)..] : string.Empty;
-        return (packageId, version);
-    }
-
-    private static string ComposeRegistryInstallTarget(string packageId, string? latestCompatibleVersion)
-    {
-        if (string.IsNullOrWhiteSpace(packageId))
-        {
-            return packageId;
-        }
-
-        if (string.IsNullOrWhiteSpace(latestCompatibleVersion))
-        {
-            return packageId;
-        }
-
-        return $"{packageId}@{latestCompatibleVersion}";
-    }
-
-    private static bool IsGitPackageUrl(string value)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        var isHttp = uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
-                     || uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
-        if (!isHttp)
-        {
-            return false;
-        }
-
-        var withoutQuery = value.Split('?', '#')[0];
-        return withoutQuery.EndsWith(".git", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsLocalFilePackagePath(string value)
-    {
-        if (!value.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var pathPart = value["file:".Length..].Trim();
-        return !string.IsNullOrWhiteSpace(pathPart);
-    }
 
     private async Task<T> RunTrackableProgressAsync<T>(
         CliSessionState session,
@@ -2235,62 +1919,6 @@ internal sealed class ProjectViewService
         }
     }
 
-    private static UpmListPackagePayload? TryFindUpmPackageById(string? rawContent, string packageId)
-    {
-        if (string.IsNullOrWhiteSpace(packageId))
-        {
-            return null;
-        }
-
-        var packages = TryParseUpmPackages(rawContent);
-        return packages?.FirstOrDefault(p =>
-            !string.IsNullOrWhiteSpace(p.PackageId)
-            && p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static List<UpmListPackagePayload>? TryParseUpmPackages(string? rawContent)
-    {
-        if (string.IsNullOrWhiteSpace(rawContent))
-        {
-            return null;
-        }
-
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<UpmListResponsePayload>(
-                rawContent,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            return parsed?.Packages;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string ResolveUpmUpdatedVersion(string? installResponseContent, string? fallbackLatestCompatibleVersion)
-    {
-        if (!string.IsNullOrWhiteSpace(installResponseContent))
-        {
-            try
-            {
-                var parsed = JsonSerializer.Deserialize<UpmInstallResponsePayload>(
-                    installResponseContent,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (!string.IsNullOrWhiteSpace(parsed?.Version))
-                {
-                    return parsed.Version!;
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        return string.IsNullOrWhiteSpace(fallbackLatestCompatibleVersion)
-            ? "unknown"
-            : fallbackLatestCompatibleVersion!;
-    }
 
     private void RenderFrame(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
     {
@@ -2319,35 +1947,10 @@ internal sealed class ProjectViewService
         state.CommandTranscript.RemoveRange(0, overflow);
     }
 
-    private static bool IsHierarchyAssetExtension(string extension)
-    {
-        return extension.Equals(".unity", StringComparison.OrdinalIgnoreCase)
-               || extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ResolveLoadAssetKind(string extension)
-    {
-        if (extension.Equals(".unity", StringComparison.OrdinalIgnoreCase))
-        {
-            return "scene";
-        }
-
-        if (extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase))
-        {
-            return "prefab";
-        }
-
-        if (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
-        {
-            return "script";
-        }
-
-        return "asset";
-    }
 
     private void EmitImmediateLoadFeedback(ProjectViewState state, string targetName)
     {
-        var prefix = ResolveLoadAssetKind(Path.GetExtension(targetName));
+        var prefix = ProjectViewServiceUtils.ResolveLoadAssetKind(Path.GetExtension(targetName));
         AppendTranscript(state, [$"[*] loading {prefix}: {targetName}"]);
         RenderFrame(state);
     }
@@ -2415,7 +2018,7 @@ internal sealed class ProjectViewService
         }
 
         var state = session.ProjectView;
-        var entry = FindEntryBySelector(state, selector);
+        var entry = ProjectViewServiceUtils.FindEntryBySelector(state, selector);
         if (entry is not null)
         {
             if (!entry.IsDirectory)
@@ -2438,7 +2041,7 @@ internal sealed class ProjectViewService
             return false;
         }
 
-        var absolute = ResolveAbsolutePath(session.CurrentProjectPath!, relative);
+        var absolute = ProjectViewServiceUtils.ResolveAbsolutePath(session.CurrentProjectPath!, relative);
         if (!Directory.Exists(absolute))
         {
             error = $"parent folder not found: {selector}";
@@ -2730,150 +2333,6 @@ internal sealed class ProjectViewService
         return true;
     }
 
-    private static (string TemplateName, string TemplateSource, string Content) ResolveTemplate(string projectPath)
-    {
-        var templatesJsonPath = Path.Combine(projectPath, "templates.json");
-        if (File.Exists(templatesJsonPath))
-        {
-            try
-            {
-                using var document = JsonDocument.Parse(File.ReadAllText(templatesJsonPath));
-                if (document.RootElement.TryGetProperty("templates", out var templates)
-                    && templates.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var key in new[] { "CustomScript", "script" })
-                    {
-                        if (templates.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
-                        {
-                            var templateRelative = value.GetString();
-                            if (string.IsNullOrWhiteSpace(templateRelative))
-                            {
-                                continue;
-                            }
-
-                            var templatePath = ResolveAbsolutePath(projectPath, templateRelative);
-                            if (File.Exists(templatePath))
-                            {
-                                return (key, "templates.json", File.ReadAllText(templatePath));
-                            }
-                        }
-                    }
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        var defaultTemplate =
-$"using UnityEngine;{Environment.NewLine}{Environment.NewLine}public class #NAME# : MonoBehaviour{Environment.NewLine}{{{Environment.NewLine}    private void Start(){{ }}{Environment.NewLine}{Environment.NewLine}    private void Update(){{ }}{Environment.NewLine}}}{Environment.NewLine}";
-        return ("ProjectDefault", "default template", defaultTemplate);
-    }
-
-    private static string ResolveAbsolutePath(string projectPath, string relativeOrAbsolute)
-    {
-        if (Path.IsPathRooted(relativeOrAbsolute))
-        {
-            return relativeOrAbsolute;
-        }
-
-        return Path.GetFullPath(Path.Combine(projectPath, relativeOrAbsolute));
-    }
-
-    private static string CombineRelative(string parent, string child)
-    {
-        if (string.IsNullOrWhiteSpace(parent))
-        {
-            return child.Replace('\\', '/');
-        }
-
-        return $"{parent.TrimEnd('/', '\\')}/{child}".Replace('\\', '/');
-    }
-
-    private static string SanitizeTypeName(string raw)
-    {
-        var builder = new StringBuilder();
-        foreach (var ch in raw)
-        {
-            if (char.IsLetterOrDigit(ch) || ch == '_')
-            {
-                builder.Append(ch);
-            }
-        }
-
-        var value = builder.ToString();
-        if (value.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        if (!char.IsLetter(value[0]) && value[0] != '_')
-        {
-            value = "_" + value;
-        }
-
-        return value;
-    }
-
-    private static string ResolveScriptCreateName(string canonicalType, string? baseName, int index, int count)
-    {
-        var defaultBase = canonicalType.Equals("ScriptableObjectScript", StringComparison.OrdinalIgnoreCase)
-            ? "NewScriptableObject"
-            : "NewScript";
-        var resolvedBase = string.IsNullOrWhiteSpace(baseName) ? defaultBase : baseName.Trim();
-        return count > 1 ? $"{resolvedBase}_{index + 1}" : resolvedBase;
-    }
-
-    private static string ResolveUniqueScriptTypeName(string projectPath, string parentPath, string baseTypeName)
-    {
-        var candidate = baseTypeName;
-        var suffix = 1;
-        while (true)
-        {
-            var candidateRelative = CombineRelative(parentPath, $"{candidate}.cs");
-            var candidateAbsolute = ResolveAbsolutePath(projectPath, candidateRelative);
-            if (!File.Exists(candidateAbsolute))
-            {
-                return candidate;
-            }
-
-            candidate = $"{baseTypeName}_{suffix++}";
-        }
-    }
-
-    private static string BuildScriptableObjectTemplate(string typeName)
-    {
-        return
-$"using UnityEngine;{Environment.NewLine}{Environment.NewLine}[CreateAssetMenu(fileName = \"{typeName}\", menuName = \"ScriptableObjects/{typeName}\")]{Environment.NewLine}public class {typeName} : ScriptableObject{Environment.NewLine}{{{Environment.NewLine}}}{Environment.NewLine}";
-    }
-
-    private static List<string> ParseMkAssetCreatedPaths(string? content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return [];
-        }
-
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<MkAssetResponsePayload>(
-                content,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (parsed?.CreatedPaths is null || parsed.CreatedPaths.Count == 0)
-            {
-                return [];
-            }
-
-            return parsed.CreatedPaths
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Select(path => path!)
-                .ToList();
-        }
-        catch
-        {
-            return [];
-        }
-    }
 
     private async Task SyncAssetIndexAsync(CliSessionState session)
     {
@@ -2897,114 +2356,4 @@ $"using UnityEngine;{Environment.NewLine}{Environment.NewLine}[CreateAssetMenu(f
         }
     }
 
-    private static (string? TypeFilter, string Query) ParseProjectQuery(string query)
-        => ProjectMkCatalog.ParseFuzzyQuery(query);
-
-    private static bool PassesTypeFilter(string path, string? typeFilter)
-        => ProjectMkCatalog.PassesFuzzyTypeFilter(path, typeFilter);
-
-    private static string FormatProjectCommandFailure(string action, string? message)
-    {
-        var (category, hint) = ClassifyProjectBridgeFailure(message);
-        var details = string.IsNullOrWhiteSpace(message) ? "unknown error" : message;
-        return string.IsNullOrWhiteSpace(hint)
-            ? $"[x] {action} failed ({category}): {details}"
-            : $"[x] {action} failed ({category}): {details} [grey]{hint}[/]";
-    }
-
-    private static (string Category, string Hint) ClassifyProjectBridgeFailure(string? message)
-    {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return ("bridge runtime error", "Command is implemented; inspect bridge logs for details.");
-        }
-
-        if (message.StartsWith(ProjectDaemonBridge.StubbedBridgePrefix, StringComparison.Ordinal))
-        {
-            return ("stubbed bridge", "This daemon path is not implemented; run with Bridge mode attached.");
-        }
-
-        if (message.Contains("daemon did not return", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("daemon returned", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("daemon is not attached", StringComparison.OrdinalIgnoreCase))
-        {
-            return ("bridge transport error", "Bridge connection failed; ensure daemon/editor bridge is running and attached.");
-        }
-
-        return ("bridge runtime error", "Command is implemented; bridge returned an operational error.");
-    }
-
-    private static List<string> Tokenize(string input)
-    {
-        var tokens = new List<string>();
-        var current = new StringBuilder();
-        var inQuotes = false;
-
-        foreach (var ch in input)
-        {
-            if (ch == '"')
-            {
-                inQuotes = !inQuotes;
-                continue;
-            }
-
-            if (!inQuotes && char.IsWhiteSpace(ch))
-            {
-                if (current.Length > 0)
-                {
-                    tokens.Add(current.ToString());
-                    current.Clear();
-                }
-
-                continue;
-            }
-
-            current.Append(ch);
-        }
-
-        if (current.Length > 0)
-        {
-            tokens.Add(current.ToString());
-        }
-
-        return tokens;
-    }
-
-    private sealed record UpmListRequestPayload(
-        bool IncludeOutdated,
-        bool IncludeBuiltin,
-        bool IncludeGit);
-
-    private sealed record MkAssetRequestPayload(
-        string Type,
-        int Count,
-        string? Name);
-
-    private sealed record MkAssetResponsePayload(
-        List<string>? CreatedPaths);
-
-    private sealed record UpmInstallRequestPayload(
-        string Target);
-
-    private sealed record UpmRemoveRequestPayload(
-        string PackageId);
-
-    private sealed record UpmListResponsePayload(
-        List<UpmListPackagePayload>? Packages);
-
-    private sealed record UpmInstallResponsePayload(
-        string? PackageId,
-        string? Version,
-        string? Source,
-        string? TargetType);
-
-    private sealed record UpmListPackagePayload(
-        string? PackageId,
-        string? DisplayName,
-        string? Version,
-        string? Source,
-        string? LatestCompatibleVersion,
-        bool IsOutdated,
-        bool IsDeprecated,
-        bool IsPreview);
 }
