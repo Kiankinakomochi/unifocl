@@ -29,9 +29,9 @@ internal sealed class InspectorDaemonBridge
                 "find" => JsonSerializer.Serialize(new { ok = false, results = Array.Empty<object>() }, _jsonOptions),
                 "add-component" => JsonSerializer.Serialize(new { ok = false, message = "inspector component mutation requires Bridge mode" }, _jsonOptions),
                 "remove-component" => JsonSerializer.Serialize(new { ok = false, message = "inspector component mutation requires Bridge mode" }, _jsonOptions),
-                "toggle-component" => JsonSerializer.Serialize(new { ok = false }, _jsonOptions),
-                "toggle-field" => JsonSerializer.Serialize(new { ok = false }, _jsonOptions),
-                "set-field" => JsonSerializer.Serialize(new { ok = false }, _jsonOptions),
+                "toggle-component" => JsonSerializer.Serialize(new { ok = false, message = "inspector component mutation requires Bridge mode" }, _jsonOptions),
+                "toggle-field" => JsonSerializer.Serialize(new { ok = false, message = "inspector field mutation requires Bridge mode" }, _jsonOptions),
+                "set-field" => JsonSerializer.Serialize(new { ok = false, message = "inspector field mutation requires Bridge mode" }, _jsonOptions),
                 _ => JsonSerializer.Serialize(new { ok = false }, _jsonOptions)
             };
             return true;

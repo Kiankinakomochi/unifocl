@@ -2572,17 +2572,27 @@ internal sealed class InspectorModeService
         var response = await SendBridgeRequestAsync(request, session);
         if (string.IsNullOrWhiteSpace(response))
         {
-            return (false, null);
+            return (false, "inspector mutation failed (daemon inspect endpoint request failed or returned empty response)");
         }
 
         try
         {
             var mutation = JsonSerializer.Deserialize<InspectorBridgeMutationResponse>(response, _jsonOptions);
-            return (mutation?.Ok == true, mutation?.Message);
+            if (mutation?.Ok == true)
+            {
+                return (true, mutation.Message);
+            }
+
+            if (string.IsNullOrWhiteSpace(mutation?.Message))
+            {
+                return (false, "inspector mutation failed (daemon inspect endpoint returned ok=false without message)");
+            }
+
+            return (false, mutation.Message);
         }
         catch
         {
-            return (false, null);
+            return (false, $"inspector mutation failed (daemon inspect endpoint returned invalid payload: {response})");
         }
     }
 
@@ -2611,7 +2621,7 @@ internal sealed class InspectorModeService
 
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            using var cts = new CancellationTokenSource(ResolveInspectRequestTimeout(request.Action));
             var json = JsonSerializer.Serialize(request, _jsonOptions);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             var response = await Http.PostAsync($"http://127.0.0.1:{port.Value}/inspect", content, cts.Token);
@@ -2626,6 +2636,17 @@ internal sealed class InspectorModeService
         {
             return null;
         }
+    }
+
+    private static TimeSpan ResolveInspectRequestTimeout(string action)
+    {
+        // Mutation requests can include scene/prefab persistence and legitimately take longer.
+        if (action is "set-field" or "toggle-field" or "toggle-component" or "add-component" or "remove-component")
+        {
+            return TimeSpan.FromSeconds(5);
+        }
+
+        return TimeSpan.FromSeconds(2);
     }
 
     private static void ReplaceField(InspectorContext context, InspectorFieldEntry field)
