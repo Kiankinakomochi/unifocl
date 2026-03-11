@@ -2572,17 +2572,27 @@ internal sealed class InspectorModeService
         var response = await SendBridgeRequestAsync(request, session);
         if (string.IsNullOrWhiteSpace(response))
         {
-            return (false, null);
+            return (false, "inspector mutation failed (daemon inspect endpoint request failed or returned empty response)");
         }
 
         try
         {
             var mutation = JsonSerializer.Deserialize<InspectorBridgeMutationResponse>(response, _jsonOptions);
-            return (mutation?.Ok == true, mutation?.Message);
+            if (mutation?.Ok == true)
+            {
+                return (true, mutation.Message);
+            }
+
+            if (string.IsNullOrWhiteSpace(mutation?.Message))
+            {
+                return (false, "inspector mutation failed (daemon inspect endpoint returned ok=false without message)");
+            }
+
+            return (false, mutation.Message);
         }
         catch
         {
-            return (false, null);
+            return (false, $"inspector mutation failed (daemon inspect endpoint returned invalid payload: {response})");
         }
     }
 

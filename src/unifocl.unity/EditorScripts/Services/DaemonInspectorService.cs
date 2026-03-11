@@ -41,74 +41,97 @@ namespace UniFocl.EditorBridge
             }
             catch
             {
-                return JsonUtility.ToJson(new InspectorMutationResponse { ok = false });
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "invalid inspector request payload"
+                });
             }
 
             if (request is null || string.IsNullOrWhiteSpace(request.action))
             {
-                return JsonUtility.ToJson(new InspectorMutationResponse { ok = false });
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "inspector request action is required"
+                });
             }
 
-            switch (request.action)
+            try
             {
-                case "list-components":
-                    return JsonUtility.ToJson(new InspectorComponentsResponse
-                    {
-                        ok = true,
-                        components = GetComponents(request.targetPath)
-                    });
+                switch (request.action)
+                {
+                    case "list-components":
+                        return JsonUtility.ToJson(new InspectorComponentsResponse
+                        {
+                            ok = true,
+                            components = GetComponents(request.targetPath)
+                        });
 
-                case "list-fields":
-                    return JsonUtility.ToJson(new InspectorFieldsResponse
-                    {
-                        ok = true,
-                        fields = GetFields(request.targetPath, request.componentIndex, request.componentName)
-                    });
+                    case "list-fields":
+                        return JsonUtility.ToJson(new InspectorFieldsResponse
+                        {
+                            ok = true,
+                            fields = GetFields(request.targetPath, request.componentIndex, request.componentName)
+                        });
 
-                case "find":
-                    return JsonUtility.ToJson(new InspectorSearchResponse
-                    {
-                        ok = true,
-                        results = Find(request.targetPath, request.query, request.componentName)
-                    });
+                    case "find":
+                        return JsonUtility.ToJson(new InspectorSearchResponse
+                        {
+                            ok = true,
+                            results = Find(request.targetPath, request.query, request.componentName)
+                        });
 
-                case "find-reference":
-                    return JsonUtility.ToJson(new InspectorSearchResponse
-                    {
-                        ok = true,
-                        results = FindReference(
-                            request.targetPath,
-                            request.componentIndex,
-                            request.componentName,
-                            request.fieldName,
-                            request.query,
-                            request.includeSceneReferences,
-                            request.includeProjectReferences)
-                    });
+                    case "find-reference":
+                        return JsonUtility.ToJson(new InspectorSearchResponse
+                        {
+                            ok = true,
+                            results = FindReference(
+                                request.targetPath,
+                                request.componentIndex,
+                                request.componentName,
+                                request.fieldName,
+                                request.query,
+                                request.includeSceneReferences,
+                                request.includeProjectReferences)
+                        });
 
-                case "add-component":
-                    return JsonUtility.ToJson(BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError));
+                    case "add-component":
+                        return JsonUtility.ToJson(BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError));
 
-                case "remove-component":
-                    return JsonUtility.ToJson(BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
+                    case "remove-component":
+                        return JsonUtility.ToJson(BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
 
-                case "toggle-component":
-                    return JsonUtility.ToJson(BuildMutationResponse(
-                        ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
-                        toggleComponentError));
+                    case "toggle-component":
+                        return JsonUtility.ToJson(BuildMutationResponse(
+                            ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
+                            toggleComponentError));
 
-                case "toggle-field":
-                    return JsonUtility.ToJson(BuildMutationResponse(
-                        ToggleField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, out var toggleFieldError),
-                        toggleFieldError));
+                    case "toggle-field":
+                        return JsonUtility.ToJson(BuildMutationResponse(
+                            ToggleField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, out var toggleFieldError),
+                            toggleFieldError));
 
-                case "set-field":
-                    return JsonUtility.ToJson(BuildMutationResponse(
-                        SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
-                        setFieldError));
+                    case "set-field":
+                        return JsonUtility.ToJson(BuildMutationResponse(
+                            SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
+                            setFieldError));
 
-                default:
-                    return JsonUtility.ToJson(new InspectorMutationResponse { ok = false });
+                    default:
+                        return JsonUtility.ToJson(new InspectorMutationResponse
+                        {
+                            ok = false,
+                            message = $"unsupported inspector action: {request.action}"
+                        });
+                }
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"inspector action '{request.action}' threw exception: {ex.Message}"
+                });
             }
         }
 
