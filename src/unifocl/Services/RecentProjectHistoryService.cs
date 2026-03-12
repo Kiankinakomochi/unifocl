@@ -54,6 +54,63 @@ internal sealed class RecentProjectHistoryService
         return true;
     }
 
+    public bool TryPruneRecentProjects(
+        int staleDays,
+        DateTimeOffset nowUtc,
+        out RecentProjectPruneSummary summary,
+        out string? error)
+    {
+        summary = new RecentProjectPruneSummary(0, 0, 0);
+        error = null;
+
+        if (staleDays <= 0)
+        {
+            error = "stale days must be greater than zero";
+            return false;
+        }
+
+        if (!TryLoadEntries(out var entries, out error))
+        {
+            return false;
+        }
+
+        var removedMissing = 0;
+        var removedStale = 0;
+        var staleThresholdUtc = nowUtc.AddDays(-staleDays);
+        var keptEntries = new List<RecentProjectEntry>(entries.Count);
+
+        foreach (var entry in entries)
+        {
+            if (!Directory.Exists(entry.ProjectPath))
+            {
+                removedMissing++;
+                continue;
+            }
+
+            if (entry.LastOpenedUtc < staleThresholdUtc)
+            {
+                removedStale++;
+                continue;
+            }
+
+            keptEntries.Add(entry);
+        }
+
+        if (removedMissing == 0 && removedStale == 0)
+        {
+            summary = new RecentProjectPruneSummary(0, 0, entries.Count);
+            return true;
+        }
+
+        if (!TrySaveEntries(keptEntries, out error))
+        {
+            return false;
+        }
+
+        summary = new RecentProjectPruneSummary(removedMissing, removedStale, keptEntries.Count);
+        return true;
+    }
+
     private bool TryLoadEntries(out List<RecentProjectEntry> entries, out string? error)
     {
         entries = [];

@@ -8,6 +8,7 @@ internal sealed class ProjectLifecycleService
 {
     private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
+    private const int DefaultRecentPruneStaleDays = 14;
 
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
@@ -402,10 +403,18 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
-        if (!TryParseRecentArgs(args, out var indexRaw, out var allowUnsafe, out var parseError))
+        if (!TryParseRecentArgs(args, out var indexRaw, out var allowUnsafe, out var pruneRequested, out var parseError))
         {
             log($"[red]error[/]: {Markup.Escape(parseError)}");
             return true;
+        }
+
+        if (pruneRequested)
+        {
+            if (!await HandleRecentPruneAsync(log))
+            {
+                return true;
+            }
         }
 
         var recentResult = await RunWithStatusAsync("Loading recent projects...", () =>
@@ -472,6 +481,45 @@ internal sealed class ProjectLifecycleService
             var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
             log($"[grey]recent[/]: [white]{i + 1}[/]. [white]{Markup.Escape(entry.ProjectPath)}[/] [dim]({opened})[/]");
         }
+    }
+
+    private async Task<bool> HandleRecentPruneAsync(Action<string> log)
+    {
+        if (!TryLoadCliConfig(out var config, out var configError))
+        {
+            log($"[red]error[/]: {Markup.Escape(configError ?? "failed to read config")}");
+            return false;
+        }
+
+        var staleDays = ResolveRecentPruneStaleDays(config);
+        var pruneResult = await RunWithStatusAsync("Pruning recent projects...", () =>
+        {
+            var ok = _recentProjectHistoryService.TryPruneRecentProjects(
+                staleDays,
+                DateTimeOffset.UtcNow,
+                out var summary,
+                out var error);
+            return Task.FromResult((ok, summary, error));
+        });
+
+        if (!pruneResult.ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(pruneResult.error ?? "failed to prune recent projects")}");
+            return false;
+        }
+
+        var summary = pruneResult.summary;
+        if (summary.RemovedTotal == 0)
+        {
+            log($"[grey]recent[/]: prune complete (no entries removed, stale threshold: {staleDays} days)");
+            return true;
+        }
+
+        log(
+            $"[green]recent[/]: pruned [white]{summary.RemovedTotal}[/] entries " +
+            $"(missing: [white]{summary.RemovedMissing}[/], stale: [white]{summary.RemovedStale}[/], " +
+            $"remaining: [white]{summary.RemainingCount}[/], stale threshold: [white]{staleDays}[/] days)");
+        return true;
     }
 
     private async Task<bool> OpenRecentSelectionAsync(
@@ -1154,7 +1202,7 @@ internal sealed class ProjectLifecycleService
         var args = ParseCommandArgs(input, matched.Trigger);
         if (args.Count == 0)
         {
-            log("[red]error[/]: usage /config <get|set|list|reset> <theme?> <value?>");
+            LogConfigUsage(log);
             return Task.FromResult(true);
         }
 
@@ -1182,8 +1230,10 @@ internal sealed class ProjectLifecycleService
             ? "file/default"
             : "env (UNIFOCL_THEME)";
         var theme = ResolveEffectiveTheme(config);
+        var staleDays = ResolveRecentPruneStaleDays(config);
         log("[grey]config[/]: available settings");
         log($"[grey]config[/]: [white]theme[/] = [white]{theme}[/] [dim](dark|light, source: {source})[/]");
+        log($"[grey]config[/]: [white]recent.staleDays[/] = [white]{staleDays}[/] [dim](days, default: {DefaultRecentPruneStaleDays})[/]");
         return Task.FromResult(true);
     }
 
@@ -1191,13 +1241,15 @@ internal sealed class ProjectLifecycleService
     {
         if (args.Count != 1)
         {
-            log("[red]error[/]: usage /config get <theme>");
+            log("[red]error[/]: usage /config get <theme|recent.staleDays>");
             return Task.FromResult(true);
         }
 
-        if (!IsThemeKey(args[0]))
+        var isThemeKey = IsThemeKey(args[0]);
+        var isRecentStaleDaysKey = IsRecentStaleDaysKey(args[0]);
+        if (!isThemeKey && !isRecentStaleDaysKey)
         {
-            log("[red]error[/]: only 'theme' is supported");
+            log("[red]error[/]: supported keys are 'theme' and 'recent.staleDays'");
             return Task.FromResult(true);
         }
 
@@ -1208,8 +1260,15 @@ internal sealed class ProjectLifecycleService
             return Task.FromResult(true);
         }
 
-        var theme = ResolveEffectiveTheme(config);
-        log($"[grey]config[/]: [white]theme[/] = [white]{theme}[/]");
+        if (isThemeKey)
+        {
+            var theme = ResolveEffectiveTheme(config);
+            log($"[grey]config[/]: [white]theme[/] = [white]{theme}[/]");
+            return Task.FromResult(true);
+        }
+
+        var staleDays = ResolveRecentPruneStaleDays(config);
+        log($"[grey]config[/]: [white]recent.staleDays[/] = [white]{staleDays}[/]");
         return Task.FromResult(true);
     }
 
@@ -1217,38 +1276,58 @@ internal sealed class ProjectLifecycleService
     {
         if (args.Count != 2)
         {
-            log("[red]error[/]: usage /config set <theme> <dark|light>");
+            log("[red]error[/]: usage /config set <theme|recent.staleDays> <value>");
             return Task.FromResult(true);
         }
 
-        if (!IsThemeKey(args[0]))
-        {
-            log("[red]error[/]: only 'theme' is supported");
-            return Task.FromResult(true);
-        }
-
-        var requestedTheme = args[1].Trim().ToLowerInvariant();
-        if (requestedTheme is not ("dark" or "light"))
-        {
-            log("[red]error[/]: theme must be 'dark' or 'light'");
-            return Task.FromResult(true);
-        }
-
+        var key = args[0];
         if (!TryLoadCliConfig(out var config, out var loadError))
         {
             log($"[red]error[/]: {Markup.Escape(loadError ?? "failed to read config")}");
             return Task.FromResult(true);
         }
 
-        config.Theme = requestedTheme;
-        if (!TrySaveCliConfig(config, out var saveError))
+        if (IsThemeKey(key))
         {
-            log($"[red]error[/]: {Markup.Escape(saveError ?? "failed to write config")}");
+            var requestedTheme = args[1].Trim().ToLowerInvariant();
+            if (requestedTheme is not ("dark" or "light"))
+            {
+                log("[red]error[/]: theme must be 'dark' or 'light'");
+                return Task.FromResult(true);
+            }
+
+            config.Theme = requestedTheme;
+            if (!TrySaveCliConfig(config, out var saveThemeError))
+            {
+                log($"[red]error[/]: {Markup.Escape(saveThemeError ?? "failed to write config")}");
+                return Task.FromResult(true);
+            }
+
+            CliTheme.TrySetTheme(requestedTheme);
+            log($"[green]config[/]: theme set to [white]{requestedTheme}[/]");
             return Task.FromResult(true);
         }
 
-        CliTheme.TrySetTheme(requestedTheme);
-        log($"[green]config[/]: theme set to [white]{requestedTheme}[/]");
+        if (IsRecentStaleDaysKey(key))
+        {
+            if (!TryParseRecentPruneStaleDays(args[1], out var staleDays))
+            {
+                log("[red]error[/]: recent.staleDays must be a positive integer");
+                return Task.FromResult(true);
+            }
+
+            config.RecentPruneStaleDays = staleDays;
+            if (!TrySaveCliConfig(config, out var saveStaleDaysError))
+            {
+                log($"[red]error[/]: {Markup.Escape(saveStaleDaysError ?? "failed to write config")}");
+                return Task.FromResult(true);
+            }
+
+            log($"[green]config[/]: recent.staleDays set to [white]{staleDays}[/] days");
+            return Task.FromResult(true);
+        }
+
+        log("[red]error[/]: supported keys are 'theme' and 'recent.staleDays'");
         return Task.FromResult(true);
     }
 
@@ -1256,13 +1335,15 @@ internal sealed class ProjectLifecycleService
     {
         if (args.Count > 1)
         {
-            log("[red]error[/]: usage /config reset <theme?>");
+            log("[red]error[/]: usage /config reset <theme|recent.staleDays?>");
             return Task.FromResult(true);
         }
 
-        if (args.Count == 1 && !IsThemeKey(args[0]))
+        var resetTheme = args.Count == 0 || IsThemeKey(args[0]);
+        var resetRecentStaleDays = args.Count == 0 || IsRecentStaleDaysKey(args[0]);
+        if (!resetTheme && !resetRecentStaleDays)
         {
-            log("[red]error[/]: only 'theme' is supported");
+            log("[red]error[/]: supported keys are 'theme' and 'recent.staleDays'");
             return Task.FromResult(true);
         }
 
@@ -1272,7 +1353,16 @@ internal sealed class ProjectLifecycleService
             return Task.FromResult(true);
         }
 
-        config.Theme = null;
+        if (resetTheme)
+        {
+            config.Theme = null;
+        }
+
+        if (resetRecentStaleDays)
+        {
+            config.RecentPruneStaleDays = null;
+        }
+
         if (!TrySaveCliConfig(config, out var saveError))
         {
             log($"[red]error[/]: {Markup.Escape(saveError ?? "failed to write config")}");
@@ -1281,13 +1371,28 @@ internal sealed class ProjectLifecycleService
 
         var effective = ResolveEffectiveTheme(config);
         CliTheme.TrySetTheme(effective);
-        log($"[green]config[/]: theme reset to default [white]{effective}[/]");
+
+        if (resetTheme && resetRecentStaleDays)
+        {
+            log(
+                $"[green]config[/]: reset to defaults " +
+                $"([white]theme[/]={effective}, [white]recent.staleDays[/]={DefaultRecentPruneStaleDays})");
+            return Task.FromResult(true);
+        }
+
+        if (resetTheme)
+        {
+            log($"[green]config[/]: theme reset to default [white]{effective}[/]");
+            return Task.FromResult(true);
+        }
+
+        log($"[green]config[/]: recent.staleDays reset to default [white]{DefaultRecentPruneStaleDays}[/]");
         return Task.FromResult(true);
     }
 
     private static bool LogConfigUsage(Action<string> log)
     {
-        log("[red]error[/]: usage /config <get|set|list|reset> <theme?> <value?>");
+        log("[red]error[/]: usage /config <get|set|list|reset> <theme|recent.staleDays?> <value?>");
         return true;
     }
 
@@ -1725,10 +1830,12 @@ internal sealed class ProjectLifecycleService
         IReadOnlyList<string> args,
         out string? indexRaw,
         out bool allowUnsafe,
+        out bool pruneRequested,
         out string error)
     {
         indexRaw = null;
         allowUnsafe = false;
+        pruneRequested = false;
         error = string.Empty;
 
         foreach (var arg in args)
@@ -1739,19 +1846,32 @@ internal sealed class ProjectLifecycleService
                 continue;
             }
 
+            if (arg.Equals("--prune", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("prune", StringComparison.OrdinalIgnoreCase))
+            {
+                pruneRequested = true;
+                continue;
+            }
+
             if (arg.StartsWith("--", StringComparison.Ordinal))
             {
-                error = $"unrecognized option {arg}; usage /recent [idx] [--allow-unsafe]";
+                error = $"unrecognized option {arg}; usage /recent [idx] [--allow-unsafe] [--prune]";
                 return false;
             }
 
             if (!string.IsNullOrWhiteSpace(indexRaw))
             {
-                error = "too many positional arguments; usage /recent [idx] [--allow-unsafe]";
+                error = "too many positional arguments; usage /recent [idx] [--allow-unsafe] [--prune]";
                 return false;
             }
 
             indexRaw = arg.Trim();
+        }
+
+        if (pruneRequested && !string.IsNullOrWhiteSpace(indexRaw))
+        {
+            error = "cannot combine idx with prune; usage /recent [idx] [--allow-unsafe] [--prune]";
+            return false;
         }
 
         return true;
@@ -2150,6 +2270,20 @@ internal sealed class ProjectLifecycleService
                 }
             }
 
+            if (document.RootElement.TryGetProperty("recentStaleDays", out var recentStaleDaysProperty))
+            {
+                if (recentStaleDaysProperty.ValueKind == JsonValueKind.Number
+                    && recentStaleDaysProperty.TryGetInt32(out var staleDaysFromNumber))
+                {
+                    config.RecentPruneStaleDays = staleDaysFromNumber;
+                }
+                else if (recentStaleDaysProperty.ValueKind == JsonValueKind.String
+                         && TryParseRecentPruneStaleDays(recentStaleDaysProperty.GetString() ?? string.Empty, out var staleDaysFromString))
+                {
+                    config.RecentPruneStaleDays = staleDaysFromString;
+                }
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -2174,10 +2308,11 @@ internal sealed class ProjectLifecycleService
 
             Directory.CreateDirectory(directory);
             var payload = JsonSerializer.Serialize(
-                new Dictionary<string, string?>
+                new Dictionary<string, object?>
                 {
                     ["theme"] = NormalizeTheme(config.Theme),
-                    ["unityProjectPath"] = NormalizeProjectPath(config.UnityProjectPath)
+                    ["unityProjectPath"] = NormalizeProjectPath(config.UnityProjectPath),
+                    ["recentStaleDays"] = config.RecentPruneStaleDays
                 },
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(path, payload + Environment.NewLine);
@@ -2201,10 +2336,45 @@ internal sealed class ProjectLifecycleService
         return NormalizeTheme(config.Theme) ?? "dark";
     }
 
+    private static int ResolveRecentPruneStaleDays(CliConfig config)
+    {
+        if (config.RecentPruneStaleDays is int configured && configured > 0)
+        {
+            return configured;
+        }
+
+        return DefaultRecentPruneStaleDays;
+    }
+
     private static bool IsThemeKey(string key)
     {
         return key.Equals("theme", StringComparison.OrdinalIgnoreCase)
                || key.Equals("ui.theme", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRecentStaleDaysKey(string key)
+    {
+        return key.Equals("recent.staledays", StringComparison.OrdinalIgnoreCase)
+               || key.Equals("recent.stale-days", StringComparison.OrdinalIgnoreCase)
+               || key.Equals("recent.prunedays", StringComparison.OrdinalIgnoreCase)
+               || key.Equals("recent.prune-days", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseRecentPruneStaleDays(string raw, out int staleDays)
+    {
+        staleDays = 0;
+        if (!int.TryParse(raw.Trim(), out var parsed))
+        {
+            return false;
+        }
+
+        if (parsed <= 0)
+        {
+            return false;
+        }
+
+        staleDays = parsed;
+        return true;
     }
 
     private static string? NormalizeTheme(string? theme)
@@ -2273,5 +2443,6 @@ internal sealed class ProjectLifecycleService
     {
         public string? Theme { get; set; }
         public string? UnityProjectPath { get; set; }
+        public int? RecentPruneStaleDays { get; set; }
     }
 }
