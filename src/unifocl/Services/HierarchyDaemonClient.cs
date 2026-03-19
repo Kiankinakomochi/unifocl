@@ -12,7 +12,11 @@ internal sealed class HierarchyDaemonClient
     private static readonly TimeSpan BuildStatusTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan SceneLoadTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan SceneLoadStatusInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MutationPollInterval = TimeSpan.FromMilliseconds(700);
+    private static readonly TimeSpan MutationPollBackoff = TimeSpan.FromMilliseconds(250);
     private const int SceneLoadRetryCount = 1;
+    private static readonly IProjectMutationTransport McpMutationTransport = new McpProjectMutationTransport();
+    private static readonly IProjectMutationTransport HttpMutationTransport = new HttpProjectMutationTransport();
 
     public async Task<HierarchySnapshotDto?> GetSnapshotAsync(int port)
     {
@@ -111,17 +115,67 @@ internal sealed class HierarchyDaemonClient
     public async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(int port, ProjectCommandRequestDto request, Action<string>? onStatus = null)
     {
         request = MutationIntentFactory.EnsureProjectIntent(request);
+        var isProjectMutation = DaemonMutationActionCatalog.IsProjectMutation(request.Action);
+        if (isProjectMutation)
+        {
+            var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId!;
+            var requestWithId = request with { RequestId = requestId };
+            var timeout = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
+                          || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
+                ? UpmMutationTimeout
+                : TimeSpan.FromSeconds(90);
+
+            var response = await McpMutationTransport.ExecuteAsync(port, requestWithId, timeout, onStatus);
+            if (response is not null)
+            {
+                return response;
+            }
+
+            onStatus?.Invoke("MCP mutation transport unavailable; falling back to daemon HTTP");
+            var fallback = await HttpMutationTransport.ExecuteAsync(port, requestWithId, timeout, onStatus);
+            if (fallback is not null)
+            {
+                return fallback;
+            }
+
+            onStatus?.Invoke("durable mutation endpoints unavailable; falling back to legacy project command transport");
+            var legacy = await SendPostJsonWithDiagnosticsAsync(
+                $"http://127.0.0.1:{port}/project/command",
+                requestWithId,
+                timeout,
+                requestId: requestId,
+                detectDaemonRestart: request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
+                                     || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase),
+                onProgress: elapsed =>
+                {
+                    onStatus?.Invoke($"waiting for daemon response... {elapsed.TotalSeconds:0}s elapsed");
+                });
+            if (!string.IsNullOrWhiteSpace(legacy.Error))
+            {
+                return new ProjectCommandResponseDto(false, legacy.Error, null, null);
+            }
+
+            if (string.IsNullOrWhiteSpace(legacy.Payload))
+            {
+                return new ProjectCommandResponseDto(false, "mutation request did not return a terminal response", null, null);
+            }
+
+            try
+            {
+                var parsedLegacy = JsonSerializer.Deserialize<ProjectCommandResponseDto>(legacy.Payload, JsonOptions);
+                return parsedLegacy ?? new ProjectCommandResponseDto(false, "daemon returned empty project response", null, null);
+            }
+            catch
+            {
+                return new ProjectCommandResponseDto(false, "daemon returned invalid project response", null, null);
+            }
+        }
+
         var isSceneLoad = request.Action.Equals("load-asset", StringComparison.OrdinalIgnoreCase);
         var isBuildDispatch = request.Action.StartsWith("build-", StringComparison.OrdinalIgnoreCase);
-        var isUpmMutation = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
-                            || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase);
-        var requestId = isUpmMutation ? Guid.NewGuid().ToString("N") : null;
-        var requestWithId = string.IsNullOrWhiteSpace(requestId)
-            ? request
-            : request with { RequestId = requestId };
         var timeout = isSceneLoad
             ? SceneLoadTimeout
-            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : (isUpmMutation ? UpmMutationTimeout : ProjectCommandTimeout));
+            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : ProjectCommandTimeout);
         var maxAttempts = isSceneLoad ? SceneLoadRetryCount + 1 : 1;
         if (isSceneLoad)
         {
@@ -137,10 +191,10 @@ internal sealed class HierarchyDaemonClient
 
             var result = await SendPostJsonWithDiagnosticsAsync(
                 $"http://127.0.0.1:{port}/project/command",
-                requestWithId,
+                request,
                 timeout,
-                requestId: requestId,
-                detectDaemonRestart: isUpmMutation,
+                requestId: null,
+                detectDaemonRestart: false,
                 onProgress: elapsed =>
                 {
                     if (isSceneLoad)
@@ -222,6 +276,247 @@ internal sealed class HierarchyDaemonClient
         {
             return null;
         }
+    }
+
+    private static async Task<ProjectCommandResponseDto?> ExecuteDurableMutationOverHttpAsync(
+        int port,
+        ProjectCommandRequestDto request,
+        TimeSpan timeout,
+        Action<string>? onStatus)
+    {
+        var submitPayload = await SendPostJsonAsync($"http://127.0.0.1:{port}/project/mutation/submit", request);
+        if (string.IsNullOrWhiteSpace(submitPayload))
+        {
+            return null;
+        }
+
+        ProjectCommandAcceptedDto? accepted;
+        try
+        {
+            accepted = JsonSerializer.Deserialize<ProjectCommandAcceptedDto>(submitPayload, JsonOptions);
+        }
+        catch
+        {
+            accepted = null;
+        }
+
+        if (accepted is null)
+        {
+            return new ProjectCommandResponseDto(false, "invalid mutation submit response from daemon", null, null);
+        }
+
+        if (!accepted.Ok)
+        {
+            return new ProjectCommandResponseDto(false, accepted.Message, null, null);
+        }
+
+        var requestId = string.IsNullOrWhiteSpace(accepted.RequestId) ? request.RequestId ?? string.Empty : accepted.RequestId;
+        if (string.IsNullOrWhiteSpace(requestId))
+        {
+            return new ProjectCommandResponseDto(false, "mutation submit response did not include requestId", null, null);
+        }
+
+        onStatus?.Invoke($"mutation accepted (requestId={requestId}, stage={accepted.Stage})");
+        var startedAt = DateTime.UtcNow;
+        var interval = MutationPollInterval;
+        while (DateTime.UtcNow - startedAt <= timeout)
+        {
+            await Task.Delay(interval);
+            interval = TimeSpan.FromMilliseconds(Math.Min(interval.TotalMilliseconds + MutationPollBackoff.TotalMilliseconds, 1800));
+
+            var statusPayload = await SendGetAsync($"http://127.0.0.1:{port}/project/mutation/status?requestId={Uri.EscapeDataString(requestId)}", BuildStatusTimeout);
+            if (string.IsNullOrWhiteSpace(statusPayload))
+            {
+                continue;
+            }
+
+            ProjectCommandStatusDto? status;
+            try
+            {
+                status = JsonSerializer.Deserialize<ProjectCommandStatusDto>(statusPayload, JsonOptions);
+            }
+            catch
+            {
+                status = null;
+            }
+
+            if (status is null)
+            {
+                continue;
+            }
+
+            onStatus?.Invoke($"mutation status: {status.Stage} {status.Detail}".Trim());
+            if (status.Active)
+            {
+                continue;
+            }
+
+            var resultPayload = await SendGetAsync($"http://127.0.0.1:{port}/project/mutation/result?requestId={Uri.EscapeDataString(requestId)}", BuildStatusTimeout);
+            if (string.IsNullOrWhiteSpace(resultPayload))
+            {
+                return new ProjectCommandResponseDto(false, $"mutation completed but result payload is unavailable (requestId={requestId})", null, null);
+            }
+
+            ProjectCommandResultDto? result;
+            try
+            {
+                result = JsonSerializer.Deserialize<ProjectCommandResultDto>(resultPayload, JsonOptions);
+            }
+            catch
+            {
+                result = null;
+            }
+
+            if (result is null || !result.Found)
+            {
+                return new ProjectCommandResponseDto(false, $"mutation completed but result lookup failed (requestId={requestId})", null, null);
+            }
+
+            if (!result.Completed)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(result.ResponsePayload))
+            {
+                return new ProjectCommandResponseDto(result.Success, result.Message, null, null);
+            }
+
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<ProjectCommandResponseDto>(result.ResponsePayload, JsonOptions);
+                return parsed ?? new ProjectCommandResponseDto(result.Success, result.Message, null, null);
+            }
+            catch
+            {
+                return new ProjectCommandResponseDto(result.Success, result.Message, null, null);
+            }
+        }
+
+        return new ProjectCommandResponseDto(false, $"mutation request timed out after {(int)timeout.TotalSeconds}s (requestId={requestId})", null, null);
+    }
+
+    private static async Task<ProjectCommandResponseDto?> ExecuteDurableMutationOverMcpAsync(
+        int port,
+        ProjectCommandRequestDto request,
+        TimeSpan timeout,
+        Action<string>? onStatus)
+    {
+        var submitRequest = new McpMutationToolRequest("submit", request.RequestId, JsonSerializer.Serialize(request, JsonOptions));
+        var submitPayload = await SendPostJsonAsync($"http://127.0.0.1:{port}/mcp/unifocl_project_command", submitRequest);
+        if (string.IsNullOrWhiteSpace(submitPayload))
+        {
+            return null;
+        }
+
+        ProjectCommandAcceptedDto? accepted;
+        try
+        {
+            accepted = JsonSerializer.Deserialize<ProjectCommandAcceptedDto>(submitPayload, JsonOptions);
+        }
+        catch
+        {
+            accepted = null;
+        }
+
+        if (accepted is null)
+        {
+            return null;
+        }
+
+        if (!accepted.Ok)
+        {
+            return new ProjectCommandResponseDto(false, accepted.Message, null, null);
+        }
+
+        var requestId = accepted.RequestId;
+        if (string.IsNullOrWhiteSpace(requestId))
+        {
+            return new ProjectCommandResponseDto(false, "MCP submit did not return requestId", null, null);
+        }
+
+        onStatus?.Invoke($"mutation accepted via MCP (requestId={requestId})");
+        var startedAt = DateTime.UtcNow;
+        var interval = MutationPollInterval;
+        while (DateTime.UtcNow - startedAt <= timeout)
+        {
+            await Task.Delay(interval);
+            interval = TimeSpan.FromMilliseconds(Math.Min(interval.TotalMilliseconds + MutationPollBackoff.TotalMilliseconds, 1800));
+
+            var statusPayload = await SendPostJsonAsync(
+                $"http://127.0.0.1:{port}/mcp/unifocl_project_command",
+                new McpMutationToolRequest("get_status", requestId, null));
+            if (string.IsNullOrWhiteSpace(statusPayload))
+            {
+                continue;
+            }
+
+            ProjectCommandStatusDto? status;
+            try
+            {
+                status = JsonSerializer.Deserialize<ProjectCommandStatusDto>(statusPayload, JsonOptions);
+            }
+            catch
+            {
+                status = null;
+            }
+
+            if (status is null)
+            {
+                continue;
+            }
+
+            onStatus?.Invoke($"mutation status: {status.Stage} {status.Detail}".Trim());
+            if (status.Active)
+            {
+                continue;
+            }
+
+            var resultPayload = await SendPostJsonAsync(
+                $"http://127.0.0.1:{port}/mcp/unifocl_project_command",
+                new McpMutationToolRequest("get_result", requestId, null));
+            if (string.IsNullOrWhiteSpace(resultPayload))
+            {
+                return new ProjectCommandResponseDto(false, $"mutation completed but MCP result payload is unavailable (requestId={requestId})", null, null);
+            }
+
+            ProjectCommandResultDto? result;
+            try
+            {
+                result = JsonSerializer.Deserialize<ProjectCommandResultDto>(resultPayload, JsonOptions);
+            }
+            catch
+            {
+                result = null;
+            }
+
+            if (result is null || !result.Found)
+            {
+                return new ProjectCommandResponseDto(false, $"mutation completed but MCP result lookup failed (requestId={requestId})", null, null);
+            }
+
+            if (!result.Completed)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(result.ResponsePayload))
+            {
+                return new ProjectCommandResponseDto(result.Success, result.Message, null, null);
+            }
+
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<ProjectCommandResponseDto>(result.ResponsePayload, JsonOptions);
+                return parsed ?? new ProjectCommandResponseDto(result.Success, result.Message, null, null);
+            }
+            catch
+            {
+                return new ProjectCommandResponseDto(result.Success, result.Message, null, null);
+            }
+        }
+
+        return new ProjectCommandResponseDto(false, $"mutation request timed out after {(int)timeout.TotalSeconds}s (requestId={requestId})", null, null);
     }
 
     private static async Task<string?> SendGetAsync(string uri, TimeSpan? timeout = null)
@@ -466,6 +761,44 @@ internal sealed class HierarchyDaemonClient
             return null;
         }
     }
+
+    private interface IProjectMutationTransport
+    {
+        Task<ProjectCommandResponseDto?> ExecuteAsync(
+            int port,
+            ProjectCommandRequestDto request,
+            TimeSpan timeout,
+            Action<string>? onStatus);
+    }
+
+    private sealed class HttpProjectMutationTransport : IProjectMutationTransport
+    {
+        public Task<ProjectCommandResponseDto?> ExecuteAsync(
+            int port,
+            ProjectCommandRequestDto request,
+            TimeSpan timeout,
+            Action<string>? onStatus)
+        {
+            return ExecuteDurableMutationOverHttpAsync(port, request, timeout, onStatus);
+        }
+    }
+
+    private sealed class McpProjectMutationTransport : IProjectMutationTransport
+    {
+        public Task<ProjectCommandResponseDto?> ExecuteAsync(
+            int port,
+            ProjectCommandRequestDto request,
+            TimeSpan timeout,
+            Action<string>? onStatus)
+        {
+            return ExecuteDurableMutationOverMcpAsync(port, request, timeout, onStatus);
+        }
+    }
+
+    private sealed record McpMutationToolRequest(
+        string Operation,
+        string? RequestId,
+        string? CommandPayload);
 
     private readonly record struct ProjectCommandTransportResult(
         string? Payload,

@@ -12,6 +12,24 @@ internal sealed record ProjectCommandResponseDto(
     string? Kind,
     string? Content);
 
+internal sealed record ProjectCommandAcceptedDto(
+    bool Ok,
+    string RequestId,
+    string Action,
+    bool Duplicated,
+    string Stage,
+    string Message);
+
+internal sealed record ProjectCommandResultDto(
+    bool Found,
+    bool Completed,
+    bool Success,
+    string RequestId,
+    string Action,
+    string State,
+    string Message,
+    string? ResponsePayload);
+
 internal sealed record BuildStatusDto(
     bool Running,
     bool CancelRequested,
@@ -47,4 +65,7 @@ internal sealed record ProjectCommandStatusDto(
     string LastUpdatedAtUtc,
     string FinishedAtUtc,
     bool IsCompiling,
-    bool IsUpdating);
+    bool IsUpdating,
+    bool IsDurable = false,
+    string State = "",
+    bool CancelRequested = false);
