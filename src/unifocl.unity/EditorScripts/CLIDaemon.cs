@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,7 @@ using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
 using UnityEngine;
+using PMPackageInfo = UnityEditor.PackageManager.PackageInfo;
 using Process = System.Diagnostics.Process;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
@@ -94,7 +96,6 @@ namespace UniFocl.EditorBridge
                 message = "initializing unity batch install"
             });
 
-            ProjectCommandResponse? installResponse = null;
             try
             {
                 WriteUpmInstallStatus(statusPath, new UpmBatchInstallStatus
@@ -183,6 +184,25 @@ namespace UniFocl.EditorBridge
                 {
                     pid = processId,
                     packageId = packageId,
+                    stage = "resolving-dependencies",
+                    success = false,
+                    message = "installing package.json dependencies recursively"
+                });
+
+                var recursiveDeps = InstallDependenciesRecursivelyFromPackageJson(
+                    packageId,
+                    listRequest.Result,
+                    processId,
+                    statusPath);
+                if (!recursiveDeps.Success)
+                {
+                    throw new InvalidOperationException(recursiveDeps.Error);
+                }
+
+                WriteUpmInstallStatus(statusPath, new UpmBatchInstallStatus
+                {
+                    pid = processId,
+                    packageId = packageId,
                     stage = "completed",
                     success = true,
                     message = $"installed package {packageId}"
@@ -198,10 +218,180 @@ namespace UniFocl.EditorBridge
                     stage = "failed",
                     success = false,
                     message = $"{ex.GetType().Name}: {ex.Message}",
-                    detail = installResponse?.message ?? string.Empty
+                    detail = string.Empty
                 });
                 EditorApplication.Exit(1);
             }
+        }
+
+        private static RecursiveDependencyInstallResult InstallDependenciesRecursivelyFromPackageJson(
+            string rootPackageId,
+            IEnumerable<PMPackageInfo> installedPackages,
+            int processId,
+            string? statusPath)
+        {
+            var installedById = new Dictionary<string, PMPackageInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var package in installedPackages)
+            {
+                if (package is null || string.IsNullOrWhiteSpace(package.name))
+                {
+                    continue;
+                }
+
+                installedById[package.name] = package;
+            }
+
+            var queue = new Queue<string>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            queue.Enqueue(rootPackageId);
+
+            while (queue.Count > 0)
+            {
+                var currentId = queue.Dequeue();
+                if (!visited.Add(currentId))
+                {
+                    continue;
+                }
+
+                if (!installedById.TryGetValue(currentId, out var currentPackage)
+                    || currentPackage is null
+                    || string.IsNullOrWhiteSpace(currentPackage.resolvedPath))
+                {
+                    continue;
+                }
+
+                var deps = ParseDependenciesFromPackageJson(currentPackage.resolvedPath);
+                foreach (var dep in deps)
+                {
+                    if (installedById.ContainsKey(dep.Key))
+                    {
+                        queue.Enqueue(dep.Key);
+                        continue;
+                    }
+
+                    var target = ComposeDependencyInstallTarget(dep.Key, dep.Value);
+                    WriteUpmInstallStatus(statusPath, new UpmBatchInstallStatus
+                    {
+                        pid = processId,
+                        packageId = rootPackageId,
+                        stage = "resolving-dependencies",
+                        success = false,
+                        message = $"installing dependency {dep.Key} via target {target}"
+                    });
+
+                    var addRequest = Client.Add(target);
+                    if (!WaitForUpmRequest(addRequest, TimeSpan.FromMinutes(4), out var depInstallError))
+                    {
+                        return RecursiveDependencyInstallResult.Fail($"failed to install dependency {dep.Key}: {depInstallError}");
+                    }
+
+                    var refreshRequest = Client.List(true, true);
+                    if (!WaitForUpmRequest(refreshRequest, TimeSpan.FromMinutes(2), out var refreshError))
+                    {
+                        return RecursiveDependencyInstallResult.Fail($"failed to refresh package list after dependency install: {refreshError}");
+                    }
+
+                    installedById.Clear();
+                    foreach (var pkg in refreshRequest.Result)
+                    {
+                        if (pkg is null || string.IsNullOrWhiteSpace(pkg.name))
+                        {
+                            continue;
+                        }
+
+                        installedById[pkg.name] = pkg;
+                    }
+
+                    if (!installedById.ContainsKey(dep.Key))
+                    {
+                        return RecursiveDependencyInstallResult.Fail($"dependency install completed but package is not registered: {dep.Key}");
+                    }
+
+                    queue.Enqueue(dep.Key);
+                }
+            }
+
+            return RecursiveDependencyInstallResult.Ok();
+        }
+
+        private static Dictionary<string, string> ParseDependenciesFromPackageJson(string packageRootPath)
+        {
+            var dependencies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(packageRootPath))
+            {
+                return dependencies;
+            }
+
+            var packageJsonPath = Path.Combine(packageRootPath, "package.json");
+            if (!File.Exists(packageJsonPath))
+            {
+                return dependencies;
+            }
+
+            string raw;
+            try
+            {
+                raw = File.ReadAllText(packageJsonPath);
+            }
+            catch
+            {
+                return dependencies;
+            }
+
+            var dependenciesMatch = Regex.Match(
+                raw,
+                "\"dependencies\"\\s*:\\s*\\{(?<body>.*?)\\}",
+                RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!dependenciesMatch.Success)
+            {
+                return dependencies;
+            }
+
+            var body = dependenciesMatch.Groups["body"].Value;
+            var entryMatches = Regex.Matches(
+                body,
+                "\"(?<id>[^\"]+)\"\\s*:\\s*\"(?<value>[^\"]+)\"",
+                RegexOptions.Singleline);
+
+            foreach (Match entry in entryMatches)
+            {
+                if (!entry.Success)
+                {
+                    continue;
+                }
+
+                var id = entry.Groups["id"].Value.Trim();
+                var value = entry.Groups["value"].Value.Trim();
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    continue;
+                }
+
+                dependencies[id] = value;
+            }
+
+            return dependencies;
+        }
+
+        private static string ComposeDependencyInstallTarget(string packageId, string versionSpec)
+        {
+            var normalizedPackageId = packageId?.Trim() ?? string.Empty;
+            var normalizedVersionSpec = versionSpec?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedVersionSpec))
+            {
+                return normalizedPackageId;
+            }
+
+            if (normalizedVersionSpec.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || normalizedVersionSpec.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || normalizedVersionSpec.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
+                || normalizedVersionSpec.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
+                || normalizedVersionSpec.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                return normalizedVersionSpec;
+            }
+
+            return $"{normalizedPackageId}@{normalizedVersionSpec}";
         }
 
         public static void TryStartInitializeOnLoadBridge()
@@ -1272,6 +1462,28 @@ namespace UniFocl.EditorBridge
             public bool success;
             public string message = string.Empty;
             public string detail = string.Empty;
+        }
+
+        private readonly struct RecursiveDependencyInstallResult
+        {
+            private RecursiveDependencyInstallResult(bool success, string error)
+            {
+                Success = success;
+                Error = error;
+            }
+
+            public bool Success { get; }
+            public string Error { get; }
+
+            public static RecursiveDependencyInstallResult Ok()
+            {
+                return new RecursiveDependencyInstallResult(true, string.Empty);
+            }
+
+            public static RecursiveDependencyInstallResult Fail(string error)
+            {
+                return new RecursiveDependencyInstallResult(false, error ?? "unknown recursive dependency install failure");
+            }
         }
     }
 
