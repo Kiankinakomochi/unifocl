@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.25.0 - 2026-03-19
+
+### Changed
+- Officialized `0.25.0` by closing the development cycle suffix.
+- Added `/init` MCP bootstrap enforcement so Unity projects automatically receive `com.coplaydev.unity-mcp` (git target) when missing.
+- Added `/init` install verification for MCP resolution:
+  - verifies lockfile resolution from `Packages/packages-lock.json` when available
+  - waits for post-init lockfile update window
+  - falls back to daemon `upm-list` verification when attached to the same project
+  - fails `/init` with actionable guidance when installation cannot be verified
+- Fixed `HierarchyDaemonClient.ExecuteProjectCommandAsync` local variable shadowing to restore clean CLI compilation.
+
 ## 0.24.0 - 2026-03-11
 
 ### Changed

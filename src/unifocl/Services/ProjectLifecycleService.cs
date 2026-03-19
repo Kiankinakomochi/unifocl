@@ -8,7 +8,11 @@ internal sealed class ProjectLifecycleService
 {
     private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan InitPackageLockWaitTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan InitDaemonUpmVerifyTimeout = TimeSpan.FromSeconds(45);
     private const int DefaultRecentPruneStaleDays = 14;
+    private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
+    private const string RequiredMcpPackageTarget = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main";
 
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
@@ -37,11 +41,11 @@ internal sealed class ProjectLifecycleService
             "/logs" => await HandleLogsAsync(input, matched, session, daemonRuntime, log),
             "/examples" => await HandleExamplesAsync(log),
             "/update" => await HandleUpdateAsync(log),
-            "/install-hook" => await HandleInstallHookAsync(session, log),
+            "/install-hook" => await HandleInstallHookAsync(session, daemonControlService, daemonRuntime, log),
             "/unity detect" => await HandleUnityDetectAsync(log),
             "/unity set" => await HandleUnitySetAsync(input, matched, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
-            "/init" => await HandleInitAsync(input, matched, session, log),
+            "/init" => await HandleInitAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/config" => await HandleConfigAsync(input, matched, log),
             _ => false
         };
@@ -338,6 +342,8 @@ internal sealed class ProjectLifecycleService
         string input,
         CommandSpec matched,
         CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
@@ -390,8 +396,95 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
+        var verifyResult = await RunWithStatusAsync(
+            "Verifying MCP package installation...",
+            () => VerifyMcpPackageInstallationAsync(targetPath, session, daemonControlService, daemonRuntime, log));
+        if (!verifyResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(verifyResult.Error)}");
+            return true;
+        }
+
         log($"[green]init[/]: ready at [white]{Markup.Escape(targetPath)}[/]");
         return true;
+    }
+
+    private async Task<OperationResult> VerifyMcpPackageInstallationAsync(
+        string projectPath,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        if (TryReadPackageFromPackagesLock(projectPath, RequiredMcpPackageId, out var lockVersion, out var lockSource))
+        {
+            var versionLabel = string.IsNullOrWhiteSpace(lockVersion) ? "-" : lockVersion;
+            var sourceLabel = string.IsNullOrWhiteSpace(lockSource) ? "unknown" : lockSource;
+            log($"[green]init[/]: MCP package resolved via lock file [white]{Markup.Escape(sourceLabel)}[/] [grey]v{Markup.Escape(versionLabel)}[/]");
+            return OperationResult.Success();
+        }
+
+        var lockDeadline = DateTime.UtcNow + InitPackageLockWaitTimeout;
+        while (DateTime.UtcNow < lockDeadline)
+        {
+            await Task.Delay(1000);
+            if (TryReadPackageFromPackagesLock(projectPath, RequiredMcpPackageId, out lockVersion, out lockSource))
+            {
+                var versionLabel = string.IsNullOrWhiteSpace(lockVersion) ? "-" : lockVersion;
+                var sourceLabel = string.IsNullOrWhiteSpace(lockSource) ? "unknown" : lockSource;
+                log($"[green]init[/]: MCP package resolved via lock file [white]{Markup.Escape(sourceLabel)}[/] [grey]v{Markup.Escape(versionLabel)}[/]");
+                return OperationResult.Success();
+            }
+        }
+
+        _ = daemonRuntime;
+        var attachedPort = session.AttachedPort;
+        var canVerifyViaAttachedDaemon = attachedPort is int
+                                         && !string.IsNullOrWhiteSpace(session.CurrentProjectPath)
+                                         && PathsEqual(session.CurrentProjectPath!, projectPath)
+                                         && await daemonControlService.TouchAttachedDaemonAsync(session);
+        if (!canVerifyViaAttachedDaemon)
+        {
+            return OperationResult.Fail(
+                "MCP dependency was added to manifest, but install could not be verified yet (packages-lock is missing and no attached daemon is available for this project). Open Unity and rerun /init.");
+        }
+
+        var upmListPayload = JsonSerializer.Serialize(
+            new UpmListRequestPayload(false, true, true),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        var verifyDeadline = DateTime.UtcNow + InitDaemonUpmVerifyTimeout;
+        string? lastError = null;
+        while (DateTime.UtcNow < verifyDeadline)
+        {
+            var upmResponse = await _daemonClient.ExecuteProjectCommandAsync(
+                attachedPort!.Value,
+                new ProjectCommandRequestDto("upm-list", null, null, upmListPayload));
+            if (upmResponse.Ok)
+            {
+                var mcpPackage = ProjectViewServiceUtils.TryFindUpmPackageById(upmResponse.Content, RequiredMcpPackageId);
+                if (mcpPackage is not null)
+                {
+                    var versionLabel = string.IsNullOrWhiteSpace(mcpPackage.Version) ? "-" : mcpPackage.Version!;
+                    var sourceLabel = string.IsNullOrWhiteSpace(mcpPackage.Source) ? "unknown" : mcpPackage.Source!;
+                    log($"[green]init[/]: MCP package confirmed by daemon UPM list [white]{Markup.Escape(sourceLabel)}[/] [grey]v{Markup.Escape(versionLabel)}[/]");
+                    return OperationResult.Success();
+                }
+
+                lastError = $"UPM list does not contain {RequiredMcpPackageId}";
+            }
+            else
+            {
+                lastError = string.IsNullOrWhiteSpace(upmResponse.Message)
+                    ? "UPM list verification failed"
+                    : upmResponse.Message;
+            }
+
+            await Task.Delay(1500);
+        }
+
+        var detail = string.IsNullOrWhiteSpace(lastError) ? "installation state could not be resolved from daemon" : lastError;
+        return OperationResult.Fail($"MCP package verification failed: {detail}");
     }
 
     private async Task<bool> HandleRecentAsync(
@@ -824,7 +917,11 @@ internal sealed class ProjectLifecycleService
         return Task.FromResult(true);
     }
 
-    private Task<bool> HandleInstallHookAsync(CliSessionState session, Action<string> log)
+    private Task<bool> HandleInstallHookAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
     {
         var targetPath = !string.IsNullOrWhiteSpace(session.CurrentProjectPath)
             ? session.CurrentProjectPath!
@@ -836,7 +933,13 @@ internal sealed class ProjectLifecycleService
         }
 
         log($"[grey]install-hook[/]: initializing bridge dependencies at [white]{Markup.Escape(targetPath)}[/]");
-        return HandleInitAsync($"/init \"{targetPath}\"", new CommandSpec("/init", "Initialize bridge", "/init"), session, log);
+        return HandleInitAsync(
+            $"/init \"{targetPath}\"",
+            new CommandSpec("/init", "Initialize bridge", "/init"),
+            session,
+            daemonControlService,
+            daemonRuntime,
+            log);
     }
 
     private static async Task<bool> HandleDoctorAsync(
@@ -2080,6 +2183,7 @@ internal sealed class ProjectLifecycleService
             }
 
             var requiredPackages = InferRequiredUnityPackages(projectPath);
+            requiredPackages[RequiredMcpPackageId] = RequiredMcpPackageTarget;
             var changed = false;
             foreach (var required in requiredPackages)
             {
@@ -2108,6 +2212,62 @@ internal sealed class ProjectLifecycleService
         {
             return OperationResult.Fail($"failed to update required Unity package references ({ex.Message})");
         }
+    }
+
+    private static bool TryReadPackageFromPackagesLock(
+        string projectPath,
+        string packageId,
+        out string? version,
+        out string? source)
+    {
+        version = null;
+        source = null;
+
+        try
+        {
+            var lockPath = Path.Combine(projectPath, "Packages", "packages-lock.json");
+            if (!File.Exists(lockPath))
+            {
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(lockPath));
+            if (!document.RootElement.TryGetProperty("dependencies", out var depsElement)
+                || depsElement.ValueKind != JsonValueKind.Object
+                || !depsElement.TryGetProperty(packageId, out var packageElement)
+                || packageElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (packageElement.TryGetProperty("version", out var versionElement)
+                && versionElement.ValueKind == JsonValueKind.String)
+            {
+                version = versionElement.GetString();
+            }
+
+            if (packageElement.TryGetProperty("source", out var sourceElement)
+                && sourceElement.ValueKind == JsonValueKind.String)
+            {
+                source = sourceElement.GetString();
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        var leftFullPath = Path.GetFullPath(left);
+        var rightFullPath = Path.GetFullPath(right);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(leftFullPath, rightFullPath, comparison);
     }
 
     private static Dictionary<string, string> InferRequiredUnityPackages(string projectPath)

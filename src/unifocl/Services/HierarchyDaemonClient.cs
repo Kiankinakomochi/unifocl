@@ -120,19 +120,19 @@ internal sealed class HierarchyDaemonClient
         {
             var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId!;
             var requestWithId = request with { RequestId = requestId };
-            var timeout = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
-                          || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
+            var mutationTimeout = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
+                                  || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
                 ? UpmMutationTimeout
                 : TimeSpan.FromSeconds(90);
 
-            var response = await McpMutationTransport.ExecuteAsync(port, requestWithId, timeout, onStatus);
+            var response = await McpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
             if (response is not null)
             {
                 return response;
             }
 
             onStatus?.Invoke("MCP mutation transport unavailable; falling back to daemon HTTP");
-            var fallback = await HttpMutationTransport.ExecuteAsync(port, requestWithId, timeout, onStatus);
+            var fallback = await HttpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
             if (fallback is not null)
             {
                 return fallback;
@@ -142,7 +142,7 @@ internal sealed class HierarchyDaemonClient
             var legacy = await SendPostJsonWithDiagnosticsAsync(
                 $"http://127.0.0.1:{port}/project/command",
                 requestWithId,
-                timeout,
+                mutationTimeout,
                 requestId: requestId,
                 detectDaemonRestart: request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
                                      || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase),
