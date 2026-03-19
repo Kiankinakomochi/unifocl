@@ -6,15 +6,17 @@ description: >
 
 ## Mandatory Worktree Bootstrap (Do First)
 
-Before any edits or worktree actions, execute these steps in order:
+Before any edits or worktree actions, run this one-shot bootstrap command from the repository root:
 
-1. Create a working branch with `codex/` prefix from latest `main`.
-2. Pull latest `origin/main`.
-3. Sync and initialize submodules recursively:
-   - `git submodule sync --recursive`
-   - `git submodule update --init --recursive`
-4. Bump the minor version in `src/unifocl/Services/CliVersion.cs` and start the dev cycle with `DevCycle = "a1"`.
-5. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
+1. `src/unifocl/scripts/agent-worktree.sh setup --worktree-path . --branch codex/<task-name>`
+2. This command automatically:
+   - Creates/switches to the requested branch from `origin/main`
+   - Syncs and initializes submodules recursively
+   - Bumps `src/unifocl/Services/CliVersion.cs` minor and resets `DevCycle` to `a1`
+   - Scaffolds `.local/compatcheck-benchmark/`
+   - Writes `local.config.json`
+   - Runs compatcheck with resolved Unity paths
+3. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
 
 ## Goal
 
@@ -28,8 +30,10 @@ The agent must treat the following as **non-negotiable principles**:
 - **Build Command:** Run builds or tests on `src/unifocl/unifocl.csproj` with `--disable-build-servers -v minimal`
 - **Editor Change Validation:** When changing any code under `/Editor` (for example `src/unifocl.unity/EditorScripts/**`), run compatcheck before finalizing:
   - `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
-  - Recommended local bootstrap command (creates benchmark Unity project + writes local path config + runs compatcheck):
-    - `./scripts/setup-compatcheck-local.sh`
+  - Preferred bootstrap command (one-shot AGENT setup including compatcheck):
+    - `src/unifocl/scripts/agent-worktree.sh setup --worktree-path . --branch codex/<task-name>`
+  - If branch/setup is already complete and only compatcheck paths need refresh:
+    - `src/unifocl/scripts/agent-worktree-compatcheck-update.sh --project-path .local/compatcheck-benchmark --write-local-config --run-compatcheck`
   - The setup command writes local-only artifacts:
     - `local.config.json`
     - `.local/compatcheck-benchmark/`

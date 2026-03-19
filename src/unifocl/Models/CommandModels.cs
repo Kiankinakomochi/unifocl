@@ -11,6 +11,10 @@ internal sealed record DaemonInstance(
     DateTime LastHeartbeatUtc);
 internal sealed record DaemonSessionInfo(int Port, DateTimeOffset StartedAtUtc, bool Created);
 internal sealed record RecentProjectEntry(string ProjectPath, DateTimeOffset LastOpenedUtc);
+internal readonly record struct RecentProjectPruneSummary(int RemovedMissing, int RemovedStale, int RemainingCount)
+{
+    public int RemovedTotal => RemovedMissing + RemovedStale;
+}
 internal sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
 internal sealed record OperationResult(bool Ok, string Error)
 {

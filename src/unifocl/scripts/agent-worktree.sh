@@ -4,6 +4,7 @@ set -euo pipefail
 print_usage() {
     cat <<'USAGE'
 Usage:
+  agent-worktree.sh setup --worktree-path <path> --branch <codex/branch> [--project-path <path>] [--unity-version <version>] [--skip-version-bump] [--skip-compatcheck]
   agent-worktree.sh provision --repo-root <path> --worktree-path <path> --branch <branch> [--source-project <path>] [--seed-library]
   agent-worktree.sh setup-smoke-project --worktree-path <path> --project-path <path> [--unity-version <version>] [--force]
   agent-worktree.sh seed --source-project <path> --worktree-path <path>
@@ -11,6 +12,7 @@ Usage:
   agent-worktree.sh teardown --repo-root <path> --worktree-path <path>
 
 Commands:
+  setup         One-shot AGENT bootstrap: branch from origin/main, sync submodules, bump CliVersion dev cycle, scaffold smoke project, write local.config, and run compatcheck.
   provision     Create isolated git worktree branch and optionally seed Library cache.
   setup-smoke-project  Scaffold a minimal Unity project for agentic smoke testing.
   seed          Copy source project's Library cache into provisioned worktree.
@@ -32,11 +34,18 @@ abs_path() {
     local value="$1"
     if [ -d "$value" ]; then
         (cd "$value" && pwd)
+    elif [ -e "$value" ]; then
+        local base
+        base="$(dirname "$value")"
+        local name
+        name="$(basename "$value")"
+        (cd "$base" && printf '%s/%s\n' "$(pwd)" "$name")
     else
         local base
         base="$(dirname "$value")"
         local name
         name="$(basename "$value")"
+        mkdir -p "$base"
         (cd "$base" && printf '%s/%s\n' "$(pwd)" "$name")
     fi
 }
@@ -119,6 +128,139 @@ resolve_unity_version() {
 
     # Deterministic fallback when Unity Hub is not available in the environment.
     echo "6000.0.0f1"
+}
+
+bump_cli_version_dev_cycle() {
+    local version_file="$1"
+    [ -f "$version_file" ] || die "CliVersion file not found: $version_file"
+
+    local current_minor
+    current_minor="$(
+        sed -nE 's/^[[:space:]]*public const int Minor = ([0-9]+);/\1/p' "$version_file" \
+            | head -n 1
+    )"
+    [ -n "$current_minor" ] || die "failed to parse CliVersion minor from: $version_file"
+
+    local next_minor=$((current_minor + 1))
+    local temp_file
+    temp_file="$(mktemp -t cli-version.XXXXXX)"
+
+    awk -v next_minor="$next_minor" '
+        {
+            line = $0
+            if (line ~ /^[[:space:]]*public const int Minor = [0-9]+;/) {
+                sub(/[0-9]+;/, next_minor ";", line)
+                seen_minor = 1
+            }
+            if (line ~ /^[[:space:]]*public const string DevCycle = ".*";/) {
+                sub(/".*";/, "\"a1\";", line)
+                seen_dev = 1
+            }
+            print line
+        }
+        END {
+            if (seen_minor != 1 || seen_dev != 1) {
+                exit 2
+            }
+        }
+    ' "$version_file" >"$temp_file" || {
+        rm -f "$temp_file"
+        die "failed to rewrite CliVersion file: $version_file"
+    }
+
+    mv "$temp_file" "$version_file"
+    echo "cli-version-bootstrap: minor=${next_minor}, devcycle=a1"
+}
+
+run_setup() {
+    local worktree_path="."
+    local branch=""
+    local project_path=".local/compatcheck-benchmark"
+    local unity_version=""
+    local skip_version_bump=false
+    local skip_compatcheck=false
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --worktree-path)
+                worktree_path="$2"
+                shift 2
+                ;;
+            --branch)
+                branch="$2"
+                shift 2
+                ;;
+            --project-path)
+                project_path="$2"
+                shift 2
+                ;;
+            --unity-version)
+                unity_version="$2"
+                shift 2
+                ;;
+            --skip-version-bump)
+                skip_version_bump=true
+                shift
+                ;;
+            --skip-compatcheck)
+                skip_compatcheck=true
+                shift
+                ;;
+            *)
+                die "unknown setup option: $1"
+                ;;
+        esac
+    done
+
+    [ -n "$branch" ] || die "missing --branch"
+
+    worktree_path="$(abs_path "$worktree_path")"
+    require_command git
+    git -C "$worktree_path" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || die "not a git worktree: $worktree_path"
+    git -C "$worktree_path" fetch origin main >/dev/null 2>&1 || true
+
+    if git -C "$worktree_path" show-ref --verify --quiet "refs/heads/$branch"; then
+        git -C "$worktree_path" switch "$branch"
+        git -C "$worktree_path" merge --ff-only origin/main \
+            || die "failed to fast-forward $branch to origin/main"
+    else
+        git -C "$worktree_path" switch -c "$branch" origin/main
+    fi
+
+    git -C "$worktree_path" submodule sync --recursive
+    git -C "$worktree_path" submodule update --init --recursive
+
+    if [ "$skip_version_bump" != true ]; then
+        bump_cli_version_dev_cycle "$worktree_path/src/unifocl/Services/CliVersion.cs"
+    fi
+
+    local smoke_setup_args=(
+        --worktree-path "$worktree_path"
+        --project-path "$project_path"
+        --force
+    )
+    if [ -n "$unity_version" ]; then
+        smoke_setup_args+=(--unity-version "$unity_version")
+    fi
+
+    run_setup_smoke_project "${smoke_setup_args[@]}"
+
+    local compat_script="$worktree_path/src/unifocl/scripts/agent-worktree-compatcheck-update.sh"
+    [ -f "$compat_script" ] || die "compatcheck helper script not found: $compat_script"
+
+    local compat_args=(
+        --project-path "$project_path"
+        --write-local-config
+    )
+    if [ "$skip_compatcheck" != true ]; then
+        compat_args+=(--run-compatcheck)
+    fi
+
+    "$compat_script" "${compat_args[@]}"
+
+    echo "setup-complete: $worktree_path"
+    echo "active-branch: $(git -C "$worktree_path" rev-parse --abbrev-ref HEAD)"
 }
 
 run_provision() {
@@ -414,6 +556,9 @@ main() {
             ;;
         setup-smoke-project)
             run_setup_smoke_project "$@"
+            ;;
+        setup)
+            run_setup "$@"
             ;;
         seed)
             run_seed "$@"
