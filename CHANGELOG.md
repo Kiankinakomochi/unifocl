@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.26.0 - 2026-03-20
+
+### Changed
+- Officialized `0.26.0` by closing the development cycle suffix.
+- Merged incoming `codex/agent-md-setup` setup flow updates and versioned them as the newer release.
+- Upgraded `/init` MCP provisioning to execute Unity batch installation with status-file monitoring and recursive dependency installation checks.
+- Kept `/init` manifest bootstrap enforcement for required MCP package references before running installer checks.
+
 ## 0.25.0 - 2026-03-19
 
 ### Changed
