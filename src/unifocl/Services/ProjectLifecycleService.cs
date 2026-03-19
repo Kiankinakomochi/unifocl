@@ -8,7 +8,9 @@ internal sealed class ProjectLifecycleService
 {
     private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan McpBatchInstallTimeout = TimeSpan.FromMinutes(8);
     private const int DefaultRecentPruneStaleDays = 14;
+    private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
 
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
@@ -37,11 +39,11 @@ internal sealed class ProjectLifecycleService
             "/logs" => await HandleLogsAsync(input, matched, session, daemonRuntime, log),
             "/examples" => await HandleExamplesAsync(log),
             "/update" => await HandleUpdateAsync(log),
-            "/install-hook" => await HandleInstallHookAsync(session, log),
+            "/install-hook" => await HandleInstallHookAsync(session, daemonControlService, daemonRuntime, log),
             "/unity detect" => await HandleUnityDetectAsync(log),
             "/unity set" => await HandleUnitySetAsync(input, matched, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
-            "/init" => await HandleInitAsync(input, matched, session, log),
+            "/init" => await HandleInitAsync(input, matched, session, daemonControlService, daemonRuntime, log),
             "/config" => await HandleConfigAsync(input, matched, log),
             _ => false
         };
@@ -338,6 +340,8 @@ internal sealed class ProjectLifecycleService
         string input,
         CommandSpec matched,
         CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
@@ -390,8 +394,133 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
+        var mcpInstallResult = await RunWithStatusAsync(
+            "Installing required MCP package...",
+            () => EnsureMcpPackageInstalledAsync(targetPath, log));
+        if (!mcpInstallResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(mcpInstallResult.Error)}");
+            return true;
+        }
+
         log($"[green]init[/]: ready at [white]{Markup.Escape(targetPath)}[/]");
         return true;
+    }
+
+    private async Task<OperationResult> EnsureMcpPackageInstalledAsync(
+        string projectPath,
+        Action<string> log)
+    {
+        if (!UnityEditorPathService.TryResolveEditorForProject(projectPath, out var unityPath, out var unityVersion, out var editorResolveError))
+        {
+            return OperationResult.Fail(editorResolveError ?? "failed to resolve Unity editor for MCP package installation");
+        }
+
+        if (!UnityEditorPathService.TrySetDefaultEditorPath(unityPath, out var defaultEditorSaveError))
+        {
+            log($"[yellow]config[/]: unable to persist default editor path ({Markup.Escape(defaultEditorSaveError ?? "unknown error")})");
+        }
+
+        Environment.SetEnvironmentVariable("UNITY_PATH", unityPath);
+
+        var runtimeDir = Path.Combine(projectPath, ".unifocl", "runtime");
+        Directory.CreateDirectory(runtimeDir);
+        var statusPath = Path.Combine(runtimeDir, "mcp-install-status.json");
+        var unityLogPath = Path.Combine(runtimeDir, "mcp-install-unity.log");
+        TryDeleteFile(statusPath);
+        TryDeleteFile(unityLogPath);
+
+        var processStart = new ProcessStartInfo(unityPath)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        processStart.ArgumentList.Add("-projectPath");
+        processStart.ArgumentList.Add(projectPath);
+        processStart.ArgumentList.Add("-batchmode");
+        processStart.ArgumentList.Add("-nographics");
+        processStart.ArgumentList.Add("-vcsMode");
+        processStart.ArgumentList.Add("None");
+        processStart.ArgumentList.Add("-logFile");
+        processStart.ArgumentList.Add(unityLogPath);
+        processStart.ArgumentList.Add("-executeMethod");
+        processStart.ArgumentList.Add("UniFocl.EditorBridge.CLIDaemon.InstallRequiredMcpPackageBatch");
+        processStart.ArgumentList.Add("--upm-install-package");
+        processStart.ArgumentList.Add(RequiredMcpPackageId);
+        processStart.ArgumentList.Add("--upm-install-status-file");
+        processStart.ArgumentList.Add(statusPath);
+
+        var startedAt = DateTime.UtcNow;
+        var lastStageSignature = string.Empty;
+        try
+        {
+            using var process = Process.Start(processStart);
+            if (process is null)
+            {
+                return OperationResult.Fail("failed to start Unity batch process for MCP package installation");
+            }
+
+            log($"[grey]init[/]: launched Unity batch installer pid=[white]{process.Id}[/] version=[white]{Markup.Escape(unityVersion)}[/]");
+
+            while (!process.HasExited)
+            {
+                if (DateTime.UtcNow - startedAt > McpBatchInstallTimeout)
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                    }
+
+                    var timeoutDetail = TryReadUpmBatchInstallStatus(statusPath, out var timeoutStatus)
+                        ? $"lastStage={timeoutStatus!.Stage} message={timeoutStatus.Message}"
+                        : "status file unavailable";
+                    return OperationResult.Fail(
+                        $"Unity batch MCP install timed out after {(int)McpBatchInstallTimeout.TotalSeconds}s ({timeoutDetail})");
+                }
+
+                if (TryReadUpmBatchInstallStatus(statusPath, out var status))
+                {
+                    var signature = $"{status!.Stage}|{status.Message}";
+                    if (!signature.Equals(lastStageSignature, StringComparison.Ordinal))
+                    {
+                        lastStageSignature = signature;
+                        log($"[grey]init[/]: MCP install status stage=[white]{Markup.Escape(status.Stage)}[/] detail=[white]{Markup.Escape(status.Message)}[/]");
+                    }
+                }
+
+                await Task.Delay(500);
+            }
+
+            var exitCode = process.ExitCode;
+            var elapsedSeconds = (DateTime.UtcNow - startedAt).TotalSeconds;
+            log($"[grey]init[/]: Unity batch installer exited pid=[white]{process.Id}[/] code=[white]{exitCode}[/] elapsed=[white]{elapsedSeconds:0.0}s[/]");
+
+            if (!TryReadUpmBatchInstallStatus(statusPath, out var finalStatus))
+            {
+                var unityLogTail = ReadTailLines(unityLogPath, 20);
+                return OperationResult.Fail(
+                    $"MCP install status file was not produced by Unity batch process (exit={exitCode}, logTail={unityLogTail})");
+            }
+
+            var final = finalStatus!;
+            var manifestHasPackage = ManifestContainsPackage(projectPath, RequiredMcpPackageId);
+            if (exitCode != 0 || !final.Success || !manifestHasPackage)
+            {
+                var unityLogTail = ReadTailLines(unityLogPath, 20);
+                return OperationResult.Fail(
+                    $"MCP install failed (exit={exitCode}, stage={final.Stage}, message={final.Message}, manifestHasPackage={manifestHasPackage}, logTail={unityLogTail})");
+            }
+
+            log($"[green]init[/]: installed required package [white]{Markup.Escape(RequiredMcpPackageId)}[/]");
+            return OperationResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail($"failed to run Unity batch MCP install ({ex.Message})");
+        }
     }
 
     private async Task<bool> HandleRecentAsync(
@@ -824,7 +953,11 @@ internal sealed class ProjectLifecycleService
         return Task.FromResult(true);
     }
 
-    private Task<bool> HandleInstallHookAsync(CliSessionState session, Action<string> log)
+    private Task<bool> HandleInstallHookAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
     {
         var targetPath = !string.IsNullOrWhiteSpace(session.CurrentProjectPath)
             ? session.CurrentProjectPath!
@@ -836,7 +969,13 @@ internal sealed class ProjectLifecycleService
         }
 
         log($"[grey]install-hook[/]: initializing bridge dependencies at [white]{Markup.Escape(targetPath)}[/]");
-        return HandleInitAsync($"/init \"{targetPath}\"", new CommandSpec("/init", "Initialize bridge", "/init"), session, log);
+        return HandleInitAsync(
+            $"/init \"{targetPath}\"",
+            new CommandSpec("/init", "Initialize bridge", "/init"),
+            session,
+            daemonControlService,
+            daemonRuntime,
+            log);
     }
 
     private static async Task<bool> HandleDoctorAsync(
@@ -2149,6 +2288,93 @@ internal sealed class ProjectLifecycleService
         return required;
     }
 
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool TryReadUpmBatchInstallStatus(string statusPath, out UpmBatchInstallStatusRecord? status)
+    {
+        status = null;
+        if (!File.Exists(statusPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var raw = File.ReadAllText(statusPath);
+            status = JsonSerializer.Deserialize<UpmBatchInstallStatusRecord>(
+                raw,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return status is not null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ManifestContainsPackage(string projectPath, string packageId)
+    {
+        try
+        {
+            var manifestPath = Path.Combine(projectPath, "Packages", "manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                return false;
+            }
+
+            var manifest = File.ReadAllText(manifestPath);
+            return manifest.Contains($"\"{packageId}\"", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ReadTailLines(string path, int maxLines)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return "log unavailable";
+            }
+
+            var lines = File.ReadLines(path)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .TakeLast(Math.Max(1, maxLines))
+                .ToArray();
+            if (lines.Length == 0)
+            {
+                return "log empty";
+            }
+
+            var joined = string.Join(" | ", lines);
+            if (joined.Length > 1000)
+            {
+                return joined[..1000] + "...";
+            }
+
+            return joined;
+        }
+        catch (Exception ex)
+        {
+            return $"log read failed: {ex.Message}";
+        }
+    }
+
     private static async Task<ProcessResult> RunProcessAsync(
         string fileName,
         string arguments,
@@ -2445,4 +2671,12 @@ internal sealed class ProjectLifecycleService
         public string? UnityProjectPath { get; set; }
         public int? RecentPruneStaleDays { get; set; }
     }
+
+    private sealed record UpmBatchInstallStatusRecord(
+        int Pid,
+        string PackageId,
+        string Stage,
+        bool Success,
+        string Message,
+        string Detail);
 }
