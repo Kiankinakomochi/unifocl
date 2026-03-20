@@ -405,9 +405,8 @@ run_setup_smoke_project() {
     cat > "$project_abs/Packages/manifest.json" <<'EOF'
 {
   "dependencies": {
-    "com.unity.collab-proxy": "2.7.2",
     "com.unity.ide.rider": "3.0.35",
-    "com.unity.ide.visualstudio": "2.0.24",
+    "com.unity.modules.imageconversion": "1.0.0",
     "com.unity.test-framework": "1.4.5",
     "com.unity.textmeshpro": "3.0.6",
     "com.unity.timeline": "1.8.9",

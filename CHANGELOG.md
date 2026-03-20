@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.26.0 - 2026-03-20
+
+### Changed
+- Officialized `0.26.0` by closing the development cycle suffix.
+- Hardened `/init` MCP package installation by moving package install into a dedicated Unity batch process with explicit PID tracking, status-file progress updates, timeout handling, and deterministic teardown.
+- Updated MCP install flow to support fallback Git target install and to recursively install missing dependencies by reading installed package `package.json` dependency entries.
+- Updated smoke project scaffolding (`setup-smoke-project`) to include `com.unity.modules.imageconversion` by default so generated projects align with Unity Hub-style module availability required by MCP runtime screenshot helpers.
+
 ## 0.24.0 - 2026-03-11
 
 ### Changed
