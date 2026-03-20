@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -3635,4 +3636,5 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
         }
     }
 }
+#nullable restore
 #endif
