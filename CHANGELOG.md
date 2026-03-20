@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.27.0 - 2026-03-20
+
+### Changed
+- Officialized `0.27.0` by closing the development cycle suffix.
+- Suppressed TUI body rendering during agentic project-mode execution to keep non-interactive output deterministic.
+
+## 0.27.0a1 - 2026-03-20
+
+### Changed
+- Started the `0.27.0` development cycle with `a1` suffix versioning after syncing `codex/agentic-upm-no-tui-output` with latest `main`.
+- Suppressed TUI body rendering during agentic project-mode execution to keep non-interactive output deterministic.
+
 ## 0.26.0 - 2026-03-20
 
 ### Changed

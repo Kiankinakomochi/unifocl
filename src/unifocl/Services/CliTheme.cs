@@ -48,6 +48,11 @@ internal static class CliTheme
 
     public static void MarkupLine(string markupLine)
     {
+        if (CliRuntimeState.SuppressConsoleOutput)
+        {
+            return;
+        }
+
         var themed = ApplyMarkupPalette(markupLine);
         
         // 1. Normalize all line endings to CRLF to prevent internal staircase drift
@@ -69,6 +74,11 @@ internal static class CliTheme
 
     public static void Markup(string markup)
     {
+        if (CliRuntimeState.SuppressConsoleOutput)
+        {
+            return;
+        }
+
         var themed = ApplyMarkupPalette(markup);
         try
         {
