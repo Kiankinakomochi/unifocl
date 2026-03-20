@@ -393,7 +393,7 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/build cancel` | | Request cancellation for the active build process via daemon. |
 | `/build targets` | | List platform build support currently available in this Unity Editor. |
 | `/build logs` | | Reopen live build log tail (restartable, with error filtering). |
-| `/init [path]` | | Generate bridge-mode config and install editor-side dependencies. |
+| `/init [path]` | | Generate bridge-mode config, install editor-side dependencies, and install required MCP package through a Unity batch lifecycle (open/install/teardown). |
 | `/clear` | | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -451,6 +451,10 @@ unifocl now supports durable project-mutation execution (`submit -> status -> re
   - `GET /project/mutation/status?requestId=<id>`
   - `GET /project/mutation/result?requestId=<id>`
   - `POST /project/mutation/cancel?requestId=<id>`
+Recent stability hardening:
+* `/init` now installs `com.coplaydev.unity-mcp` through a dedicated Unity batch process with PID/status tracking instead of daemon mutation round-trips.
+* MCP install uses fallback Git target resolution and recursively installs transitive package dependencies declared in installed package `package.json` files.
+* `exec --agentic` UPM commands with `--project <path>` auto-run an `/open` lifecycle step before executing package commands.
 
 ### 2. Daemon Management
 The daemon maintains a persistent connection to the project. Manage it using the `/daemon` (or `/d`) command suite.
@@ -532,6 +536,9 @@ Current progress:
 - [x] Step 2: Library cache seeding strategy
 - [x] Step 3: Dynamic daemon port assignment + readiness check
 - [x] Step 4: Agent lifecycle orchestration documentation
+
+Smoke project defaults:
+* `setup-smoke-project` now seeds `Packages/manifest.json` with `com.unity.modules.imageconversion` to better match Unity Hub-created project module availability.
 
 ### 3. Mode Switching
 Once a project is opened, use these commands to switch your active context.
