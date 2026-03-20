@@ -436,6 +436,21 @@ Safety constraints in host-mode fallback:
 UPM commands in CLI mode (`upm list/install/remove/update`) are currently under active stabilization.  
 For critical package operations, the recommended workflow is still Unity Editor GUI (Package Manager window), then use unifocl for verification and follow-up automation.
 
+### MCP Integration (Hybrid Durable Mutations)
+
+unifocl now supports durable project-mutation execution (`submit -> status -> result`) so mutation outcomes remain queryable even if Unity refresh/compile/domain reload interrupts an in-flight HTTP response.
+
+- Recommended Unity MCP package:
+  - `https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main`
+  - OpenUPM package id: `com.coplaydev.unity-mcp`
+- Thin MCP tool endpoint exposed by unifocl bridge:
+  - `POST /mcp/unifocl_project_command`
+  - Operations: `submit`, `get_status`, `get_result`, `cancel`
+- Durable HTTP fallback endpoints:
+  - `POST /project/mutation/submit`
+  - `GET /project/mutation/status?requestId=<id>`
+  - `GET /project/mutation/result?requestId=<id>`
+  - `POST /project/mutation/cancel?requestId=<id>`
 Recent stability hardening:
 * `/init` now installs `com.coplaydev.unity-mcp` through a dedicated Unity batch process with PID/status tracking instead of daemon mutation round-trips.
 * MCP install uses fallback Git target resolution and recursively installs transitive package dependencies declared in installed package `package.json` files.

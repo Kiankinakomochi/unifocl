@@ -11,6 +11,7 @@ internal sealed class ProjectLifecycleService
     private static readonly TimeSpan McpBatchInstallTimeout = TimeSpan.FromMinutes(8);
     private const int DefaultRecentPruneStaleDays = 14;
     private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
+    private const string RequiredMcpPackageTarget = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main";
 
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
@@ -2219,6 +2220,7 @@ internal sealed class ProjectLifecycleService
             }
 
             var requiredPackages = InferRequiredUnityPackages(projectPath);
+            requiredPackages[RequiredMcpPackageId] = RequiredMcpPackageTarget;
             var changed = false;
             foreach (var required in requiredPackages)
             {

@@ -507,6 +507,15 @@ namespace UniFocl.EditorBridge
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command-status", StringComparison.OrdinalIgnoreCase))
                 {
                     var requestedId = request.QueryString["requestId"];
+                    if (!string.IsNullOrWhiteSpace(requestedId)
+                        && DaemonProjectService.TryGetDurableMutationStatus(requestedId, out var durableStatus))
+                    {
+                        durableStatus.isCompiling = _editorIsCompiling;
+                        durableStatus.isUpdating = _editorIsUpdating;
+                        await WriteJsonResponseAsync(context.Response, JsonUtility.ToJson(durableStatus), cancellationToken: cancellationToken);
+                        return;
+                    }
+
                     await WriteJsonResponseAsync(context.Response, GetProjectCommandStatusPayload(requestedId), cancellationToken: cancellationToken);
                     return;
                 }
@@ -610,6 +619,52 @@ namespace UniFocl.EditorBridge
                     return;
                 }
 
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/mutation/submit", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                    MarkActivity();
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.SubmitMutationPayload(payload));
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/mutation/status", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requestId = request.QueryString["requestId"] ?? string.Empty;
+                    MarkActivity();
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.GetMutationStatusPayload(requestId));
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/mutation/result", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requestId = request.QueryString["requestId"] ?? string.Empty;
+                    MarkActivity();
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.GetMutationResultPayload(requestId));
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/mutation/cancel", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requestId = request.QueryString["requestId"] ?? string.Empty;
+                    MarkActivity();
+                    var response = await ExecuteOnMainThreadAsync(() => DaemonProjectService.CancelMutationPayload(requestId));
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                // Thin custom tool adapter endpoint used by MCP clients/tools.
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/mcp/unifocl_project_command", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                    MarkActivity();
+                    var response = await ExecuteOnMainThreadAsync(() => HandleUnifoclMcpToolPayload(payload));
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
+                    return;
+                }
+
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/build/status", StringComparison.OrdinalIgnoreCase))
                 {
                     await WriteJsonResponseAsync(context.Response, DaemonProjectService.GetBuildStatusPayload(), cancellationToken: cancellationToken);
@@ -691,6 +746,89 @@ namespace UniFocl.EditorBridge
             }
 
             return payload[(valueStart + 1)..valueEnd];
+        }
+
+        private static string HandleUnifoclMcpToolPayload(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = "mcp tool payload is required",
+                    kind = "mcp"
+                });
+            }
+
+            McpProjectCommandToolRequest? request;
+            try
+            {
+                request = JsonUtility.FromJson<McpProjectCommandToolRequest>(payload);
+            }
+            catch
+            {
+                request = null;
+            }
+
+            if (request is null || string.IsNullOrWhiteSpace(request.operation))
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = "mcp tool operation is required",
+                    kind = "mcp"
+                });
+            }
+
+            var operation = request.operation.Trim().ToLowerInvariant();
+            return operation switch
+            {
+                "submit" => string.IsNullOrWhiteSpace(request.commandPayload)
+                    ? JsonUtility.ToJson(new ProjectCommandAcceptedResponse
+                    {
+                        ok = false,
+                        stage = "error",
+                        message = "submit requires commandPayload"
+                    })
+                    : DaemonProjectService.SubmitMutationPayload(request.commandPayload),
+                "get_status" => string.IsNullOrWhiteSpace(request.requestId)
+                    ? JsonUtility.ToJson(new ProjectCommandStatusResponse
+                    {
+                        requestId = string.Empty,
+                        active = false,
+                        stage = "error",
+                        detail = "get_status requires requestId",
+                        state = "error",
+                        isDurable = true
+                    })
+                    : DaemonProjectService.GetMutationStatusPayload(request.requestId),
+                "get_result" => string.IsNullOrWhiteSpace(request.requestId)
+                    ? JsonUtility.ToJson(new ProjectCommandResultResponse
+                    {
+                        found = false,
+                        completed = false,
+                        success = false,
+                        requestId = string.Empty,
+                        action = string.Empty,
+                        state = "error",
+                        message = "get_result requires requestId"
+                    })
+                    : DaemonProjectService.GetMutationResultPayload(request.requestId),
+                "cancel" => string.IsNullOrWhiteSpace(request.requestId)
+                    ? JsonUtility.ToJson(new ProjectCommandAcceptedResponse
+                    {
+                        ok = false,
+                        stage = "error",
+                        message = "cancel requires requestId"
+                    })
+                    : DaemonProjectService.CancelMutationPayload(request.requestId),
+                _ => JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"unsupported mcp tool operation: {request.operation}",
+                    kind = "mcp"
+                })
+            };
         }
 
         private static string? TryExtractProjectRequestId(string payload)
@@ -1454,6 +1592,13 @@ namespace UniFocl.EditorBridge
         }
 
         [Serializable]
+        private sealed class McpProjectCommandToolRequest
+        {
+            public string operation = string.Empty;
+            public string requestId = string.Empty;
+            public string commandPayload = string.Empty;
+        }
+
         private sealed class UpmBatchInstallStatus
         {
             public int pid;

@@ -4,6 +4,21 @@
 
 ### Changed
 - Officialized `0.26.0` by closing the development cycle suffix.
+- Merged incoming `codex/agent-md-setup` setup flow updates and versioned them as the newer release.
+- Upgraded `/init` MCP provisioning to execute Unity batch installation with status-file monitoring and recursive dependency installation checks.
+- Kept `/init` manifest bootstrap enforcement for required MCP package references before running installer checks.
+
+## 0.25.0 - 2026-03-19
+
+### Changed
+- Officialized `0.25.0` by closing the development cycle suffix.
+- Added `/init` MCP bootstrap enforcement so Unity projects automatically receive `com.coplaydev.unity-mcp` (git target) when missing.
+- Added `/init` install verification for MCP resolution:
+  - verifies lockfile resolution from `Packages/packages-lock.json` when available
+  - waits for post-init lockfile update window
+  - falls back to daemon `upm-list` verification when attached to the same project
+  - fails `/init` with actionable guidance when installation cannot be verified
+- Fixed `HierarchyDaemonClient.ExecuteProjectCommandAsync` local variable shadowing to restore clean CLI compilation.
 - Hardened `/init` MCP package installation by moving package install into a dedicated Unity batch process with explicit PID tracking, status-file progress updates, timeout handling, and deterministic teardown.
 - Updated MCP install flow to support fallback Git target install and to recursively install missing dependencies by reading installed package `package.json` dependency entries.
 - Updated smoke project scaffolding (`setup-smoke-project`) to include `com.unity.modules.imageconversion` by default so generated projects align with Unity Hub-style module availability required by MCP runtime screenshot helpers.
