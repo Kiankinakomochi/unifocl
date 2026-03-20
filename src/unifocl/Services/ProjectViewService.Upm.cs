@@ -372,6 +372,7 @@ internal sealed partial class ProjectViewService
 
         var updatedExisting = dependencies.ContainsKey(spec.PackageId);
         dependencies[spec.PackageId] = JsonValue.Create(spec.ManifestValue);
+        await HydrateTransitiveManifestDependenciesAsync(projectPath, spec.PackageId, spec.ManifestValue, dependencies);
         var mutationAtUtc = DateTime.UtcNow;
 
         if (!TrySaveManifest(manifestPath, root, out var saveError))
@@ -407,6 +408,273 @@ internal sealed partial class ProjectViewService
             lockValidation.ResolvedHash,
             lockValidation.DirectCount,
             lockValidation.TransitiveCount);
+    }
+
+    private static async Task HydrateTransitiveManifestDependenciesAsync(
+        string projectPath,
+        string rootPackageId,
+        string rootManifestValue,
+        JsonObject dependencies)
+    {
+        if (string.IsNullOrWhiteSpace(rootPackageId) || string.IsNullOrWhiteSpace(rootManifestValue))
+        {
+            return;
+        }
+
+        var scopedRegistries = LoadScopedRegistries(projectPath);
+        var queue = new Queue<KeyValuePair<string, string>>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        queue.Enqueue(new KeyValuePair<string, string>(rootPackageId, rootManifestValue));
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (!visited.Add(current.Key))
+            {
+                continue;
+            }
+
+            var discovered = await ResolveManifestDependenciesForTargetAsync(
+                projectPath,
+                current.Key,
+                current.Value,
+                scopedRegistries);
+
+            foreach (var dependency in discovered)
+            {
+                var dependencyId = dependency.Key?.Trim() ?? string.Empty;
+                var dependencyValue = dependency.Value?.Trim() ?? string.Empty;
+                if (!ProjectViewServiceUtils.IsRegistryPackageId(dependencyId) || string.IsNullOrWhiteSpace(dependencyValue))
+                {
+                    continue;
+                }
+
+                if (dependencies.ContainsKey(dependencyId))
+                {
+                    continue;
+                }
+
+                dependencies[dependencyId] = JsonValue.Create(dependencyValue);
+                queue.Enqueue(new KeyValuePair<string, string>(dependencyId, dependencyValue));
+            }
+        }
+    }
+
+    private static async Task<Dictionary<string, string>> ResolveManifestDependenciesForTargetAsync(
+        string projectPath,
+        string packageId,
+        string manifestTarget,
+        IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        if (string.IsNullOrWhiteSpace(manifestTarget))
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (manifestTarget.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            return TryReadLocalPackageDependencies(projectPath, manifestTarget, out var localDependencies, out _)
+                ? localDependencies
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (manifestTarget.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
+            || manifestTarget.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || manifestTarget.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || manifestTarget.Contains(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            return await TryFetchGitPackageDependenciesFromManifestTargetAsync(manifestTarget);
+        }
+
+        var registryUrl = ResolveRegistryUrlForPackage(packageId, scopedRegistries);
+        return await TryFetchRegistryDependenciesForSpecAsync(packageId, manifestTarget, registryUrl);
+    }
+
+    private static async Task<Dictionary<string, string>> TryFetchRegistryDependenciesForSpecAsync(
+        string packageId,
+        string versionSpec,
+        string registryUrl)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(versionSpec))
+        {
+            return map;
+        }
+
+        try
+        {
+            var endpoint = $"{registryUrl.TrimEnd('/')}/{Uri.EscapeDataString(packageId)}";
+            using var response = await UpmRegistryHttpClient.GetAsync(endpoint);
+            if (!response.IsSuccessStatusCode)
+            {
+                return map;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("versions", out var versions)
+                || versions.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+
+            var selectedSpec = versionSpec.Trim();
+            JsonElement selectedVersionNode = default;
+            if (versions.TryGetProperty(selectedSpec, out var exactVersionNode) && exactVersionNode.ValueKind == JsonValueKind.Object)
+            {
+                selectedVersionNode = exactVersionNode;
+            }
+            else
+            {
+                if (document.RootElement.TryGetProperty("dist-tags", out var distTags)
+                    && distTags.ValueKind == JsonValueKind.Object
+                    && distTags.TryGetProperty("latest", out var latestTag)
+                    && latestTag.ValueKind == JsonValueKind.String)
+                {
+                    var latestVersion = latestTag.GetString();
+                    if (!string.IsNullOrWhiteSpace(latestVersion)
+                        && versions.TryGetProperty(latestVersion, out var latestVersionNode)
+                        && latestVersionNode.ValueKind == JsonValueKind.Object)
+                    {
+                        selectedVersionNode = latestVersionNode;
+                    }
+                }
+            }
+
+            if (selectedVersionNode.ValueKind != JsonValueKind.Object
+                || !selectedVersionNode.TryGetProperty("dependencies", out var dependenciesNode)
+                || dependenciesNode.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+
+            foreach (var dependency in dependenciesNode.EnumerateObject())
+            {
+                if (dependency.Value.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = dependency.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    map[dependency.Name] = value!;
+                }
+            }
+
+            return map;
+        }
+        catch
+        {
+            return map;
+        }
+    }
+
+    private static async Task<Dictionary<string, string>> TryFetchGitPackageDependenciesFromManifestTargetAsync(string manifestTarget)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryBuildGitHubRawPackageJsonUrlFromManifestTarget(manifestTarget, out var packageJsonUrl))
+        {
+            return map;
+        }
+
+        try
+        {
+            using var response = await UpmRegistryHttpClient.GetAsync(packageJsonUrl);
+            if (!response.IsSuccessStatusCode)
+            {
+                return map;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("dependencies", out var dependenciesNode)
+                || dependenciesNode.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+
+            foreach (var dependency in dependenciesNode.EnumerateObject())
+            {
+                if (dependency.Value.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = dependency.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    map[dependency.Name] = value!;
+                }
+            }
+
+            return map;
+        }
+        catch
+        {
+            return map;
+        }
+    }
+
+    private static bool TryBuildGitHubRawPackageJsonUrlFromManifestTarget(string manifestTarget, out string packageJsonUrl)
+    {
+        packageJsonUrl = string.Empty;
+        if (string.IsNullOrWhiteSpace(manifestTarget))
+        {
+            return false;
+        }
+
+        var normalized = manifestTarget.Trim();
+        if (normalized.StartsWith("git+", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["git+".Length..];
+        }
+
+        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
+            || !uri.Host.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var repositoryPath = uri.AbsolutePath.Trim('/');
+        if (repositoryPath.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            repositoryPath = repositoryPath[..^4];
+        }
+
+        var segments = repositoryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return false;
+        }
+
+        var owner = segments[0];
+        var repository = segments[1];
+        var gitRef = uri.Fragment.TrimStart('#');
+        if (string.IsNullOrWhiteSpace(gitRef))
+        {
+            gitRef = "main";
+        }
+
+        var packagePath = "package.json";
+        var query = uri.Query.TrimStart('?');
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pair = part.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (pair.Length != 2 || !pair[0].Equals("path", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var decodedPath = Uri.UnescapeDataString(pair[1]).Trim('/');
+            packagePath = string.IsNullOrWhiteSpace(decodedPath)
+                ? "package.json"
+                : $"{decodedPath}/package.json";
+            break;
+        }
+
+        packageJsonUrl = $"https://raw.githubusercontent.com/{owner}/{repository}/{gitRef}/{packagePath}";
+        return true;
     }
 
     private static async Task<UpmMutationResult> RemoveDependencyFromManifestAsync(string projectPath, string packageId)
