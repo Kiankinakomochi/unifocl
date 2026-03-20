@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -10,6 +11,7 @@ internal sealed partial class ProjectViewService
     {
         Timeout = TimeSpan.FromSeconds(12)
     };
+    private static readonly ConcurrentDictionary<string, string> UpmDisplayNameCache = new(StringComparer.OrdinalIgnoreCase);
 
     private async Task<bool> HandleUpmCommandAsync(
         CliSessionState session,
@@ -48,17 +50,29 @@ internal sealed partial class ProjectViewService
             var rawTarget = tokens.Count >= 3
                 ? string.Join(' ', tokens.Skip(2))
                 : string.Empty;
+            var installTargetResolution = await ResolveInstallTargetAsync(projectPath, rawTarget);
+            if (!installTargetResolution.Ok)
+            {
+                outputs.Add($"[x] upm install failed: {installTargetResolution.Message}");
+                return true;
+            }
+
+            if (installTargetResolution.UsedFriendlyName)
+            {
+                outputs.Add($"[i] resolved target: {Markup.Escape(installTargetResolution.Target)}");
+            }
+
             var installResult = await RunTrackableProgressAsync(
                 session,
                 "editing Packages/manifest.json",
                 TimeSpan.FromSeconds(6),
-                () => InstallDependencyFromManifestTargetAsync(projectPath, rawTarget));
+                () => InstallDependencyFromManifestTargetAsync(projectPath, installTargetResolution.Target));
 
             if (!installResult.Ok)
             {
                 outputs.Add($"[x] upm install failed: {installResult.Message}");
                 outputs.Add("manifest mode notes:");
-                outputs.Add("- registry install requires explicit version (com.unity.addressables@1.21.19)");
+                outputs.Add("- registry install supports package id or friendly name (version optional)");
                 outputs.Add("- git install requires package id hint (<package-id>=https://...repo.git#tag)");
                 outputs.Add("- local file install may infer package id from file: path package.json");
                 return true;
@@ -93,8 +107,15 @@ internal sealed partial class ProjectViewService
             var packageId = ProjectViewServiceUtils.NormalizeLoadSelector(rawId);
             if (!ProjectViewServiceUtils.IsRegistryPackageId(packageId))
             {
-                outputs.Add("[x] upm remove failed: package id is required (e.g., com.unity.addressables)");
-                return true;
+                var resolved = await ResolvePackageIdFromFriendlyNameAsync(projectPath, rawId, preferInstalledOnly: true);
+                if (string.IsNullOrWhiteSpace(resolved))
+                {
+                    outputs.Add("[x] upm remove failed: package id or installed package friendly name is required (e.g., com.unity.addressables)");
+                    return true;
+                }
+
+                packageId = resolved;
+                outputs.Add($"[i] resolved package: {Markup.Escape(packageId)}");
             }
 
             var impact = await RunTrackableProgressAsync(
@@ -163,8 +184,15 @@ internal sealed partial class ProjectViewService
             var packageId = ProjectViewServiceUtils.NormalizeLoadSelector(tokens[2]);
             if (!ProjectViewServiceUtils.IsRegistryPackageId(packageId))
             {
-                outputs.Add("[x] upm update failed: package id is required (e.g., com.unity.addressables)");
-                return true;
+                var resolved = await ResolvePackageIdFromFriendlyNameAsync(projectPath, tokens[2], preferInstalledOnly: false);
+                if (string.IsNullOrWhiteSpace(resolved))
+                {
+                    outputs.Add("[x] upm update failed: package id or package friendly name is required (e.g., com.unity.addressables)");
+                    return true;
+                }
+
+                packageId = resolved;
+                outputs.Add($"[i] resolved package: {Markup.Escape(packageId)}");
             }
 
             var explicitVersion = tokens.Count >= 4
@@ -270,7 +298,7 @@ internal sealed partial class ProjectViewService
 
         var listResult = await RunTrackableProgressAsync(
             session,
-            "reading package lock",
+            "reading package manifest",
             TimeSpan.FromSeconds(includeOutdatedOnly ? 18 : 5),
             () => ListPackagesFromLockOrManifestAsync(projectPath, includeOutdatedOnly, includeBuiltin, includeGitOnly));
         if (!listResult.Ok)
@@ -429,47 +457,9 @@ internal sealed partial class ProjectViewService
         bool includeBuiltin,
         bool includeGitOnly)
     {
-        if (TryReadPackagesLockGraph(projectPath, out var graph, out var lockError))
-        {
-            var directEntries = graph.AllPackages
-                .Where(entry => entry.Depth == 0)
-                .Where(entry => includeBuiltin || !entry.Source.Equals("BuiltIn", StringComparison.OrdinalIgnoreCase))
-                .Where(entry => !includeGitOnly || entry.Source.Equals("Git", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(entry => entry.PackageId, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            var latestById = includeOutdatedOnly
-                ? await FetchExternalLatestVersionsAsync(projectPath, directEntries)
-                : new Dictionary<string, ExternalLatestInfo>(StringComparer.OrdinalIgnoreCase);
-
-            var lockPackages = directEntries
-                .Select((entry, index) =>
-                {
-                    latestById.TryGetValue(entry.PackageId, out var latest);
-                    var isOutdated = latest is not null
-                                     && latest.IsOutdated
-                                     && !string.IsNullOrWhiteSpace(latest.LatestVersionOrTag);
-                    return new UpmPackageEntry(
-                        index,
-                        entry.PackageId,
-                        ProjectViewServiceUtils.ResolvePackageDisplayName(entry.PackageId, entry.PackageId),
-                        string.IsNullOrWhiteSpace(entry.Version) ? "-" : entry.Version,
-                        entry.Source,
-                        latest?.LatestVersionOrTag,
-                        isOutdated,
-                        false,
-                        entry.Version.Contains("preview", StringComparison.OrdinalIgnoreCase));
-                })
-                .Where(package => !includeOutdatedOnly || package.IsOutdated)
-                .ToList();
-
-            var summary = $"source=packages-lock.json, direct={graph.DirectCount}, transitive={graph.TransitiveCount}";
-            return UpmListResult.Success(lockPackages, summary);
-        }
-
         if (!TryLoadManifest(projectPath, out _, out _, out var dependencies, out var manifestError))
         {
-            return UpmListResult.Fail(lockError ?? manifestError);
+            return UpmListResult.Fail(manifestError);
         }
 
         var mapped = new List<UpmListPackagePayload>();
@@ -512,6 +502,8 @@ internal sealed partial class ProjectViewService
                 rawValue.Contains("preview", StringComparison.OrdinalIgnoreCase)));
         }
 
+        mapped = await ResolveFriendlyPackageDisplayNamesAsync(projectPath, mapped);
+
         var indexed = mapped
             .OrderBy(package => ProjectViewServiceUtils.ResolvePackageDisplayName(package.DisplayName, package.PackageId!), StringComparer.OrdinalIgnoreCase)
             .ThenBy(package => package.PackageId, StringComparer.OrdinalIgnoreCase)
@@ -527,10 +519,202 @@ internal sealed partial class ProjectViewService
                 package.IsPreview))
             .ToList();
 
-        var fallbackMessage = includeOutdatedOnly
-            ? "packages-lock.json not available; cannot perform external outdated checks"
-            : "packages-lock.json not available; using manifest dependencies only";
-        return UpmListResult.Success(indexed, fallbackMessage);
+        var summary = includeOutdatedOnly
+            ? "source=manifest.json; --outdated requires lock/registry resolution and is empty in strict manifest mode"
+            : $"source=manifest.json, direct={indexed.Count}";
+        return UpmListResult.Success(indexed, summary);
+    }
+
+    private static async Task<InstallTargetResolutionResult> ResolveInstallTargetAsync(string projectPath, string rawTarget)
+    {
+        var normalized = ProjectViewServiceUtils.NormalizeLoadSelector(rawTarget);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return InstallTargetResolutionResult.Fail("missing target");
+        }
+
+        if (ProjectViewServiceUtils.TryNormalizeUpmInstallTarget(
+                normalized,
+                out var normalizedTarget,
+                out var targetType,
+                out _))
+        {
+            if (!targetType.Equals("registry", StringComparison.OrdinalIgnoreCase))
+            {
+                return InstallTargetResolutionResult.Success(normalizedTarget, usedFriendlyName: false);
+            }
+
+            var (packageId, version) = ProjectViewServiceUtils.SplitRegistryTarget(normalizedTarget);
+            if (!string.IsNullOrWhiteSpace(version))
+            {
+                return InstallTargetResolutionResult.Success(normalizedTarget, usedFriendlyName: false);
+            }
+
+            var latest = await ResolveRegistryLatestInstallTargetAsync(projectPath, packageId);
+            if (!latest.Ok)
+            {
+                return InstallTargetResolutionResult.Fail(latest.Message);
+            }
+
+            return InstallTargetResolutionResult.Success(latest.Target, usedFriendlyName: false);
+        }
+
+        var (friendlyName, explicitVersion) = SplitFriendlyNameAndVersion(normalized);
+        if (string.IsNullOrWhiteSpace(friendlyName))
+        {
+            return InstallTargetResolutionResult.Fail("target must be package id, friendly name, Git URL, or file: path");
+        }
+
+        var resolvedPackageId = await ResolvePackageIdFromFriendlyNameAsync(projectPath, friendlyName, preferInstalledOnly: false);
+        if (string.IsNullOrWhiteSpace(resolvedPackageId))
+        {
+            return InstallTargetResolutionResult.Fail($"could not resolve package from friendly name: {friendlyName}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(explicitVersion))
+        {
+            var exactTarget = $"{resolvedPackageId}@{explicitVersion}";
+            return InstallTargetResolutionResult.Success(exactTarget, usedFriendlyName: true);
+        }
+
+        var latestResult = await ResolveRegistryLatestInstallTargetAsync(projectPath, resolvedPackageId);
+        if (!latestResult.Ok)
+        {
+            return InstallTargetResolutionResult.Fail(latestResult.Message);
+        }
+
+        return InstallTargetResolutionResult.Success(latestResult.Target, usedFriendlyName: true);
+    }
+
+    private static async Task<List<UpmListPackagePayload>> ResolveFriendlyPackageDisplayNamesAsync(
+        string projectPath,
+        List<UpmListPackagePayload> packages)
+    {
+        if (packages.Count == 0)
+        {
+            return packages;
+        }
+
+        var scopedRegistries = LoadScopedRegistries(projectPath);
+        var tasks = packages.Select(async package =>
+        {
+            var packageId = package.PackageId?.Trim();
+            if (string.IsNullOrWhiteSpace(packageId))
+            {
+                return package;
+            }
+
+            var source = package.Source ?? string.Empty;
+            if (!source.Equals("Registry", StringComparison.OrdinalIgnoreCase))
+            {
+                return package;
+            }
+
+            var registryUrl = ResolveRegistryUrlForPackage(packageId, scopedRegistries);
+            var cacheKey = $"{registryUrl.TrimEnd('/')}/{packageId}";
+            if (!UpmDisplayNameCache.TryGetValue(cacheKey, out var displayName))
+            {
+                displayName = await TryFetchRegistryDisplayNameAsync(packageId, registryUrl);
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    UpmDisplayNameCache[cacheKey] = displayName;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                return package;
+            }
+
+            return package with { DisplayName = displayName };
+        }).ToArray();
+
+        var resolved = await Task.WhenAll(tasks);
+        return resolved.ToList();
+    }
+
+    private static async Task<string?> ResolvePackageIdFromFriendlyNameAsync(
+        string projectPath,
+        string rawFriendlyName,
+        bool preferInstalledOnly)
+    {
+        var friendlyName = ProjectViewServiceUtils.NormalizeLoadSelector(rawFriendlyName);
+        if (string.IsNullOrWhiteSpace(friendlyName))
+        {
+            return null;
+        }
+
+        if (ProjectViewServiceUtils.IsRegistryPackageId(friendlyName))
+        {
+            return friendlyName;
+        }
+
+        var normalizedFriendly = NormalizeFriendlyToken(friendlyName);
+        if (string.IsNullOrWhiteSpace(normalizedFriendly))
+        {
+            return null;
+        }
+
+        var manifestDependencies = ReadManifestDependencyMap(projectPath);
+        var scopedRegistries = LoadScopedRegistries(projectPath);
+        foreach (var dependency in manifestDependencies)
+        {
+            var packageId = dependency.Key;
+            if (NormalizeFriendlyToken(packageId).Equals(normalizedFriendly, StringComparison.Ordinal))
+            {
+                return packageId;
+            }
+
+            var source = ResolveManifestSource(dependency.Value);
+            if (!source.Equals("Registry", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var registryUrl = ResolveRegistryUrlForPackage(packageId, scopedRegistries);
+            var cacheKey = $"{registryUrl.TrimEnd('/')}/{packageId}";
+            if (!UpmDisplayNameCache.TryGetValue(cacheKey, out var displayName))
+            {
+                displayName = await TryFetchRegistryDisplayNameAsync(packageId, registryUrl);
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    UpmDisplayNameCache[cacheKey] = displayName;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                continue;
+            }
+
+            if (NormalizeFriendlyToken(displayName).Equals(normalizedFriendly, StringComparison.Ordinal))
+            {
+                return packageId;
+            }
+        }
+
+        if (preferInstalledOnly)
+        {
+            return null;
+        }
+
+        var registryUrls = scopedRegistries
+            .Select(item => item.Url)
+            .Append("https://packages.unity.com")
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var registryUrl in registryUrls)
+        {
+            var resolved = await TrySearchRegistryPackageIdByFriendlyNameAsync(registryUrl, friendlyName, normalizedFriendly);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+        }
+
+        return null;
     }
 
     private static async Task<RegistryTargetResolutionResult> ResolveRegistryLatestInstallTargetAsync(
@@ -872,6 +1056,169 @@ internal sealed partial class ProjectViewService
         {
             return RegistryLatestResult.Fail($"registry lookup exception for {packageId}: {ex.Message}");
         }
+    }
+
+    private static async Task<string?> TryFetchRegistryDisplayNameAsync(string packageId, string registryUrl)
+    {
+        try
+        {
+            var endpoint = $"{registryUrl.TrimEnd('/')}/{Uri.EscapeDataString(packageId)}";
+            using var response = await UpmRegistryHttpClient.GetAsync(endpoint);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.TryGetProperty("displayName", out var rootDisplayName)
+                && rootDisplayName.ValueKind == JsonValueKind.String)
+            {
+                var value = rootDisplayName.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            if (doc.RootElement.TryGetProperty("dist-tags", out var distTags)
+                && distTags.ValueKind == JsonValueKind.Object
+                && distTags.TryGetProperty("latest", out var latestTag)
+                && latestTag.ValueKind == JsonValueKind.String
+                && doc.RootElement.TryGetProperty("versions", out var versions)
+                && versions.ValueKind == JsonValueKind.Object)
+            {
+                var latestVersion = latestTag.GetString();
+                if (!string.IsNullOrWhiteSpace(latestVersion)
+                    && versions.TryGetProperty(latestVersion, out var latestVersionNode)
+                    && latestVersionNode.ValueKind == JsonValueKind.Object
+                    && latestVersionNode.TryGetProperty("displayName", out var versionDisplayName)
+                    && versionDisplayName.ValueKind == JsonValueKind.String)
+                {
+                    var value = versionDisplayName.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<string?> TrySearchRegistryPackageIdByFriendlyNameAsync(
+        string registryUrl,
+        string rawFriendlyName,
+        string normalizedFriendly)
+    {
+        try
+        {
+            var endpoint = $"{registryUrl.TrimEnd('/')}/-/v1/search?text={Uri.EscapeDataString(rawFriendlyName)}&size=64";
+            using var response = await UpmRegistryHttpClient.GetAsync(endpoint);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("objects", out var objects)
+                || objects.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            string? partialMatch = null;
+            foreach (var item in objects.EnumerateArray())
+            {
+                if (!item.TryGetProperty("package", out var package)
+                    || package.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var packageName = TryGetString(package, "name");
+                if (string.IsNullOrWhiteSpace(packageName))
+                {
+                    continue;
+                }
+
+                var displayName = TryGetString(package, "displayName");
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    var normalizedDisplayName = NormalizeFriendlyToken(displayName);
+                    if (normalizedDisplayName.Equals(normalizedFriendly, StringComparison.Ordinal))
+                    {
+                        return packageName;
+                    }
+
+                    if (partialMatch is null && normalizedDisplayName.Contains(normalizedFriendly, StringComparison.Ordinal))
+                    {
+                        partialMatch = packageName;
+                    }
+                }
+
+                var normalizedPackageName = NormalizeFriendlyToken(packageName);
+                if (normalizedPackageName.Equals(normalizedFriendly, StringComparison.Ordinal))
+                {
+                    return packageName;
+                }
+
+                if (partialMatch is null && normalizedPackageName.Contains(normalizedFriendly, StringComparison.Ordinal))
+                {
+                    partialMatch = packageName;
+                }
+            }
+
+            return partialMatch;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static (string FriendlyName, string Version) SplitFriendlyNameAndVersion(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        var at = value.LastIndexOf('@');
+        if (at <= 0 || at >= value.Length - 1)
+        {
+            return (value.Trim(), string.Empty);
+        }
+
+        var name = value[..at].Trim();
+        var version = value[(at + 1)..].Trim();
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version))
+        {
+            return (value.Trim(), string.Empty);
+        }
+
+        return (name, version);
+    }
+
+    private static string NormalizeFriendlyToken(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var chars = value
+            .Trim()
+            .Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant);
+        return new string(chars.ToArray());
     }
 
     private static async Task<RegistryDependencyResult> TryFetchRegistryDependenciesForVersionAsync(
@@ -1347,9 +1694,31 @@ internal sealed partial class ProjectViewService
         UpmInstallSpec? expectedSpec,
         bool expectRemoval)
     {
-        var timeout = ResolveEnvMilliseconds("UNIFOCL_UPM_LOCK_TIMEOUT_MS", 90_000, min: 5_000, max: 300_000);
-        var grace = ResolveEnvMilliseconds("UNIFOCL_UPM_LOCK_GRACE_MS", 250, min: 50, max: 2_000);
-        var poll = ResolveEnvMilliseconds("UNIFOCL_UPM_LOCK_POLL_MS", 250, min: 50, max: 1_000);
+        var manifestCheck = await ValidateManifestMutationAsync(
+            projectPath,
+            mutationAtUtc,
+            requestedPackageId,
+            expectedSpec,
+            expectRemoval);
+        if (!manifestCheck.Ok)
+        {
+            return UpmLockValidationResult.Fail(manifestCheck.Message);
+        }
+
+        // Manifest is the source of truth. Lock file metadata is best-effort enrichment only.
+        var timeout = ResolveEnvMilliseconds("UNIFOCL_UPM_LOCK_ENRICH_TIMEOUT_MS", 1_500, min: 0, max: 10_000);
+        if (timeout <= 0)
+        {
+            return UpmLockValidationResult.Success(
+                manifestCheck.ResolvedVersion,
+                manifestCheck.ResolvedSource,
+                null,
+                manifestCheck.DirectCount,
+                0);
+        }
+
+        var grace = ResolveEnvMilliseconds("UNIFOCL_UPM_LOCK_GRACE_MS", 150, min: 50, max: 2_000);
+        var poll = ResolveEnvMilliseconds("UNIFOCL_UPM_LOCK_POLL_MS", 150, min: 50, max: 1_000);
 
         var deadline = DateTime.UtcNow.AddMilliseconds(timeout);
         while (DateTime.UtcNow <= deadline)
@@ -1363,11 +1732,84 @@ internal sealed partial class ProjectViewService
                     await Task.Delay(150);
                     if (!TryReadPackagesLockGraph(projectPath, out graph, out readError))
                     {
-                        return UpmLockValidationResult.Fail($"packages-lock.json updated but could not be parsed: {readError}");
+                        return UpmLockValidationResult.Success(
+                            manifestCheck.ResolvedVersion,
+                            manifestCheck.ResolvedSource,
+                            null,
+                            manifestCheck.DirectCount,
+                            0);
                     }
                 }
 
-                return ValidateResolvedGraph(graph, requestedPackageId, expectedSpec, expectRemoval);
+                var resolvedGraph = ValidateResolvedGraph(graph, requestedPackageId, expectedSpec, expectRemoval);
+                if (resolvedGraph.Ok)
+                {
+                    return resolvedGraph;
+                }
+
+                return UpmLockValidationResult.Success(
+                    manifestCheck.ResolvedVersion,
+                    manifestCheck.ResolvedSource,
+                    null,
+                    manifestCheck.DirectCount,
+                    graph.TransitiveCount);
+            }
+
+            await Task.Delay(poll);
+        }
+
+        return UpmLockValidationResult.Success(
+            manifestCheck.ResolvedVersion,
+            manifestCheck.ResolvedSource,
+            null,
+            manifestCheck.DirectCount,
+            0);
+    }
+
+    private static async Task<ManifestMutationValidationResult> ValidateManifestMutationAsync(
+        string projectPath,
+        DateTime mutationAtUtc,
+        string requestedPackageId,
+        UpmInstallSpec? expectedSpec,
+        bool expectRemoval)
+    {
+        var timeout = ResolveEnvMilliseconds("UNIFOCL_UPM_MANIFEST_TIMEOUT_MS", 4_000, min: 500, max: 30_000);
+        var poll = ResolveEnvMilliseconds("UNIFOCL_UPM_MANIFEST_POLL_MS", 100, min: 25, max: 1_000);
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeout);
+
+        while (DateTime.UtcNow <= deadline)
+        {
+            if (TryLoadManifest(projectPath, out _, out _, out var dependencies, out _))
+            {
+                if (expectRemoval)
+                {
+                    if (!dependencies.ContainsKey(requestedPackageId))
+                    {
+                        return ManifestMutationValidationResult.Success(
+                            dependencies.Count,
+                            null,
+                            "manifest");
+                    }
+                }
+                else if (TryGetManifestDependencyValue(dependencies, requestedPackageId, out var value))
+                {
+                    var expectedValue = expectedSpec?.ManifestValue ?? string.Empty;
+                    var valueMatches = string.IsNullOrWhiteSpace(expectedValue)
+                                       || string.Equals(value, expectedValue, StringComparison.Ordinal);
+                    if (valueMatches)
+                    {
+                        var resolvedVersion = expectedSpec?.TargetType.Equals("registry", StringComparison.OrdinalIgnoreCase) == true
+                            ? value
+                            : expectedSpec?.DisplayVersion;
+                        var resolvedSource = string.IsNullOrWhiteSpace(expectedSpec?.Source)
+                            ? ResolveManifestSource(value)
+                            : expectedSpec!.Source;
+                        return ManifestMutationValidationResult.Success(
+                            dependencies.Count,
+                            resolvedVersion,
+                            resolvedSource);
+                    }
+                }
             }
 
             await Task.Delay(poll);
@@ -1377,7 +1819,31 @@ internal sealed partial class ProjectViewService
         var hintSuffix = logHints.Count == 0
             ? string.Empty
             : $" upm.log hints: {string.Join(" | ", logHints)}";
-        return UpmLockValidationResult.Fail($"packages-lock.json did not update within {timeout}ms after manifest change.{hintSuffix}");
+        if (expectRemoval)
+        {
+            return ManifestMutationValidationResult.Fail(
+                $"manifest confirmation timed out after {timeout}ms: package is still present: {requestedPackageId}.{hintSuffix}");
+        }
+
+        return ManifestMutationValidationResult.Fail(
+            $"manifest confirmation timed out after {timeout}ms: package was not observed with expected value: {requestedPackageId}.{hintSuffix}");
+    }
+
+    private static bool TryGetManifestDependencyValue(JsonObject dependencies, string packageId, out string value)
+    {
+        value = string.Empty;
+        if (!dependencies.TryGetPropertyValue(packageId, out var node) || node is not JsonValue jsonValue)
+        {
+            return false;
+        }
+
+        if (!jsonValue.TryGetValue<string>(out var rawValue) || string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        value = rawValue;
+        return true;
     }
 
     private static UpmLockValidationResult ValidateResolvedGraph(
@@ -1921,6 +2387,23 @@ internal sealed partial class ProjectViewService
             => new(true, string.Empty, version, source, hash, directCount, transitiveCount);
     }
 
+    private sealed record ManifestMutationValidationResult(
+        bool Ok,
+        string Message,
+        int DirectCount,
+        string? ResolvedVersion,
+        string? ResolvedSource)
+    {
+        public static ManifestMutationValidationResult Fail(string message)
+            => new(false, message, 0, null, null);
+
+        public static ManifestMutationValidationResult Success(
+            int directCount,
+            string? resolvedVersion,
+            string? resolvedSource)
+            => new(true, string.Empty, directCount, resolvedVersion, resolvedSource);
+    }
+
     private sealed record UpmMutationResult(
         bool Ok,
         string Message,
@@ -1946,6 +2429,19 @@ internal sealed partial class ProjectViewService
             int directCount,
             int transitiveCount)
             => new(true, string.Empty, packageId, version, source, targetType, updatedExisting, hash, directCount, transitiveCount);
+    }
+
+    private sealed record InstallTargetResolutionResult(
+        bool Ok,
+        string Message,
+        string Target,
+        bool UsedFriendlyName)
+    {
+        public static InstallTargetResolutionResult Fail(string message)
+            => new(false, message, string.Empty, false);
+
+        public static InstallTargetResolutionResult Success(string target, bool usedFriendlyName)
+            => new(true, string.Empty, target, usedFriendlyName);
     }
 
     private sealed record UpmListResult(bool Ok, string Message, List<UpmPackageEntry> Packages)
