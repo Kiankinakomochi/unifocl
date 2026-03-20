@@ -249,6 +249,11 @@ internal sealed partial class ProjectViewService
 
     private void RenderFrame(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
     {
+        if (CliRuntimeState.SuppressConsoleOutput)
+        {
+            return;
+        }
+
         AnsiConsole.Clear();
         var lines = _renderer.Render(state, highlightedEntryIndex, focusModeEnabled);
         foreach (var line in lines)
