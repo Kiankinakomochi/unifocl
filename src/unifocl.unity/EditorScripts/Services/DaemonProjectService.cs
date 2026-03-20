@@ -38,10 +38,125 @@ namespace UniFocl.EditorBridge
 
         public static Task<string> ExecuteAsync(string payload)
         {
+            return ExecuteAsync(payload, durableDispatch: true);
+        }
+
+        public static string SubmitMutationPayload(string payload)
+        {
+            ProjectCommandRequest? request;
+            try
+            {
+                request = JsonUtility.FromJson<ProjectCommandRequest>(payload);
+            }
+            catch
+            {
+                request = null;
+            }
+
+            if (request is null || string.IsNullOrWhiteSpace(request.action))
+            {
+                return JsonUtility.ToJson(new ProjectCommandAcceptedResponse
+                {
+                    ok = false,
+                    requestId = string.Empty,
+                    action = string.Empty,
+                    stage = "error",
+                    message = "missing mutation command payload"
+                });
+            }
+
+            if (!DaemonMutationTransactionCoordinator.IsProjectMutation(request.action))
+            {
+                return JsonUtility.ToJson(new ProjectCommandAcceptedResponse
+                {
+                    ok = false,
+                    requestId = request.requestId ?? string.Empty,
+                    action = request.action,
+                    stage = "error",
+                    message = $"action is not a durable project mutation: {request.action}"
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.requestId))
+            {
+                request.requestId = Guid.NewGuid().ToString("N");
+            }
+
+            try
+            {
+                var accepted = DaemonMutationCommandDispatcher.Submit(request);
+                return JsonUtility.ToJson(accepted);
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandAcceptedResponse
+                {
+                    ok = false,
+                    requestId = request.requestId ?? string.Empty,
+                    action = request.action,
+                    stage = "error",
+                    message = $"failed to queue mutation command: {ex.GetType().Name}: {ex.Message}"
+                });
+            }
+        }
+
+        public static string GetMutationStatusPayload(string requestId)
+        {
+            if (!DaemonMutationCommandDispatcher.TryGetStatus(requestId, out var status))
+            {
+                return JsonUtility.ToJson(new ProjectCommandStatusResponse
+                {
+                    requestId = requestId ?? string.Empty,
+                    action = string.Empty,
+                    active = false,
+                    success = false,
+                    stage = "not-found",
+                    detail = "mutation request id not found",
+                    startedAtUtc = string.Empty,
+                    lastUpdatedAtUtc = DateTime.UtcNow.ToString("O"),
+                    finishedAtUtc = string.Empty,
+                    isDurable = true,
+                    state = "not-found"
+                });
+            }
+
+            return JsonUtility.ToJson(status);
+        }
+
+        public static string GetMutationResultPayload(string requestId)
+        {
+            return JsonUtility.ToJson(DaemonMutationCommandDispatcher.GetResult(requestId));
+        }
+
+        public static string CancelMutationPayload(string requestId)
+        {
+            return JsonUtility.ToJson(DaemonMutationCommandDispatcher.Cancel(requestId));
+        }
+
+        public static bool TryGetDurableMutationStatus(string? requestId, out ProjectCommandStatusResponse status)
+        {
+            status = new ProjectCommandStatusResponse();
+            if (string.IsNullOrWhiteSpace(requestId))
+            {
+                return false;
+            }
+
+            return DaemonMutationCommandDispatcher.TryGetStatus(requestId, out status);
+        }
+
+        internal static Task<string> ExecuteMutationWorkerAsync(ProjectCommandRequest request)
+        {
+            return ExecuteCommandCoreAsync(request, durableDispatch: false);
+        }
+
+        private static Task<string> ExecuteAsync(string payload, bool durableDispatch)
+        {
             if (_unityMainThreadId == 0)
             {
                 _unityMainThreadId = Environment.CurrentManagedThreadId;
             }
+
+            DaemonMutationCommandDispatcher.Initialize();
 
             ProjectCommandRequest? request;
             try
@@ -101,26 +216,7 @@ namespace UniFocl.EditorBridge
 
             try
             {
-                return request.action switch
-                {
-                    "healthcheck" => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "project command endpoint ready", kind = "healthcheck" })),
-                    "mk-script" => Task.FromResult(ExecuteCreateScript(request)),
-                    "mk-asset" => Task.FromResult(ExecuteCreateAsset(request)),
-                    "rename-asset" => Task.FromResult(ExecuteRenameAsset(request)),
-                    "remove-asset" => Task.FromResult(ExecuteRemoveAsset(request)),
-                    "load-asset" => Task.FromResult(ExecuteLoadAsset(request)),
-                    "upm-list" => Task.FromResult(ExecuteUpmList(request)),
-                    "upm-install" => ExecuteUpmInstall(request),
-                    "upm-remove" => ExecuteUpmRemove(request),
-                    "build-run" => Task.FromResult(ExecuteBuildRun(request)),
-                    "build-exec" => Task.FromResult(ExecuteBuildExec(request)),
-                    "build-scenes-get" => Task.FromResult(ExecuteBuildScenesGet()),
-                    "build-scenes-set" => Task.FromResult(ExecuteBuildScenesSet(request)),
-                    "build-addressables" => Task.FromResult(ExecuteBuildAddressables(request)),
-                    "build-cancel" => Task.FromResult(ExecuteBuildCancel()),
-                    "build-targets" => Task.FromResult(ExecuteBuildTargets()),
-                    _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
-                };
+                return ExecuteCommandCoreAsync(request, durableDispatch);
             }
             catch (Exception ex)
             {
@@ -130,6 +226,38 @@ namespace UniFocl.EditorBridge
                     message = $"project command exception: {ex.GetType().Name}: {ex.Message}"
                 }));
             }
+        }
+
+        private static Task<string> ExecuteCommandCoreAsync(ProjectCommandRequest request, bool durableDispatch)
+        {
+            var isDryRun = request.intent is not null && request.intent.flags is not null && request.intent.flags.dryRun;
+            if (durableDispatch
+                && !isDryRun
+                && DaemonMutationTransactionCoordinator.IsProjectMutation(request.action))
+            {
+                return Task.FromResult(SubmitMutationPayload(JsonUtility.ToJson(request)));
+            }
+
+            return request.action switch
+            {
+                "healthcheck" => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "project command endpoint ready", kind = "healthcheck" })),
+                "mk-script" => Task.FromResult(ExecuteCreateScript(request)),
+                "mk-asset" => Task.FromResult(ExecuteCreateAsset(request)),
+                "rename-asset" => Task.FromResult(ExecuteRenameAsset(request)),
+                "remove-asset" => Task.FromResult(ExecuteRemoveAsset(request)),
+                "load-asset" => Task.FromResult(ExecuteLoadAsset(request)),
+                "upm-list" => Task.FromResult(ExecuteUpmList(request)),
+                "upm-install" => ExecuteUpmInstall(request),
+                "upm-remove" => ExecuteUpmRemove(request),
+                "build-run" => Task.FromResult(ExecuteBuildRun(request)),
+                "build-exec" => Task.FromResult(ExecuteBuildExec(request)),
+                "build-scenes-get" => Task.FromResult(ExecuteBuildScenesGet()),
+                "build-scenes-set" => Task.FromResult(ExecuteBuildScenesSet(request)),
+                "build-addressables" => Task.FromResult(ExecuteBuildAddressables(request)),
+                "build-cancel" => Task.FromResult(ExecuteBuildCancel()),
+                "build-targets" => Task.FromResult(ExecuteBuildTargets()),
+                _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
+            };
         }
 
         public static string GetBuildStatusPayload()

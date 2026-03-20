@@ -78,6 +78,8 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonDryRunServices.cs" LogicalName="Payload/EditorScripts/Services/DaemonDryRunServices.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonHierarchyService.cs" LogicalName="Payload/EditorScripts/Services/DaemonHierarchyService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonInspectorService.cs" LogicalName="Payload/EditorScripts/Services/DaemonInspectorService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonMutationCommandDispatcher.cs" LogicalName="Payload/EditorScripts/Services/DaemonMutationCommandDispatcher.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonMutationCommandStore.cs" LogicalName="Payload/EditorScripts/Services/DaemonMutationCommandStore.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs" LogicalName="Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonSceneManager.cs" LogicalName="Payload/EditorScripts/Services/DaemonSceneManager.cs" />
