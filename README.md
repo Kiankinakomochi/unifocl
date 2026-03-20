@@ -351,12 +351,18 @@ src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
   --worktree-path ../unifocl-agent-a \
   --project-path .local/agentic-smoke-project
 
-# 3) Start daemon on dynamically selected open port for that worktree/project
+# 3) Run bridge init via one-shot agentic execution (no interactive shell)
+src/unifocl/scripts/agent-worktree.sh init-smoke-agentic \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project \
+  --format json
+
+# 4) Start daemon on dynamically selected open port for that worktree/project
 src/unifocl/scripts/agent-worktree.sh start-daemon \
   --worktree-path ../unifocl-agent-a \
   --project-path .local/agentic-smoke-project
 
-# 4) Execute deterministic machine command in that isolated workspace
+# 5) Execute deterministic machine command in that isolated workspace
 cd ../unifocl-agent-a
 dotnet run --project src/unifocl/unifocl.csproj -- \
   exec "/dump project --format json --depth 2 --limit 2000" \
@@ -488,6 +494,11 @@ src/unifocl/scripts/agent-worktree.sh provision \
 src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
   --worktree-path ../unifocl-agent-a \
   --project-path .local/agentic-smoke-project
+
+src/unifocl/scripts/agent-worktree.sh init-smoke-agentic \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project \
+  --format json
 
 src/unifocl/scripts/agent-worktree.sh start-daemon \
   --worktree-path ../unifocl-agent-a \

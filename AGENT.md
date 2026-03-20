@@ -16,7 +16,9 @@ Before any edits or worktree actions, run this one-shot bootstrap command from t
    - Scaffolds `.local/compatcheck-benchmark/`
    - Writes `local.config.json`
    - Runs compatcheck with resolved Unity paths
-3. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
+3. For smoke `/init` prep in agentic workflows, use the non-interactive helper command (not the interactive TUI shell):
+   - `src/unifocl/scripts/agent-worktree.sh init-smoke-agentic --worktree-path . --project-path .local/compatcheck-benchmark --format json`
+4. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
 
 ## Goal
 
@@ -238,6 +240,30 @@ At task start:
   - Keep default real behavior unchanged (`~/.unifocl/...`) outside sandbox.
   - For sandbox/local verification, use:
     - `UNIFOCL_GLOBAL_PAYLOAD_ROOT=/tmp/unifocl-global`
+
+## 1.1) Agentic init command route mismatch
+
+- **Failure:** Agent attempts `/init` through interactive shell piping, causing flaky/non-deterministic setup flow for agentic tests.
+- **Required handling:**
+  - Use one-shot agentic execution for setup verification:
+    - `dotnet run --project src/unifocl/unifocl.csproj --disable-build-servers -v minimal -- exec "/init \"<project-path>\"" --agentic --project "<project-path>" --mode project --format json`
+  - Preferred helper wrapper:
+    - `src/unifocl/scripts/agent-worktree.sh init-smoke-agentic --worktree-path . --project-path .local/compatcheck-benchmark --format json`
+
+## 1.2) Unity editor store write warning in sandbox
+
+- **Failure:** `/init` logs warning saving `~/.unifocl/unity-editors.json` with access denied.
+- **Required handling:**
+  - Use workspace-local override:
+    - `UNIFOCL_CONFIG_ROOT=<worktree>/.local/unifocl-config`
+  - The `init-smoke-agentic` helper configures this by default.
+
+## 1.3) Unity UPM socket permission denied in sandbox
+
+- **Failure:** Unity batch install can fail with `listen EPERM ... /tmp/Unity-Upm-*.sock`.
+- **Cause:** sandbox restrictions around local socket binding.
+- **Required handling:**
+  - Retry the same `init-smoke-agentic` command with escalated permissions (`require_escalated`) and approval.
 
 ## 2) Network/API access blocked for GitHub PR creation
 
