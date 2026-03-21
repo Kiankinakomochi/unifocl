@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.31.0 - 2026-03-21
+
+### Changed
+- Officialized `0.31.0` by closing the development cycle suffix.
+- Optimized project mutation durable polling latency by reducing initial poll interval and adding immediate first status checks for both HTTP and MCP mutation transports.
+- Reworked project asset creation flow to prefer targeted imports over global refresh:
+  - removed full `AssetDatabase.Refresh()` from `mk-script` creation path
+  - batched `mk-asset` multi-create operations with `AssetDatabase.StartAssetEditing()` / `StopAssetEditing()` and `try/finally` safety
+  - applied targeted `AssetDatabase.ImportAsset()` for known created paths before `AssetDatabase.SaveAssets()`
+- Bumped bridge protocol to `v8`; projects must re-run `/init` to refresh embedded bridge payloads.
+
 ## 0.30.0 - 2026-03-21
 
 ### Changed

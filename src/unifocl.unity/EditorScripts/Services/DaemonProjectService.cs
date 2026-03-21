@@ -397,7 +397,6 @@ namespace UniFocl.EditorBridge
                 Directory.CreateDirectory(Path.GetDirectoryName(absolutePath) ?? GetProjectRoot());
                 File.WriteAllText(absolutePath, request.content);
                 AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
 
                 return JsonUtility.ToJson(new ProjectCommandResponse
                 {
@@ -410,59 +409,119 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteCreateAsset(ProjectCommandRequest request)
         {
-            if (!IsValidAssetPath(request.assetPath) || string.IsNullOrWhiteSpace(request.content))
+            return ExecuteWithFileSystemCriticalSection(() =>
             {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "mk-asset requires assetPath and content" });
-            }
-
-            MkAssetRequestOptions? options;
-            try
-            {
-                options = JsonUtility.FromJson<MkAssetRequestOptions>(request.content);
-            }
-            catch
-            {
-                options = null;
-            }
-
-            if (options is null || string.IsNullOrWhiteSpace(options.type))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "mk-asset requires type" });
-            }
-
-            var parentPath = request.assetPath.Replace('\\', '/').TrimEnd('/');
-            if (!AssetDatabase.IsValidFolder(parentPath))
-            {
-                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"invalid target folder: {parentPath}" });
-            }
-
-            var canonicalType = NormalizeMkAssetType(options.type);
-            var count = options.count <= 0 ? 1 : Math.Min(options.count, 100);
-            var createdPaths = new List<string>(count);
-            for (var i = 0; i < count; i++)
-            {
-                var displayName = ResolveMkAssetName(canonicalType, options.name, i, count);
-                if (!TryCreateAssetByType(canonicalType, parentPath, displayName, out var createdPath, out var error))
+                if (!IsValidAssetPath(request.assetPath) || string.IsNullOrWhiteSpace(request.content))
                 {
-                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = error ?? $"mk-asset failed for type {canonicalType}" });
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "mk-asset requires assetPath and content" });
                 }
 
-                createdPaths.Add(createdPath ?? string.Empty);
-            }
+                MkAssetRequestOptions? options;
+                try
+                {
+                    options = JsonUtility.FromJson<MkAssetRequestOptions>(request.content);
+                }
+                catch
+                {
+                    options = null;
+                }
 
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                if (options is null || string.IsNullOrWhiteSpace(options.type))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "mk-asset requires type" });
+                }
 
-            var content = JsonUtility.ToJson(new MkAssetResponsePayload
-            {
-                createdPaths = createdPaths.Where(path => !string.IsNullOrWhiteSpace(path)).ToArray()
-            });
-            return JsonUtility.ToJson(new ProjectCommandResponse
-            {
-                ok = true,
-                message = $"created {createdPaths.Count} asset(s)",
-                kind = "asset",
-                content = content
+                var parentPath = request.assetPath.Replace('\\', '/').TrimEnd('/');
+                if (!AssetDatabase.IsValidFolder(parentPath))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"invalid target folder: {parentPath}" });
+                }
+
+                var canonicalType = NormalizeMkAssetType(options.type);
+                var count = options.count <= 0 ? 1 : Math.Min(options.count, 100);
+                var createdPaths = new List<string>(count);
+                string? createError = null;
+                var editingStarted = false;
+
+                try
+                {
+                    if (count > 1)
+                    {
+                        AssetDatabase.StartAssetEditing();
+                        editingStarted = true;
+                    }
+
+                    for (var i = 0; i < count; i++)
+                    {
+                        var displayName = ResolveMkAssetName(canonicalType, options.name, i, count);
+                        if (!TryCreateAssetByType(canonicalType, parentPath, displayName, out var createdPath, out var error))
+                        {
+                            createError = error ?? $"mk-asset failed for type {canonicalType}";
+                            break;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(createdPath))
+                        {
+                            createdPaths.Add(createdPath);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    createError = $"mk-asset exception: {ex.Message}";
+                }
+                finally
+                {
+                    if (editingStarted)
+                    {
+                        try
+                        {
+                            AssetDatabase.StopAssetEditing();
+                        }
+                        catch (Exception ex)
+                        {
+                            createError ??= $"mk-asset finalize failed: {ex.Message}";
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(createError))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = createError });
+                }
+
+                // Targeted imports are preferred over full Refresh when we know exact paths.
+                foreach (var path in createdPaths
+                             .Where(path => !string.IsNullOrWhiteSpace(path))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+                    }
+                    catch (Exception ex)
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"mk-asset import failed at {path}: {ex.Message}"
+                        });
+                    }
+                }
+
+                AssetDatabase.SaveAssets();
+
+                var content = JsonUtility.ToJson(new MkAssetResponsePayload
+                {
+                    createdPaths = createdPaths.Where(path => !string.IsNullOrWhiteSpace(path)).ToArray()
+                });
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = $"created {createdPaths.Count} asset(s)",
+                    kind = "asset",
+                    content = content
+                });
             });
         }
 
@@ -2922,7 +2981,6 @@ namespace UniFocl.EditorBridge
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(absolute) ?? GetProjectRoot());
                 File.WriteAllText(absolute, content);
-                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
                 createdPath = path;
                 return true;
             }
