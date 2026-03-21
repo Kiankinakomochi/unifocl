@@ -12,8 +12,9 @@ internal sealed class HierarchyDaemonClient
     private static readonly TimeSpan BuildStatusTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan SceneLoadTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan SceneLoadStatusInterval = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan MutationPollInterval = TimeSpan.FromMilliseconds(700);
-    private static readonly TimeSpan MutationPollBackoff = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan MutationPollInterval = TimeSpan.FromMilliseconds(120);
+    private static readonly TimeSpan MutationPollBackoff = TimeSpan.FromMilliseconds(120);
+    private static readonly TimeSpan MutationPollMaxInterval = TimeSpan.FromMilliseconds(800);
     private const int SceneLoadRetryCount = 1;
     private static readonly IProjectMutationTransport McpMutationTransport = new McpProjectMutationTransport();
     private static readonly IProjectMutationTransport HttpMutationTransport = new HttpProjectMutationTransport();
@@ -319,10 +320,20 @@ internal sealed class HierarchyDaemonClient
         onStatus?.Invoke($"mutation accepted (requestId={requestId}, stage={accepted.Stage})");
         var startedAt = DateTime.UtcNow;
         var interval = MutationPollInterval;
+        var shouldDelayBeforePoll = false;
         while (DateTime.UtcNow - startedAt <= timeout)
         {
-            await Task.Delay(interval);
-            interval = TimeSpan.FromMilliseconds(Math.Min(interval.TotalMilliseconds + MutationPollBackoff.TotalMilliseconds, 1800));
+            if (shouldDelayBeforePoll)
+            {
+                await Task.Delay(interval);
+                interval = TimeSpan.FromMilliseconds(Math.Min(
+                    interval.TotalMilliseconds + MutationPollBackoff.TotalMilliseconds,
+                    MutationPollMaxInterval.TotalMilliseconds));
+            }
+            else
+            {
+                shouldDelayBeforePoll = true;
+            }
 
             var statusPayload = await SendGetAsync($"http://127.0.0.1:{port}/project/mutation/status?requestId={Uri.EscapeDataString(requestId)}", BuildStatusTimeout);
             if (string.IsNullOrWhiteSpace(statusPayload))
@@ -438,10 +449,20 @@ internal sealed class HierarchyDaemonClient
         onStatus?.Invoke($"mutation accepted via MCP (requestId={requestId})");
         var startedAt = DateTime.UtcNow;
         var interval = MutationPollInterval;
+        var shouldDelayBeforePoll = false;
         while (DateTime.UtcNow - startedAt <= timeout)
         {
-            await Task.Delay(interval);
-            interval = TimeSpan.FromMilliseconds(Math.Min(interval.TotalMilliseconds + MutationPollBackoff.TotalMilliseconds, 1800));
+            if (shouldDelayBeforePoll)
+            {
+                await Task.Delay(interval);
+                interval = TimeSpan.FromMilliseconds(Math.Min(
+                    interval.TotalMilliseconds + MutationPollBackoff.TotalMilliseconds,
+                    MutationPollMaxInterval.TotalMilliseconds));
+            }
+            else
+            {
+                shouldDelayBeforePoll = true;
+            }
 
             var statusPayload = await SendPostJsonAsync(
                 $"http://127.0.0.1:{port}/mcp/unifocl_project_command",
