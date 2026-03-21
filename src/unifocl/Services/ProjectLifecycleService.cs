@@ -606,11 +606,20 @@ internal sealed class ProjectLifecycleService
     private static void LogRecentEntries(IReadOnlyList<RecentProjectEntry> entries, Action<string> log)
     {
         log("[grey]recent[/]: most recently opened projects");
-        for (var i = 0; i < entries.Count; i++)
+        var visibleCount = ResolveVisibleRecentEntryCount(entries.Count, reservedRows: 2);
+        for (var i = 0; i < visibleCount; i++)
         {
             var entry = entries[i];
             var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
-            log($"[grey]recent[/]: [white]{i + 1}[/]. [white]{Markup.Escape(entry.ProjectPath)}[/] [dim]({opened})[/]");
+            var plain = $"{entry.ProjectPath} ({opened})";
+            var clamped = ClampToViewport(plain);
+            log($"[grey]recent[/]: [white]{i + 1}[/]. [white]{Markup.Escape(clamped)}[/]");
+        }
+
+        var omittedCount = Math.Max(0, entries.Count - visibleCount);
+        if (omittedCount > 0)
+        {
+            log($"[grey]recent[/]: showing [white]{visibleCount}[/] projects ([white]+{omittedCount}[/] more)");
         }
     }
 
@@ -709,12 +718,18 @@ internal sealed class ProjectLifecycleService
         var lastRenderedSelectedIndex = -1;
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
         RenderRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex);
 
         while (true)
         {
-            var key = Console.ReadKey(intercept: true);
-            var intent = KeyboardIntentReader.FromConsoleKey(key);
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                RenderRecentSelectionFrame(entries, selectedIndex);
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (SelectionIndexJumpHelper.TryApply(
                     intent,
                     index =>
@@ -796,11 +811,12 @@ internal sealed class ProjectLifecycleService
         AnsiConsole.Clear();
         CliTheme.MarkupLine(CliTheme.PromptDividerMarkup);
         CliTheme.MarkupLine("[grey]recent[/]: selection mode ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]Esc/F7/F8[/] exit)");
-        for (var i = 0; i < entries.Count; i++)
+        var (windowStart, visibleCount, omittedCount) = ResolveVisibleRecentEntryWindow(entries.Count, selectedIndex);
+        for (var i = windowStart; i < windowStart + visibleCount; i++)
         {
             var entry = entries[i];
             var opened = entry.LastOpenedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
-            var plain = $"recent: {i + 1}. {entry.ProjectPath} ({opened})";
+            var plain = ClampToViewport($"recent: {i + 1}. {entry.ProjectPath} ({opened})");
             if (i == selectedIndex)
             {
                 CliTheme.MarkupLine(CliTheme.CursorWrapEscaped(Markup.Escape($"> {plain}")));
@@ -809,7 +825,53 @@ internal sealed class ProjectLifecycleService
 
             CliTheme.MarkupLine($"[grey]{Markup.Escape(plain)}[/]");
         }
+
+        if (omittedCount > 0)
+        {
+            CliTheme.MarkupLine($"[grey]recent[/]: showing [white]{visibleCount}[/] projects ([white]+{omittedCount}[/] more)");
+        }
         CliTheme.MarkupLine(CliTheme.PromptDividerMarkup);
+    }
+
+    private static int ResolveVisibleRecentEntryCount(int totalEntries, int reservedRows)
+    {
+        var intendedRows = reservedRows + totalEntries;
+        var excessRows = TuiConsoleViewport.GetExcessRows(intendedRows);
+        var visibleCount = Math.Max(1, totalEntries - excessRows);
+        if (visibleCount < totalEntries)
+        {
+            // Reserve one line for a truncation summary footer.
+            visibleCount = Math.Max(1, visibleCount - 1);
+        }
+
+        return Math.Min(totalEntries, visibleCount);
+    }
+
+    private static (int WindowStart, int VisibleCount, int OmittedCount) ResolveVisibleRecentEntryWindow(int totalEntries, int selectedIndex)
+    {
+        var visibleCount = ResolveVisibleRecentEntryCount(totalEntries, reservedRows: 4);
+        if (visibleCount >= totalEntries)
+        {
+            return (0, totalEntries, 0);
+        }
+
+        var maxWindowStart = Math.Max(0, totalEntries - visibleCount);
+        var centeredWindowStart = selectedIndex - (visibleCount / 2);
+        var windowStart = Math.Clamp(centeredWindowStart, 0, maxWindowStart);
+        var omittedCount = totalEntries - visibleCount;
+        return (windowStart, visibleCount, omittedCount);
+    }
+
+    private static string ClampToViewport(string value)
+    {
+        var excessColumns = TuiConsoleViewport.GetExcessColumns(value.Length);
+        if (excessColumns <= 0)
+        {
+            return value;
+        }
+
+        var keep = Math.Max(1, value.Length - excessColumns - 1);
+        return $"{value[..keep]}…";
     }
 
     private Task<bool> HandleUnityDetectAsync(Action<string> log)

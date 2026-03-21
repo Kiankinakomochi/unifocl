@@ -2,8 +2,9 @@ using Spectre.Console;
 
 internal sealed class ProjectViewRenderer
 {
-    private const int DefaultFrameWidth = 78;
+    private const int DefaultFrameWidth = TuiConsoleViewport.DefaultColumns - 2;
     private const int MinFrameWidth = 40;
+    private const int FrameChromeRows = 4;
     private sealed record RenderLine(string Content, bool Highlight);
 
     public IReadOnlyList<string> Render(ProjectViewState state, int? highlightedEntryIndex = null, bool focusModeEnabled = false)
@@ -32,16 +33,40 @@ internal sealed class ProjectViewRenderer
 
     private static IEnumerable<RenderLine> BuildTreeLines(ProjectViewState state, string cwd, int? highlightedEntryIndex)
     {
-        yield return new RenderLine($" {GetRootLabel(cwd)}", false);
-        foreach (var entry in state.VisibleEntries)
+        var lines = new List<RenderLine>
+        {
+            new($" {GetRootLabel(cwd)}", false)
+        };
+
+        var totalEntries = state.VisibleEntries.Count;
+        var intendedRows = FrameChromeRows + 1 + totalEntries;
+        var excessRows = TuiConsoleViewport.GetExcessRows(intendedRows);
+        var treeRowBudget = Math.Max(1, (1 + totalEntries) - excessRows);
+        var entryRowBudget = Math.Max(0, treeRowBudget - 1);
+
+        if (totalEntries > entryRowBudget && entryRowBudget > 0)
+        {
+            entryRowBudget = Math.Max(1, entryRowBudget - 1);
+        }
+
+        var visibleEntries = state.VisibleEntries.Take(entryRowBudget).ToList();
+        foreach (var entry in visibleEntries)
         {
             var prefix = entry.Depth == 0 ? string.Empty : new string(' ', 1) + string.Concat(Enumerable.Repeat("│   ", entry.Depth));
             var selected = highlightedEntryIndex == entry.Index;
             var marker = selected ? ">" : " ";
             var branch = $"{marker}{prefix}├── ";
             var label = entry.IsDirectory ? $"{entry.Name}/" : entry.Name;
-            yield return new RenderLine($"{branch}[{entry.Index}] {label}", selected);
+            lines.Add(new RenderLine($"{branch}[{entry.Index}] {label}", selected));
         }
+
+        var omittedEntries = Math.Max(0, totalEntries - visibleEntries.Count);
+        if (omittedEntries > 0 && treeRowBudget >= 2)
+        {
+            lines.Add(new RenderLine($" … showing {visibleEntries.Count} project entries (+{omittedEntries} more)", false));
+        }
+
+        return lines;
     }
 
     private static string GetRootLabel(string cwd)
@@ -80,7 +105,7 @@ internal sealed class ProjectViewRenderer
 
     private static int ResolveFrameWidth()
     {
-        var windowWidth = Console.WindowWidth;
+        var (windowWidth, _) = TuiConsoleViewport.GetWindowSizeOrDefault();
         if (windowWidth <= 2)
         {
             return DefaultFrameWidth;
