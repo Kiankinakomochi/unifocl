@@ -803,6 +803,7 @@ internal sealed class HierarchyTui
         }
 
         WriteFrameLine(borderBottom);
+        CliTheme.MarkupLine(CliTheme.PromptDividerMarkup);
     }
 
     private static List<HierarchyTreeLine> BuildTreeLines(

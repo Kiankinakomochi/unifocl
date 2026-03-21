@@ -13,6 +13,7 @@ internal static class CliComposerService
     private static int _anchorTop;
     private static bool _bootLogoCollapsed;
     private static int _lastRenderedFrameRows;
+    private sealed record ComposerFrameLayout(IReadOnlyList<string> Lines, int LogAreaRows, int PromptAreaRows);
 
     private static string PromptDividerLine
     {
@@ -141,7 +142,7 @@ internal static class CliComposerService
                     case ConsoleKey.Enter:
                         if (CliComposerIntellisenseService.IsCatalogCommandInput(input.ToString(), commands, projectCommands, inspectorCommands, session))
                         {
-                            Console.WriteLine();
+                            PrepareForCommandExecution();
                             return input.ToString();
                         }
 
@@ -160,7 +161,7 @@ internal static class CliComposerService
                             break;
                         }
 
-                        Console.WriteLine();
+                        PrepareForCommandExecution();
                         return input.ToString();
                     case ConsoleKey.Backspace:
                         if (input.Length > 0)
@@ -224,7 +225,7 @@ internal static class CliComposerService
                             && session.ContextMode == CliContextMode.Inspector
                             && session.Inspector is not null)
                         {
-                            Console.WriteLine();
+                            PrepareForCommandExecution();
                             return ":focus-inspector";
                         }
 
@@ -232,7 +233,7 @@ internal static class CliComposerService
                             && session.ContextMode == CliContextMode.Project
                             && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
                         {
-                            Console.WriteLine();
+                            PrepareForCommandExecution();
                             return ":focus-project";
                         }
 
@@ -240,7 +241,7 @@ internal static class CliComposerService
                             && (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
                             && session.RecentProjectEntries.Count > 0)
                         {
-                            Console.WriteLine();
+                            PrepareForCommandExecution();
                             return ":focus-recent";
                         }
                         break;
@@ -288,7 +289,7 @@ internal static class CliComposerService
 
             if (isDirty)
             {
-                var lines = BuildComposerFrameLines(
+                var frame = BuildComposerFrameLines(
                     input.ToString(),
                     commands,
                     projectCommands,
@@ -298,16 +299,10 @@ internal static class CliComposerService
                     selectedIntellisenseCandidateIndex,
                     intellisenseDismissed,
                     streamLogScrollOffset);
-                var frameSignature = string.Join('\n', lines);
+                var frameSignature = $"{frame.LogAreaRows}|{frame.PromptAreaRows}|{string.Join('\n', frame.Lines)}";
                 if (!string.Equals(lastFrameSignature, frameSignature, StringComparison.Ordinal))
                 {
-                    ClearComposerFrame();
-                    foreach (var line in lines)
-                    {
-                        CliTheme.MarkupLine(line);
-                    }
-
-                    _lastRenderedFrameRows = CountVisualRows(lines);
+                    RenderComposerFrameBlocking(frame);
                     lastFrameSignature = frameSignature;
                 }
 
@@ -354,7 +349,7 @@ internal static class CliComposerService
         composerResetRequested = true;
     }
 
-    private static List<string> BuildComposerFrameLines(
+    private static ComposerFrameLayout BuildComposerFrameLines(
         string input,
         List<CommandSpec> commands,
         List<CommandSpec> projectCommands,
@@ -401,7 +396,10 @@ internal static class CliComposerService
         lines.AddRange(pinnedBottomLines);
 
         ConstrainComposerLinesToViewport(lines, protectedPromptRows);
-        return lines;
+        var promptAreaRows = CountVisualRows(pinnedBottomLines);
+        var totalRows = CountVisualRows(lines);
+        var logAreaRows = Math.Max(0, totalRows - promptAreaRows);
+        return new ComposerFrameLayout(lines, logAreaRows, promptAreaRows);
     }
 
     private static List<string> BuildComposerStreamLogLines(
@@ -570,13 +568,13 @@ internal static class CliComposerService
 
     private static void ClearComposerFrame()
     {
+        if (Console.IsOutputRedirected)
+        {
+            return;
+        }
+
         try
         {
-            if (Console.IsOutputRedirected)
-            {
-                return;
-            }
-
             if (_hasAnchor)
             {
                 Console.SetCursorPosition(_anchorLeft, _anchorTop);
@@ -590,19 +588,55 @@ internal static class CliComposerService
             // Fallback below.
         }
 
-        // Fallback for terminals where anchor-based cursor restore is unreliable:
-        // clear exactly the previously rendered composer frame from the current cursor.
         if (_lastRenderedFrameRows > 0)
         {
-            Console.Write($"\u001b[{_lastRenderedFrameRows}F");
-            Console.Write("\u001b[0J");
-            _lastRenderedFrameRows = 0;
+            try
+            {
+                Console.Write($"\u001b[{_lastRenderedFrameRows}F");
+                Console.Write("\u001b[0J");
+                _lastRenderedFrameRows = 0;
+                return;
+            }
+            catch
+            {
+                // Fall through.
+            }
+        }
+
+        // Fallback for terminals where anchor-based cursor restore is unreliable:
+        // DEC restore cursor + clear to end of screen.
+        Console.Write("\u001b8\u001b[0J");
+        _lastRenderedFrameRows = 0;
+    }
+
+    private static void PrepareForCommandExecution()
+    {
+        ClearComposerFrame();
+    }
+
+    private static void RenderComposerFrameBlocking(ComposerFrameLayout frame)
+    {
+        ClearComposerFrame();
+        foreach (var line in frame.Lines)
+        {
+            CliTheme.MarkupLine(line);
+        }
+
+        var maxComposerRows = ResolveMaxComposerRows();
+        if (maxComposerRows == int.MaxValue)
+        {
+            _lastRenderedFrameRows = frame.LogAreaRows + frame.PromptAreaRows;
             return;
         }
 
-        // Final fallback: DEC restore cursor + clear to end of screen.
-        Console.Write("\u001b8\u001b[0J");
-        _lastRenderedFrameRows = 0;
+        var renderedRows = frame.LogAreaRows + frame.PromptAreaRows;
+        var fillerRows = Math.Max(0, maxComposerRows - renderedRows);
+        for (var i = 0; i < fillerRows; i++)
+        {
+            CliTheme.MarkupLine(string.Empty);
+        }
+
+        _lastRenderedFrameRows = maxComposerRows;
     }
 
     private static void ConstrainComposerLinesToViewport(List<string> lines, int protectedBottomRows)

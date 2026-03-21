@@ -58,6 +58,13 @@ internal sealed class ProjectCommandRouterService
         }
 
         var tokens = Tokenize(normalizedInput);
+        var autoEnterInspectorFocus = false;
+        if (TryStripInspectorFocusFlags(tokens, out var requestInspectorFocus))
+        {
+            autoEnterInspectorFocus = requestInspectorFocus;
+            normalizedInput = string.Join(' ', tokens);
+        }
+
         if (tokens.Count == 0)
         {
             if (session.ContextMode == CliContextMode.Project)
@@ -95,7 +102,8 @@ internal sealed class ProjectCommandRouterService
         {
             session.ContextMode = session.Inspector is null ? CliContextMode.Project : CliContextMode.Inspector;
             if (session.ContextMode == CliContextMode.Inspector
-                && tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
+                && tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase)
+                && autoEnterInspectorFocus)
             {
                 await _inspectorModeService.RunKeyboardFocusModeAsync(session, log, enteredFromHierarchyContext);
                 _inspectorModeService.RenderCurrentFrame(session);
@@ -146,6 +154,29 @@ internal sealed class ProjectCommandRouterService
         }
 
         return false;
+    }
+
+    private static bool TryStripInspectorFocusFlags(List<string> tokens, out bool requestFocus)
+    {
+        requestFocus = false;
+        if (tokens.Count == 0 || !tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var removed = false;
+        for (var i = tokens.Count - 1; i >= 1; i--)
+        {
+            if (tokens[i].Equals("--focus", StringComparison.OrdinalIgnoreCase)
+                || tokens[i].Equals("--interactive", StringComparison.OrdinalIgnoreCase))
+            {
+                tokens.RemoveAt(i);
+                requestFocus = true;
+                removed = true;
+            }
+        }
+
+        return removed;
     }
 
     private static string? NormalizeContextualInput(string input, CliContextMode mode, Action<string> log)
