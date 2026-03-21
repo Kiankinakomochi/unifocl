@@ -7,6 +7,7 @@ Usage:
   agent-worktree.sh setup --worktree-path <path> --branch <codex/branch> [--project-path <path>] [--unity-version <version>] [--skip-version-bump] [--skip-compatcheck]
   agent-worktree.sh provision --repo-root <path> --worktree-path <path> --branch <branch> [--source-project <path>] [--seed-library]
   agent-worktree.sh setup-smoke-project --worktree-path <path> --project-path <path> [--unity-version <version>] [--force]
+  agent-worktree.sh init-smoke-agentic --worktree-path <path> [--project-path <path>] [--format json|yaml] [--global-payload-root <path>] [--config-root <path>]
   agent-worktree.sh seed --source-project <path> --worktree-path <path>
   agent-worktree.sh start-daemon --worktree-path <path> --project-path <path> [--port-start <n>] [--port-end <n>]
   agent-worktree.sh teardown --repo-root <path> --worktree-path <path>
@@ -15,6 +16,7 @@ Commands:
   setup         One-shot AGENT bootstrap: branch from origin/main, sync submodules, bump CliVersion dev cycle, scaffold smoke project, write local.config, and run compatcheck.
   provision     Create isolated git worktree branch and optionally seed Library cache.
   setup-smoke-project  Scaffold a minimal Unity project for agentic smoke testing.
+  init-smoke-agentic   Run `/init` through `exec --agentic` against the smoke project with sandbox-safe config/payload roots.
   seed          Copy source project's Library cache into provisioned worktree.
   start-daemon  Find an open localhost port and run: /daemon start --project <path> --port <port> --headless.
   teardown      Remove provisioned worktree via git worktree remove --force.
@@ -431,6 +433,105 @@ EOF
     echo "unity-version: $resolved_unity_version"
 }
 
+run_init_smoke_agentic() {
+    local worktree_path="."
+    local project_path=".local/compatcheck-benchmark"
+    local format="json"
+    local global_payload_root="${UNIFOCL_GLOBAL_PAYLOAD_ROOT:-/tmp/unifocl-global}"
+    local config_root="${UNIFOCL_CONFIG_ROOT:-}"
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --worktree-path)
+                worktree_path="$2"
+                shift 2
+                ;;
+            --project-path)
+                project_path="$2"
+                shift 2
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            --global-payload-root)
+                global_payload_root="$2"
+                shift 2
+                ;;
+            --config-root)
+                config_root="$2"
+                shift 2
+                ;;
+            *)
+                die "unknown init-smoke-agentic option: $1"
+                ;;
+        esac
+    done
+
+    case "$format" in
+        json|yaml) ;;
+        *)
+            die "--format must be json or yaml"
+            ;;
+    esac
+
+    worktree_path="$(abs_path "$worktree_path")"
+    local project_abs
+    if [[ "$project_path" = /* ]]; then
+        project_abs="$(abs_path "$project_path")"
+    else
+        project_abs="$(abs_path "$worktree_path/$project_path")"
+    fi
+
+    [ -d "$project_abs" ] || die "project path does not exist: $project_abs"
+
+    if [ -z "$config_root" ]; then
+        config_root="$worktree_path/.local/unifocl-config"
+    fi
+
+    mkdir -p "$global_payload_root" "$config_root"
+
+    local init_command
+    printf -v init_command '/init "%s"' "$project_abs"
+
+    local output_log
+    output_log="$(mktemp -t unifocl-init-smoke-agentic.XXXXXX.log)"
+    local exit_code=0
+
+    set +e
+    (
+        cd "$worktree_path"
+        env \
+            UNIFOCL_GLOBAL_PAYLOAD_ROOT="$global_payload_root" \
+            UNIFOCL_CONFIG_ROOT="$config_root" \
+            dotnet run --project src/unifocl/unifocl.csproj --disable-build-servers -v minimal -- \
+                exec "$init_command" \
+                --agentic \
+                --project "$project_abs" \
+                --mode project \
+                --format "$format"
+    ) >"$output_log" 2>&1
+    exit_code=$?
+    set -e
+
+    cat "$output_log"
+
+    if [ "$exit_code" -ne 0 ]; then
+        if grep -Eiq \
+            'operation not permitted|access to the path .* denied|permission denied|listen EPERM|could not resolve host|failed to connect|network is unreachable|temporary failure in name resolution|sandboxdenied|api\.nuget\.org' \
+            "$output_log"; then
+            echo "[agent-worktree] escalation-required: init-smoke-agentic likely hit sandbox/network restrictions." >&2
+            echo "[agent-worktree] rerun-command: src/unifocl/scripts/agent-worktree.sh init-smoke-agentic --worktree-path \"$worktree_path\" --project-path \"$project_abs\" --format \"$format\"" >&2
+            echo "[agent-worktree] codex-hint: rerun the same command with sandbox_permissions=require_escalated." >&2
+            rm -f "$output_log"
+            return 86
+        fi
+    fi
+
+    rm -f "$output_log"
+    return "$exit_code"
+}
+
 run_start_daemon() {
     local worktree_path=""
     local project_path=""
@@ -555,6 +656,9 @@ main() {
             ;;
         setup-smoke-project)
             run_setup_smoke_project "$@"
+            ;;
+        init-smoke-agentic)
+            run_init_smoke_agentic "$@"
             ;;
         setup)
             run_setup "$@"

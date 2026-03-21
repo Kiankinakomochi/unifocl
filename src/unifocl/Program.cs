@@ -471,7 +471,7 @@ try
         {
             CliLogService.AppendLog(streamLog, $"[grey]protocol[/]: [white]{Markup.Escape(CliVersion.Protocol)}[/]");
             CliLogService.AppendLog(streamLog, "[grey]agentic[/]: schema v1, formats=json|yaml, endpoints=/agent/exec,/agent/capabilities,/agent/status,/agent/dump/{hierarchy|project|inspector}");
-            CliLogService.AppendLog(streamLog, "[grey]agentic[/]: exit-codes 0=success, 2=validation, 3=daemon-unavailable, 4=execution-error");
+            CliLogService.AppendLog(streamLog, "[grey]agentic[/]: exit-codes 0=success, 2=validation, 3=daemon-unavailable, 4=execution-error, 6=permission-escalation-required");
             continue;
         }
 

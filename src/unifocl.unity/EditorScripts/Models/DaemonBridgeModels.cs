@@ -257,6 +257,33 @@ namespace UniFocl.EditorBridge
         public string finishedAtUtc = string.Empty;
         public bool isCompiling;
         public bool isUpdating;
+        public bool isDurable;
+        public string state = string.Empty;
+        public bool cancelRequested;
+    }
+
+    [Serializable]
+    internal sealed class ProjectCommandAcceptedResponse
+    {
+        public bool ok;
+        public string requestId = string.Empty;
+        public string action = string.Empty;
+        public bool duplicated;
+        public string stage = string.Empty;
+        public string message = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class ProjectCommandResultResponse
+    {
+        public bool found;
+        public bool completed;
+        public bool success;
+        public string requestId = string.Empty;
+        public string action = string.Empty;
+        public string state = string.Empty;
+        public string message = string.Empty;
+        public string responsePayload = string.Empty;
     }
 
     [Serializable]

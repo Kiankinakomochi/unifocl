@@ -367,12 +367,18 @@ src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
   --worktree-path ../unifocl-agent-a \
   --project-path .local/agentic-smoke-project
 
-# 3) Start daemon on dynamically selected open port for that worktree/project
+# 3) Run bridge init via one-shot agentic execution (no interactive shell)
+src/unifocl/scripts/agent-worktree.sh init-smoke-agentic \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project \
+  --format json
+
+# 4) Start daemon on dynamically selected open port for that worktree/project
 src/unifocl/scripts/agent-worktree.sh start-daemon \
   --worktree-path ../unifocl-agent-a \
   --project-path .local/agentic-smoke-project
 
-# 4) Execute deterministic machine command in that isolated workspace
+# 5) Execute deterministic machine command in that isolated workspace
 cd ../unifocl-agent-a
 dotnet run --project src/unifocl/unifocl.csproj -- \
   exec "/dump project --format json --depth 2 --limit 2000" \
@@ -452,9 +458,26 @@ Safety constraints in host-mode fallback:
 UPM commands in CLI mode (`upm list/install/remove/update`) are currently under active stabilization.  
 For critical package operations, the recommended workflow is still Unity Editor GUI (Package Manager window), then use unifocl for verification and follow-up automation.
 
+### MCP Integration (Hybrid Durable Mutations)
+
+unifocl now supports durable project-mutation execution (`submit -> status -> result`) so mutation outcomes remain queryable even if Unity refresh/compile/domain reload interrupts an in-flight HTTP response.
+
+- Recommended Unity MCP package:
+  - `https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main`
+  - OpenUPM package id: `com.coplaydev.unity-mcp`
+- Thin MCP tool endpoint exposed by unifocl bridge:
+  - `POST /mcp/unifocl_project_command`
+  - Operations: `submit`, `get_status`, `get_result`, `cancel`
+- Durable HTTP fallback endpoints:
+  - `POST /project/mutation/submit`
+  - `GET /project/mutation/status?requestId=<id>`
+  - `GET /project/mutation/result?requestId=<id>`
+  - `POST /project/mutation/cancel?requestId=<id>`
 Recent stability hardening:
 * `/init` now installs `com.coplaydev.unity-mcp` through a dedicated Unity batch process with PID/status tracking instead of daemon mutation round-trips.
-* MCP install uses fallback Git target resolution and recursively installs transitive package dependencies declared in installed package `package.json` files.
+* MCP install uses fallback Git target resolution plus scoped-registry-aware recursive dependency resolution from package metadata.
+* `/init` now syncs resolved MCP transitive dependencies back into local MCP package manifests (`Packages/.../package.json` and `Library/PackageCache/.../package.json`) to prevent dependency desync.
+* MCP bootstrap enforces `com.unity.modules.imageconversion` so runtime screenshot helpers using `Texture2D.EncodeToPNG` keep compile-safe module references.
 * `exec --agentic` UPM commands with `--project <path>` auto-run an `/open` lifecycle step before executing package commands.
 
 ### 2. Daemon Management
@@ -489,6 +512,11 @@ src/unifocl/scripts/agent-worktree.sh provision \
 src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
   --worktree-path ../unifocl-agent-a \
   --project-path .local/agentic-smoke-project
+
+src/unifocl/scripts/agent-worktree.sh init-smoke-agentic \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project \
+  --format json
 
 src/unifocl/scripts/agent-worktree.sh start-daemon \
   --worktree-path ../unifocl-agent-a \

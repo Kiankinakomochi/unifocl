@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.27.0 - 2026-03-21
+## 0.29.0 - 2026-03-21
 
 ### Changed
-- Officialized `0.27.0` by closing the development cycle suffix.
+- Officialized `0.29.0` by closing the development cycle suffix.
 - Added Unity Version Control-aware mutation safety for project filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`) with support for:
   - `uvcs_all` mode (UVCS owns all mutation targets)
   - `uvcs_hybrid_gitignore` mode (ownership resolved from `.gitignore` rules per path)
@@ -21,10 +21,50 @@
   - non-mutation agentic commands remain unaffected
 - Classified `E_VCS_SETUP_REQUIRED` under validation-class exit code `2`.
 
+## 0.28.0 - 2026-03-21
+
+### Changed
+- Officialized `0.28.0` by closing the development cycle suffix.
+- Updated `/new` lifecycle to run deterministic bootstrap sequencing: `/new -> /init -> /open`.
+- Refactored shared lifecycle initialization so `/new` and `/init` execute the same bridge/package bootstrap flow.
+- Hardened `/init` MCP package provisioning to resolve scoped-registry and recursive transitive dependencies from package metadata.
+- Added MCP dependency resolution validation and actionable elevated-permission guidance when metadata lookups are restricted.
+- Synced resolved MCP transitive dependencies into local installed package manifests (`Packages/.../package.json` and `Library/PackageCache/.../package.json`) to prevent manifest desync with expected runtime references.
+- Enforced `com.unity.modules.imageconversion` dependency floor during MCP bootstrap to keep `Texture2D.EncodeToPNG` compile compatibility in Unity runtime assemblies.
+- Added explicit agentic escalation signaling (`E_ESCALATION_REQUIRED`, exit code `6`, and `meta.extra.requiresEscalation`) so automations and external agents can auto-rerun with elevated permissions.
+- Updated `agent-worktree.sh init-smoke-agentic` to emit escalation-required diagnostics and deterministic non-zero exit when sandbox restrictions block required operations.
+
+## 0.27.0 - 2026-03-20
+
+### Changed
+- Officialized `0.27.0` by closing the development cycle suffix.
+- Suppressed TUI body rendering during agentic project-mode execution to keep non-interactive output deterministic.
+
+## 0.27.0a1 - 2026-03-20
+
+### Changed
+- Started the `0.27.0` development cycle with `a1` suffix versioning after syncing `codex/agentic-upm-no-tui-output` with latest `main`.
+- Suppressed TUI body rendering during agentic project-mode execution to keep non-interactive output deterministic.
+
 ## 0.26.0 - 2026-03-20
 
 ### Changed
 - Officialized `0.26.0` by closing the development cycle suffix.
+- Merged incoming `codex/agent-md-setup` setup flow updates and versioned them as the newer release.
+- Upgraded `/init` MCP provisioning to execute Unity batch installation with status-file monitoring and recursive dependency installation checks.
+- Kept `/init` manifest bootstrap enforcement for required MCP package references before running installer checks.
+
+## 0.25.0 - 2026-03-19
+
+### Changed
+- Officialized `0.25.0` by closing the development cycle suffix.
+- Added `/init` MCP bootstrap enforcement so Unity projects automatically receive `com.coplaydev.unity-mcp` (git target) when missing.
+- Added `/init` install verification for MCP resolution:
+  - verifies lockfile resolution from `Packages/packages-lock.json` when available
+  - waits for post-init lockfile update window
+  - falls back to daemon `upm-list` verification when attached to the same project
+  - fails `/init` with actionable guidance when installation cannot be verified
+- Fixed `HierarchyDaemonClient.ExecuteProjectCommandAsync` local variable shadowing to restore clean CLI compilation.
 - Hardened `/init` MCP package installation by moving package install into a dedicated Unity batch process with explicit PID tracking, status-file progress updates, timeout handling, and deterministic teardown.
 - Updated MCP install flow to support fallback Git target install and to recursively install missing dependencies by reading installed package `package.json` dependency entries.
 - Updated smoke project scaffolding (`setup-smoke-project`) to include `com.unity.modules.imageconversion` by default so generated projects align with Unity Hub-style module availability required by MCP runtime screenshot helpers.
