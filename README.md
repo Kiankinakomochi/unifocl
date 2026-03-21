@@ -160,38 +160,30 @@ CLI / agentic integration:
 
 ## Installation
 
-unifocl is currently distributed as source code and requires a modern .NET runtime.
+Install via GitHub Releases, Homebrew, or Winget.
 
-### Dependency Resolution Prerequisites
+### GitHub Release
 
-Dependency bootstrap flows in unifocl currently assume an OS package manager is available:
-* Windows: `winget`
-* macOS: `homebrew`
+Download release artifacts from:
+* `https://github.com/Kiankinakomochi/unifocl/releases/latest`
 
-Current dependency guidance:
-* `uv`: use OS-specific package manager (`winget`/`homebrew`) or Astral's curl installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
-* `python`: use `homebrew` or `uv`.
-
-Coplay.dev package bootstrap currently relies on both `uv` and `python` in this flow. These dependency requirements may change in future releases.
-
-### Clone & Build (Debug)
+### Homebrew (macOS)
 
 ```bash
-git clone https://github.com/Kiankinakomochi/unifocl.git
-cd unifocl
-dotnet build
-dotnet run --project src/unifocl
+brew tap Kiankinakomochi/unifocl
+brew install unifocl
 ```
 
-`Debug build output is located in:` `src/unifocl/bin/Debug/`
+### Winget (Windows)
 
-### Release Build
+Winget submission is currently pending approval in the community repository:
+* `https://github.com/microsoft/winget-pkgs/pull/350729`
 
-```bash
-dotnet build -c Release
+After approval, install with:
+
+```powershell
+winget install Kiankinakomochi.unifocl
 ```
-
-*Release output is located in:* `src/unifocl/bin/Release/`. You can run the generated binary directly from this directory.
 
 ---
 
