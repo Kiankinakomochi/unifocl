@@ -95,6 +95,26 @@ internal static class CliTheme
         return $"[{CursorForeground} on {CursorBackground}]{escapedContent}[/]";
     }
 
+    public static string PromptDividerMarkup => BuildPromptDividerMarkup();
+
+    public static T PromptWithDividers<T>(Func<T> prompt)
+    {
+        RenderPromptDivider();
+        try
+        {
+            return prompt();
+        }
+        finally
+        {
+            RenderPromptDivider();
+        }
+    }
+
+    public static bool ConfirmWithDividers(string prompt, bool defaultValue = true)
+    {
+        return PromptWithDividers(() => AnsiConsole.Confirm(prompt, defaultValue));
+    }
+
     public static bool TrySetTheme(string theme)
     {
         if (!IsSupportedTheme(theme))
@@ -189,5 +209,28 @@ internal static class CliTheme
     {
         var pattern = $"(?<!\\[){Regex.Escape(token)}(?!\\])";
         return Regex.Replace(input, pattern, replacement);
+    }
+
+    private static void RenderPromptDivider()
+    {
+        MarkupLine(BuildPromptDividerMarkup());
+    }
+
+    private static string BuildPromptDividerMarkup()
+    {
+        var width = 64;
+        try
+        {
+            if (!Console.IsOutputRedirected)
+            {
+                width = Math.Max(24, Console.WindowWidth - 2);
+            }
+        }
+        catch
+        {
+            width = 64;
+        }
+
+        return $"[grey]{new string('─', width)}[/]";
     }
 }
