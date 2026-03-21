@@ -33,23 +33,38 @@ internal sealed class ProjectViewRenderer
 
     private static IEnumerable<RenderLine> BuildTreeLines(ProjectViewState state, string cwd, int? highlightedEntryIndex)
     {
-        var lines = new List<RenderLine>
-        {
-            new($" {GetRootLabel(cwd)}", false)
-        };
+        var lines = new List<RenderLine>();
 
         var totalEntries = state.VisibleEntries.Count;
         var intendedRows = FrameChromeRows + 1 + totalEntries;
         var excessRows = TuiConsoleViewport.GetExcessRows(intendedRows);
-        var treeRowBudget = Math.Max(1, (1 + totalEntries) - excessRows);
+        var availableTreeRows = Math.Max(0, ResolveWindowHeight() - FrameChromeRows);
+        var treeRowBudget = Math.Max(0, (1 + totalEntries) - excessRows);
+        treeRowBudget = Math.Min(availableTreeRows, treeRowBudget);
         var entryRowBudget = Math.Max(0, treeRowBudget - 1);
+
+        if (treeRowBudget > 0)
+        {
+            lines.Add(new RenderLine($" {GetRootLabel(cwd)}", false));
+        }
 
         if (totalEntries > entryRowBudget && entryRowBudget > 0)
         {
             entryRowBudget = Math.Max(1, entryRowBudget - 1);
         }
 
-        var visibleEntries = state.VisibleEntries.Take(entryRowBudget).ToList();
+        var selectedPosition = highlightedEntryIndex is int highlighted
+            ? state.VisibleEntries.FindIndex(entry => entry.Index == highlighted)
+            : -1;
+        if (selectedPosition < 0)
+        {
+            selectedPosition = 0;
+        }
+
+        var maxWindowStart = Math.Max(0, totalEntries - entryRowBudget);
+        var centeredWindowStart = selectedPosition - (entryRowBudget / 2);
+        var windowStart = Math.Clamp(centeredWindowStart, 0, maxWindowStart);
+        var visibleEntries = state.VisibleEntries.Skip(windowStart).Take(entryRowBudget).ToList();
         foreach (var entry in visibleEntries)
         {
             var prefix = entry.Depth == 0 ? string.Empty : new string(' ', 1) + string.Concat(Enumerable.Repeat("│   ", entry.Depth));
@@ -63,7 +78,8 @@ internal sealed class ProjectViewRenderer
         var omittedEntries = Math.Max(0, totalEntries - visibleEntries.Count);
         if (omittedEntries > 0 && treeRowBudget >= 2)
         {
-            lines.Add(new RenderLine($" … showing {visibleEntries.Count} project entries (+{omittedEntries} more)", false));
+            var rangeEnd = Math.Min(totalEntries, windowStart + visibleEntries.Count);
+            lines.Add(new RenderLine($" … showing {windowStart + 1}-{rangeEnd}/{totalEntries} project entries (+{omittedEntries} more)", false));
         }
 
         return lines;
@@ -112,5 +128,11 @@ internal sealed class ProjectViewRenderer
         }
 
         return Math.Max(MinFrameWidth, windowWidth - 2);
+    }
+
+    private static int ResolveWindowHeight()
+    {
+        var (_, windowHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
+        return windowHeight > 0 ? windowHeight : TuiConsoleViewport.DefaultRows;
     }
 }

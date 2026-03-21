@@ -765,10 +765,11 @@ internal sealed class HierarchyTui
         var borderTop = $"┌{new string('─', frameWidth)}┐";
         var borderMid = $"├{new string('─', frameWidth)}┤";
         var borderBottom = $"└{new string('─', frameWidth)}┘";
-        var availableRows = Math.Max(MinTreeRows + MinCommandRows, ResolveWindowHeight() - ReservedPromptRows);
-        var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
         var streamRows = BuildWrappedStreamRows(commandLog, Math.Max(1, frameWidth - 1));
         var hasStreamPane = streamRows.Count > 0;
+        var minimumDynamicRows = MinTreeRows + MinCommandRows;
+        var intendedDynamicRows = hasStreamPane ? treeLines.Count + streamRows.Count + 1 : treeLines.Count;
+        var dynamicRows = ResolveDynamicRows(intendedDynamicRows, minimumDynamicRows);
         var (treeRows, commandRows) = hasStreamPane
             ? AllocateViewportRows(dynamicRows, treeLines.Count, streamRows.Count)
             : (Math.Max(1, dynamicRows), 0);
@@ -904,8 +905,9 @@ internal sealed class HierarchyTui
     {
         var streamRows = commandLogCount;
         var hasStreamPane = streamRows > 0;
-        var availableRows = Math.Max(MinTreeRows + MinCommandRows, ResolveWindowHeight() - ReservedPromptRows);
-        var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
+        var minimumDynamicRows = MinTreeRows + MinCommandRows;
+        var intendedDynamicRows = hasStreamPane ? treeLineCount + streamRows + 1 : treeLineCount;
+        var dynamicRows = ResolveDynamicRows(intendedDynamicRows, minimumDynamicRows);
         var treeRows = hasStreamPane
             ? AllocateViewportRows(dynamicRows, treeLineCount, streamRows).TreeRows
             : Math.Max(1, dynamicRows);
@@ -1995,5 +1997,16 @@ internal sealed class HierarchyTui
     {
         var (_, windowHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
         return windowHeight > 0 ? windowHeight : TuiConsoleViewport.DefaultRows;
+    }
+
+    private static int ResolveDynamicRows(int intendedDynamicRows, int minimumDynamicRows)
+    {
+        intendedDynamicRows = Math.Max(1, intendedDynamicRows);
+        var intendedTotalRows = ReservedPromptRows + FrameOverheadRows + intendedDynamicRows;
+        var excessRows = TuiConsoleViewport.GetExcessRows(intendedTotalRows);
+        var availableDynamicRows = Math.Max(1, ResolveWindowHeight() - ReservedPromptRows - FrameOverheadRows);
+        var minimumRowsThatFit = Math.Min(Math.Max(1, minimumDynamicRows), availableDynamicRows);
+        var resolved = Math.Max(minimumRowsThatFit, intendedDynamicRows - excessRows);
+        return Math.Min(availableDynamicRows, resolved);
     }
 }

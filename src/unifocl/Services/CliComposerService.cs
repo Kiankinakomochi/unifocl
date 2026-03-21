@@ -12,6 +12,7 @@ internal static class CliComposerService
     private static int _anchorLeft;
     private static int _anchorTop;
     private static bool _bootLogoCollapsed;
+    private static int _lastRenderedFrameRows;
 
     private static string PromptDividerLine
     {
@@ -74,6 +75,7 @@ internal static class CliComposerService
         var lastStreamLogSignature = GetStreamLogSignature(streamLog);
         _ = TryGetWindowSize(out var lastWindowWidth, out var lastWindowHeight);
         SaveComposerAnchor();
+        _lastRenderedFrameRows = 0;
 
         while (true)
         {
@@ -305,6 +307,7 @@ internal static class CliComposerService
                         CliTheme.MarkupLine(line);
                     }
 
+                    _lastRenderedFrameRows = CountVisualRows(lines);
                     lastFrameSignature = frameSignature;
                 }
 
@@ -362,23 +365,32 @@ internal static class CliComposerService
         bool suppressIntellisense,
         int streamLogScrollOffset)
     {
-        var pinnedBottomLines = new List<string>
+        var promptBlockLines = new List<string>
         {
             PromptDividerLine,
             $"{BuildPromptLabelMarkup(session)} [grey]>[/] [bold white]{Markup.Escape(input)}[/]"
         };
-        pinnedBottomLines.AddRange(
-            BuildPinnedIntellisenseLines(
-                input,
-                commands,
-                projectCommands,
-                inspectorCommands,
-                session,
-                selectedFuzzyCandidateIndex,
-                suppressIntellisense));
-        pinnedBottomLines.Add(PromptDividerLine);
 
         var maxComposerRows = ResolveMaxComposerRows();
+        var protectedPromptRows = CountVisualRows([PromptDividerLine, promptBlockLines[1], PromptDividerLine]);
+        var intellisenseLines = BuildPinnedIntellisenseLines(
+            input,
+            commands,
+            projectCommands,
+            inspectorCommands,
+            session,
+            selectedFuzzyCandidateIndex,
+            suppressIntellisense);
+        var intellisenseRowsBudget = maxComposerRows == int.MaxValue
+            ? int.MaxValue
+            : Math.Max(0, maxComposerRows - protectedPromptRows);
+        var trimmedIntellisenseLines = TakeLeadingLinesByRowBudget(intellisenseLines, intellisenseRowsBudget);
+
+        var pinnedBottomLines = new List<string>(promptBlockLines.Count + trimmedIntellisenseLines.Count + 1);
+        pinnedBottomLines.AddRange(promptBlockLines);
+        pinnedBottomLines.AddRange(trimmedIntellisenseLines);
+        pinnedBottomLines.Add(PromptDividerLine);
+
         var pinnedBottomRows = CountVisualRows(pinnedBottomLines);
         var logRowsBudget = maxComposerRows == int.MaxValue
             ? MaxComposerStreamLogLines
@@ -388,7 +400,7 @@ internal static class CliComposerService
         lines.AddRange(BuildComposerStreamLogLines(streamLog, logRowsBudget, streamLogScrollOffset));
         lines.AddRange(pinnedBottomLines);
 
-        ConstrainComposerLinesToViewport(lines);
+        ConstrainComposerLinesToViewport(lines, protectedPromptRows);
         return lines;
     }
 
@@ -552,6 +564,8 @@ internal static class CliComposerService
             _hasAnchor = false;
             Console.Write("\u001b7");
         }
+
+        _lastRenderedFrameRows = 0;
     }
 
     private static void ClearComposerFrame()
@@ -567,6 +581,7 @@ internal static class CliComposerService
             {
                 Console.SetCursorPosition(_anchorLeft, _anchorTop);
                 Console.Write("\u001b[0J");
+                _lastRenderedFrameRows = 0;
                 return;
             }
         }
@@ -575,11 +590,22 @@ internal static class CliComposerService
             // Fallback below.
         }
 
-        // DEC restore cursor + clear to end of screen.
+        // Fallback for terminals where anchor-based cursor restore is unreliable:
+        // clear exactly the previously rendered composer frame from the current cursor.
+        if (_lastRenderedFrameRows > 0)
+        {
+            Console.Write($"\u001b[{_lastRenderedFrameRows}F");
+            Console.Write("\u001b[0J");
+            _lastRenderedFrameRows = 0;
+            return;
+        }
+
+        // Final fallback: DEC restore cursor + clear to end of screen.
         Console.Write("\u001b8\u001b[0J");
+        _lastRenderedFrameRows = 0;
     }
 
-    private static void ConstrainComposerLinesToViewport(List<string> lines)
+    private static void ConstrainComposerLinesToViewport(List<string> lines, int protectedBottomRows)
     {
         if (Console.IsOutputRedirected || !_hasAnchor)
         {
@@ -614,8 +640,10 @@ internal static class CliComposerService
         }
 
         // Trim from the top so Unity logs are pushed upward first and input remains visible.
+        // Preserve the protected prompt block rows at the bottom (divider + prompt + divider).
+        var protectedStartIndex = FindProtectedStartIndex(lines, Math.Max(1, protectedBottomRows));
         var trimCount = 0;
-        while (trimCount < lines.Count && totalRows > maxRows)
+        while (trimCount < protectedStartIndex && totalRows > maxRows)
         {
             totalRows -= EstimateVisualRows(lines[trimCount]);
             trimCount++;
@@ -627,6 +655,50 @@ internal static class CliComposerService
         }
 
         lines.RemoveRange(0, Math.Min(trimCount, lines.Count));
+    }
+
+    private static int FindProtectedStartIndex(IReadOnlyList<string> lines, int protectedBottomRows)
+    {
+        if (lines.Count == 0)
+        {
+            return 0;
+        }
+
+        var rows = 0;
+        for (var i = lines.Count - 1; i >= 0; i--)
+        {
+            rows += EstimateVisualRows(lines[i]);
+            if (rows >= protectedBottomRows)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    private static List<string> TakeLeadingLinesByRowBudget(IReadOnlyList<string> lines, int rowBudget)
+    {
+        if (lines.Count == 0 || rowBudget <= 0)
+        {
+            return [];
+        }
+
+        var selected = new List<string>(lines.Count);
+        var usedRows = 0;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var rows = EstimateVisualRows(lines[i]);
+            if (usedRows + rows > rowBudget)
+            {
+                break;
+            }
+
+            selected.Add(lines[i]);
+            usedRows += rows;
+        }
+
+        return selected;
     }
 
     private static int EstimateVisualRows(string markupLine)
