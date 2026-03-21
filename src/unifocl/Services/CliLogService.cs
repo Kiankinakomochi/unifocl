@@ -32,7 +32,7 @@ internal static class CliLogService
         AppendLog(streamLog, "[bold deepskyblue1]unifocl[/] [grey]>[/] [white]/keybinds[/]");
         AppendLog(streamLog, "[grey]keybinds[/]: global");
         AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit hierarchy focus mode (inside /hierarchy)");
-        AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit project focus mode (project context), or recent selection mode after /recent");
+        AppendLog(streamLog, "[grey]keybinds[/]: [white]F7/F8[/] enter/exit project focus mode (project context), or recent selection mode after /recent");
         AppendLog(streamLog, "[grey]keybinds[/]: [white]F7[/] enter/exit inspector focus mode (inspector context)");
         AppendLog(streamLog, "[grey]keybinds[/]: [white]Esc[/] dismiss intellisense (or clear input if already dismissed)");
         AppendLog(streamLog, "[grey]keybinds[/]: [white]↑/↓[/] fuzzy candidate selection in composer");

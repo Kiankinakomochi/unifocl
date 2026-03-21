@@ -71,7 +71,7 @@ internal static class KeyboardIntentReader
             return KeyboardIntent.Escape;
         }
 
-        if (key.Key == ConsoleKey.F7)
+        if (key.Key is ConsoleKey.F7 or ConsoleKey.F8)
         {
             return KeyboardIntent.FocusProject;
         }

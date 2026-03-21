@@ -182,12 +182,13 @@ internal sealed class ProjectLifecycleService
         {
             var hubLabel = string.IsNullOrWhiteSpace(detectedHubRoot) ? "unknown location" : detectedHubRoot;
             log($"[grey]new[/]: detected Unity Hub editors from [white]{Markup.Escape(hubLabel)}[/]");
-            selectedEditor = AnsiConsole.Prompt(
-                new SelectionPrompt<UnityEditorPathService.UnityEditorInstallation>()
-                    .Title("Choose Unity editor version")
-                    .PageSize(ResolvePromptPageSize(availableEditors.Count, 12))
-                    .UseConverter(editor => $"{editor.Version} ({editor.EditorPath})")
-                    .AddChoices(availableEditors));
+            selectedEditor = CliTheme.PromptWithDividers(() =>
+                AnsiConsole.Prompt(
+                    new SelectionPrompt<UnityEditorPathService.UnityEditorInstallation>()
+                        .Title("Choose Unity editor version")
+                        .PageSize(ResolvePromptPageSize(availableEditors.Count, 12))
+                        .UseConverter(editor => $"{editor.Version} ({editor.EditorPath})")
+                        .AddChoices(availableEditors)));
         }
 
         var unityVersion = selectedEditor.Version;
@@ -589,7 +590,7 @@ internal sealed class ProjectLifecycleService
 
             var selectedEntry = entries[idx - 1];
             var confirmMessage = $"Open recent project [white]{idx}[/]: [white]{Markup.Escape(selectedEntry.ProjectPath)}[/]?";
-            if (!AnsiConsole.Confirm(confirmMessage, defaultValue: true))
+            if (!CliTheme.ConfirmWithDividers(confirmMessage, defaultValue: true))
             {
                 log("[grey]recent[/]: cancelled");
                 return true;
@@ -598,7 +599,7 @@ internal sealed class ProjectLifecycleService
             return await OpenRecentSelectionAsync(selectedEntry, session, daemonControlService, daemonRuntime, allowUnsafe, log);
         }
 
-        log("[grey]recent[/]: press [white]F7[/] to enter selection mode ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]F7[/] exit)");
+        log("[grey]recent[/]: press [white]F7/F8[/] to enter selection mode ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]F7/F8[/] exit)");
         return true;
     }
 
@@ -708,8 +709,7 @@ internal sealed class ProjectLifecycleService
         var lastRenderedSelectedIndex = -1;
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
-        log("[i] recent selection mode enabled ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]F7[/] exit)");
-        LogRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex, log);
+        RenderRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex);
 
         while (true)
         {
@@ -727,7 +727,7 @@ internal sealed class ProjectLifecycleService
                         }
 
                         selectedIndex = target;
-                        LogRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex, log);
+                        RenderRecentSelectionIfChanged(entries, selectedIndex, ref lastRenderedSelectedIndex);
                         return true;
                     },
                     ref typedIndexBuffer,
@@ -739,7 +739,7 @@ internal sealed class ProjectLifecycleService
             if (intent == KeyboardIntent.Up)
             {
                 var nextSelectedIndex = selectedIndex <= 0 ? entries.Count - 1 : selectedIndex - 1;
-                LogRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex, log);
+                RenderRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex);
                 selectedIndex = nextSelectedIndex;
                 continue;
             }
@@ -747,13 +747,14 @@ internal sealed class ProjectLifecycleService
             if (intent == KeyboardIntent.Down)
             {
                 var nextSelectedIndex = selectedIndex >= entries.Count - 1 ? 0 : selectedIndex + 1;
-                LogRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex, log);
+                RenderRecentSelectionIfChanged(entries, nextSelectedIndex, ref lastRenderedSelectedIndex);
                 selectedIndex = nextSelectedIndex;
                 continue;
             }
 
             if (intent is KeyboardIntent.FocusProject or KeyboardIntent.Escape)
             {
+                AnsiConsole.Clear();
                 log("[i] recent selection mode disabled");
                 return;
             }
@@ -764,6 +765,7 @@ internal sealed class ProjectLifecycleService
             }
 
             var selectedEntry = entries[selectedIndex];
+            AnsiConsole.Clear();
             await OpenRecentSelectionAsync(
                 selectedEntry,
                 session,
@@ -775,11 +777,10 @@ internal sealed class ProjectLifecycleService
         }
     }
 
-    private static void LogRecentSelectionIfChanged(
+    private static void RenderRecentSelectionIfChanged(
         IReadOnlyList<RecentProjectEntry> entries,
         int selectedIndex,
-        ref int lastRenderedSelectedIndex,
-        Action<string> log)
+        ref int lastRenderedSelectedIndex)
     {
         if (selectedIndex == lastRenderedSelectedIndex)
         {
@@ -787,12 +788,14 @@ internal sealed class ProjectLifecycleService
         }
 
         lastRenderedSelectedIndex = selectedIndex;
-        LogRecentSelectionList(entries, selectedIndex, log);
+        RenderRecentSelectionFrame(entries, selectedIndex);
     }
 
-    private static void LogRecentSelectionList(IReadOnlyList<RecentProjectEntry> entries, int selectedIndex, Action<string> log)
+    private static void RenderRecentSelectionFrame(IReadOnlyList<RecentProjectEntry> entries, int selectedIndex)
     {
-        log("[grey]recent[/]: selection");
+        AnsiConsole.Clear();
+        CliTheme.MarkupLine(CliTheme.PromptDividerMarkup);
+        CliTheme.MarkupLine("[grey]recent[/]: selection mode ([white]↑/↓[/] move, [white]idx[/] jump, [white]Enter[/] open, [white]Esc/F7/F8[/] exit)");
         for (var i = 0; i < entries.Count; i++)
         {
             var entry = entries[i];
@@ -800,12 +803,13 @@ internal sealed class ProjectLifecycleService
             var plain = $"recent: {i + 1}. {entry.ProjectPath} ({opened})";
             if (i == selectedIndex)
             {
-                log(CliTheme.CursorWrapEscaped(Markup.Escape($"> {plain}")));
+                CliTheme.MarkupLine(CliTheme.CursorWrapEscaped(Markup.Escape($"> {plain}")));
                 continue;
             }
 
-            log($"[grey]{Markup.Escape(plain)}[/]");
+            CliTheme.MarkupLine($"[grey]{Markup.Escape(plain)}[/]");
         }
+        CliTheme.MarkupLine(CliTheme.PromptDividerMarkup);
     }
 
     private Task<bool> HandleUnityDetectAsync(Action<string> log)
