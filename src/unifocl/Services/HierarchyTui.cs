@@ -4,7 +4,7 @@ using Unifocl.Contracts;
 
 internal sealed class HierarchyTui
 {
-    private const int DefaultFrameWidth = 78;
+    private const int DefaultFrameWidth = TuiConsoleViewport.DefaultColumns - 2;
     private const int MinFrameWidth = 40;
     private const int MinTreeRows = 6;
     private const int MinCommandRows = 4;
@@ -120,13 +120,17 @@ internal sealed class HierarchyTui
         _commandScrollOffset = int.MaxValue;
         _followCommandScroll = true;
         _collapsedNodeIds.Clear();
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
 
         while (true)
         {
             var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath, out _, _collapsedNodeIds);
             RenderFrame(port, snapshot.Scene, treeLines.Select(line => line.Text).ToList(), commandLog, cwdPath);
 
-            var firstKey = Console.ReadKey(intercept: true);
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var firstKey))
+            {
+                continue;
+            }
             var firstIntent = KeyboardIntentReader.FromConsoleKey(firstKey);
             if (firstIntent == KeyboardIntent.FocusProject
                 || firstKey.Key == FocusModeKey)
@@ -593,6 +597,7 @@ internal sealed class HierarchyTui
         int? pendingExpandedNodeId = null;
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
 
         while (true)
         {
@@ -644,7 +649,12 @@ internal sealed class HierarchyTui
             EnsureSelectedTreeVisibility(highlightedTree.Count, wrappedStreamLineCount, selectedEntryPosition + 1);
             RenderFrame(port, snapshot.Scene, highlightedTree, commandLog, cwdPath, focusModeEnabled: true);
 
-            var intent = KeyboardIntentReader.ReadIntent();
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (SelectionIndexJumpHelper.TryApply(
                     intent,
                     index =>
@@ -755,7 +765,7 @@ internal sealed class HierarchyTui
         var borderTop = $"┌{new string('─', frameWidth)}┐";
         var borderMid = $"├{new string('─', frameWidth)}┤";
         var borderBottom = $"└{new string('─', frameWidth)}┘";
-        var availableRows = Math.Max(MinTreeRows + MinCommandRows, Console.WindowHeight - ReservedPromptRows);
+        var availableRows = Math.Max(MinTreeRows + MinCommandRows, ResolveWindowHeight() - ReservedPromptRows);
         var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
         var streamRows = BuildWrappedStreamRows(commandLog, Math.Max(1, frameWidth - 1));
         var hasStreamPane = streamRows.Count > 0;
@@ -894,7 +904,7 @@ internal sealed class HierarchyTui
     {
         var streamRows = commandLogCount;
         var hasStreamPane = streamRows > 0;
-        var availableRows = Math.Max(MinTreeRows + MinCommandRows, Console.WindowHeight - ReservedPromptRows);
+        var availableRows = Math.Max(MinTreeRows + MinCommandRows, ResolveWindowHeight() - ReservedPromptRows);
         var dynamicRows = Math.Max(MinTreeRows + MinCommandRows, availableRows - FrameOverheadRows);
         var treeRows = hasStreamPane
             ? AllocateViewportRows(dynamicRows, treeLineCount, streamRows).TreeRows
@@ -1087,6 +1097,7 @@ internal sealed class HierarchyTui
         var selectedIndex = 0;
         var dismissed = false;
         var renderedLines = RenderPromptIntellisense(cwdPath, input.ToString(), selectedIndex, dismissed, snapshot, cwdId);
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
 
         while (true)
         {
@@ -1101,7 +1112,12 @@ internal sealed class HierarchyTui
                 selectedIndex = Math.Clamp(selectedIndex, 0, candidates.Count - 1);
             }
 
-            var key = Console.ReadKey(intercept: true);
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                ClearPromptFrame(renderedLines);
+                renderedLines = RenderPromptIntellisense(cwdPath, input.ToString(), selectedIndex, dismissed, snapshot, cwdId);
+                continue;
+            }
             if (key.Key == ConsoleKey.Enter)
             {
                 if (IsHierarchyCatalogCommandInput(input.ToString()))
@@ -1966,12 +1982,18 @@ internal sealed class HierarchyTui
 
     private static int ResolveFrameWidth()
     {
-        var windowWidth = Console.WindowWidth;
+        var (windowWidth, _) = TuiConsoleViewport.GetWindowSizeOrDefault();
         if (windowWidth <= 2)
         {
             return DefaultFrameWidth;
         }
 
         return Math.Max(MinFrameWidth, windowWidth - 2);
+    }
+
+    private static int ResolveWindowHeight()
+    {
+        var (_, windowHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
+        return windowHeight > 0 ? windowHeight : TuiConsoleViewport.DefaultRows;
     }
 }

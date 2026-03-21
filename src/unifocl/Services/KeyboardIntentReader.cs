@@ -5,6 +5,11 @@ internal static class KeyboardIntentReader
     public static KeyboardIntent ReadIntent()
     {
         var key = Console.ReadKey(intercept: true);
+        return ReadIntentFromFirstKey(key);
+    }
+
+    public static KeyboardIntent ReadIntentFromFirstKey(ConsoleKeyInfo key)
+    {
         if (key.Key == ConsoleKey.Escape)
         {
             var (sequenceIntent, consumedSequence) = TryReadAnsiEscapeSequenceIntent();

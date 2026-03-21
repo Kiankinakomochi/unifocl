@@ -28,6 +28,7 @@ internal sealed partial class ProjectViewService
         var selectedEntryPosition = 0;
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
         while (true)
         {
             ProjectViewTreeUtils.RefreshTree(session.CurrentProjectPath, session.ProjectView);
@@ -53,7 +54,12 @@ internal sealed partial class ProjectViewService
                 RenderFrame(session.ProjectView, entries[selectedEntryPosition].Index, focusModeEnabled: true);
             }
 
-            var intent = KeyboardIntentReader.ReadIntent();
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (SelectionIndexJumpHelper.TryApply(
                     intent,
                     index =>
@@ -167,6 +173,7 @@ internal sealed partial class ProjectViewService
 
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
         while (true)
         {
             if (state.LastUpmPackages.Count == 0)
@@ -181,8 +188,12 @@ internal sealed partial class ProjectViewService
             state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, state.LastUpmPackages.Count - 1);
             RenderFrame(state);
 
-            var key = Console.ReadKey(intercept: true);
-            var intent = KeyboardIntentReader.FromConsoleKey(key);
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (intent is KeyboardIntent.Escape or KeyboardIntent.FocusProject)
             {
                 if (state.UpmActionMenuVisible)

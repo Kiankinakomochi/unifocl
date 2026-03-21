@@ -2,7 +2,7 @@ using Spectre.Console;
 
 internal sealed class InspectorTuiRenderer
 {
-    private const int DefaultInnerWidth = 78;
+    private const int DefaultInnerWidth = TuiConsoleViewport.DefaultColumns - 2;
     private const int MinInnerWidth = 40;
     private const int MinBodyRows = 4;
     private const int MinStreamRows = 4;
@@ -19,7 +19,7 @@ internal sealed class InspectorTuiRenderer
     {
         AnsiConsole.Clear();
         var innerWidth = ResolveInnerWidth();
-        var availableRows = Math.Max(MinBodyRows + MinStreamRows, Console.WindowHeight - ReservedPromptRows);
+        var availableRows = Math.Max(MinBodyRows + MinStreamRows, ResolveWindowHeight() - ReservedPromptRows);
         var dynamicRows = Math.Max(MinBodyRows + MinStreamRows, availableRows - FrameOverheadRows);
 
         var bodyLayout = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName, innerWidth);
@@ -454,12 +454,18 @@ internal sealed class InspectorTuiRenderer
 
     private static int ResolveInnerWidth()
     {
-        var windowWidth = Console.WindowWidth;
+        var (windowWidth, _) = TuiConsoleViewport.GetWindowSizeOrDefault();
         if (windowWidth <= 2)
         {
             return DefaultInnerWidth;
         }
 
         return Math.Max(MinInnerWidth, windowWidth - 2);
+    }
+
+    private static int ResolveWindowHeight()
+    {
+        var (_, windowHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
+        return windowHeight > 0 ? windowHeight : TuiConsoleViewport.DefaultRows;
     }
 }
