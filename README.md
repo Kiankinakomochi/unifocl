@@ -152,7 +152,19 @@ CLI / agentic integration:
 
 ## Installation
 
-unifocl is currently distributed as source code and requires a modern .NET runtime. Future distribution methods (like a .NET Global Tool, Homebrew, or Winget) are planned but not yet implemented.
+unifocl is currently distributed as source code and requires a modern .NET runtime.
+
+### Dependency Resolution Prerequisites
+
+Dependency bootstrap flows in unifocl currently assume an OS package manager is available:
+* Windows: `winget`
+* macOS: `homebrew`
+
+Current dependency guidance:
+* `uv`: use OS-specific package manager (`winget`/`homebrew`) or Astral's curl installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+* `python`: use `homebrew` or `uv`.
+
+Coplay.dev package bootstrap currently relies on both `uv` and `python` in this flow. These dependency requirements may change in future releases.
 
 ### Clone & Build (Debug)
 

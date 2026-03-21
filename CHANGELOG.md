@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.32.0 - 2026-03-22
+
+### Changed
+- Officialized `0.32.0` by closing the development cycle suffix.
+- Added MCP host dependency preflight and install-assist flow for `uv` and `Python 3`:
+  - probes and validates required host tools before bridge/package lifecycle steps
+  - provides guided installer options and optional auto-install behavior (`UNIFOCL_AUTO_INSTALL_EXTERNAL_DEPS`)
+  - blocks startup with explicit manual guidance when required OS package manager (`winget`/`homebrew`) and both runtime tools (`python`/`uv`) are unavailable
+- Updated dependency installer options policy:
+  - `uv` guidance now limits to `winget`, `homebrew`, or official curl installer command
+  - `python` guidance now limits to `homebrew` or `uv`
+  - installer option labels now include concrete command examples for copy/paste clarity
+- Hardened Python post-install verification when installed via `uv` by validating installed interpreters through `uv python list` output parsing before PATH fallback probing.
+- Updated README installation docs with dependency-resolution prerequisites and explicit Coplay.dev runtime dependency notes (`uv` + `python`, subject to future change).
+
 ## 0.31.0 - 2026-03-21
 
 ### Changed
