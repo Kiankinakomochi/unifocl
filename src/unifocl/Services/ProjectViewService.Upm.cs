@@ -134,9 +134,7 @@ internal sealed partial class ProjectViewService
         }
 
         var subcommand = tokens[1];
-        session.ProjectView.ExpandTranscriptForUpmList =
-            subcommand.Equals("list", StringComparison.OrdinalIgnoreCase)
-            || subcommand.Equals("ls", StringComparison.OrdinalIgnoreCase);
+        session.ProjectView.ExpandTranscriptForUpmList = false;
 
         if (subcommand.Equals("install", StringComparison.OrdinalIgnoreCase)
             || subcommand.Equals("add", StringComparison.OrdinalIgnoreCase)
@@ -196,7 +194,7 @@ internal sealed partial class ProjectViewService
                     RenderFrame(session.ProjectView);
                     var cleanInstallRequested = Console.IsInputRedirected
                         ? false
-                        : AnsiConsole.Confirm(
+                        : CliTheme.ConfirmWithDividers(
                             $"Package [white]{Markup.Escape(existingPackageId)}[/] is already installed ([white]{Markup.Escape(existingPackageVersion)}[/]). Run clean install (remove then install)?",
                             defaultValue: false);
                     if (!cleanInstallRequested)

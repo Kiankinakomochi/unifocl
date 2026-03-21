@@ -34,7 +34,7 @@ internal sealed class ProjectCommandRouterService
                 return true;
             }
 
-            await _projectViewService.RunKeyboardFocusModeAsync(session, daemonControlService, daemonRuntime);
+            await _projectViewService.RunKeyboardFocusModeAsync(session, daemonControlService, daemonRuntime, log);
             return true;
         }
 
@@ -66,7 +66,8 @@ internal sealed class ProjectCommandRouterService
                     string.Empty,
                     session,
                     daemonControlService,
-                    daemonRuntime);
+                    daemonRuntime,
+                    log);
             }
 
             return true;
@@ -80,7 +81,7 @@ internal sealed class ProjectCommandRouterService
         }
 
         if (session.ContextMode == CliContextMode.Project
-            && await _projectViewService.TryHandleProjectViewCommandAsync(normalizedInput, session, daemonControlService, daemonRuntime))
+            && await _projectViewService.TryHandleProjectViewCommandAsync(normalizedInput, session, daemonControlService, daemonRuntime, log))
         {
             return true;
         }

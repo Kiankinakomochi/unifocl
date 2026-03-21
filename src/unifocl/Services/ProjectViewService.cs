@@ -5,6 +5,7 @@ internal sealed partial class ProjectViewService
     private static readonly TimeSpan TrackableProgressRenderInterval = TimeSpan.FromMilliseconds(250);
     private readonly ProjectViewRenderer _renderer = new();
     private readonly HierarchyDaemonClient _daemonClient = new();
+    private Action<string>? _projectLog;
 
     private enum ProjectFocusTabResult
     {
@@ -28,8 +29,10 @@ internal sealed partial class ProjectViewService
         string input,
         CliSessionState session,
         DaemonControlService daemonControlService,
-        DaemonRuntime daemonRuntime)
+        DaemonRuntime daemonRuntime,
+        Action<string>? log = null)
     {
+        _projectLog = log;
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
             return false;
@@ -48,10 +51,7 @@ internal sealed partial class ProjectViewService
 
         var outputs = new List<string>();
         var handled = false;
-        if (!tokens[0].Equals("upm", StringComparison.OrdinalIgnoreCase))
-        {
-            session.ProjectView.ExpandTranscriptForUpmList = false;
-        }
+        session.ProjectView.ExpandTranscriptForUpmList = false;
 
         if (tokens.Count >= 3
             && tokens[0].Equals("cd", StringComparison.OrdinalIgnoreCase)
@@ -115,7 +115,7 @@ internal sealed partial class ProjectViewService
             return false;
         }
 
-        ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+        EmitOutputs(session.ProjectView, outputs);
         RenderFrame(session.ProjectView);
         return true;
     }
@@ -212,37 +212,20 @@ internal sealed partial class ProjectViewService
         TimeSpan expectedDuration,
         Func<Task<T>> operation)
     {
-        var state = session.ProjectView;
-        var markerIndex = state.CommandTranscript.Count;
-        state.CommandTranscript.Add(string.Empty);
-
+        _ = expectedDuration;
         var startedAt = DateTime.UtcNow;
-        var tick = 0;
-        var task = operation();
-
-        while (!task.IsCompleted)
-        {
-            var elapsed = DateTime.UtcNow - startedAt;
-            var progress = TuiTrackableProgress.ComputeExpectedDurationProgress(elapsed, expectedDuration);
-            state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, progress, elapsed);
-            RenderFrame(state);
-            tick++;
-            await Task.Delay(TrackableProgressRenderInterval);
-        }
-
+        _projectLog?.Invoke($"[grey]progress[/]: {Markup.Escape(activity)}...");
         try
         {
-            var result = await task;
+            var result = await operation();
             var total = DateTime.UtcNow - startedAt;
-            state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, 1d, total, done: true);
-            RenderFrame(state);
+            _projectLog?.Invoke($"[grey]progress[/]: {Markup.Escape(activity)} done ({total.TotalSeconds:0.0}s)");
             return result;
         }
         catch
         {
             var total = DateTime.UtcNow - startedAt;
-            state.CommandTranscript[markerIndex] = TuiTrackableProgress.BuildTrackableLine(activity, tick, 1d, total, failed: true);
-            RenderFrame(state);
+            _projectLog?.Invoke($"[red]progress[/]: {Markup.Escape(activity)} failed ({total.TotalSeconds:0.0}s)");
             throw;
         }
     }
@@ -259,6 +242,25 @@ internal sealed partial class ProjectViewService
         foreach (var line in lines)
         {
             CliTheme.MarkupLine(line);
+        }
+    }
+
+    private void EmitOutputs(ProjectViewState state, IReadOnlyList<string> outputs)
+    {
+        if (outputs.Count == 0)
+        {
+            return;
+        }
+
+        if (_projectLog is null)
+        {
+            ProjectViewTranscriptUtils.Append(state, outputs);
+            return;
+        }
+
+        foreach (var output in outputs)
+        {
+            _projectLog(output);
         }
     }
 
