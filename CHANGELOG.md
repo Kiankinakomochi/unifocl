@@ -4,6 +4,7 @@
 
 ### Changed
 - Officialized `0.27.0` by closing the development cycle suffix.
+- Suppressed TUI body rendering during agentic project-mode execution to keep non-interactive output deterministic.
 - Updated `/new` lifecycle to run deterministic bootstrap sequencing: `/new -> /init -> /open`.
 - Refactored shared lifecycle initialization so `/new` and `/init` execute the same bridge/package bootstrap flow.
 - Hardened `/init` MCP package provisioning to resolve scoped-registry and recursive transitive dependencies from package metadata.
@@ -12,6 +13,12 @@
 - Enforced `com.unity.modules.imageconversion` dependency floor during MCP bootstrap to keep `Texture2D.EncodeToPNG` compile compatibility in Unity runtime assemblies.
 - Added explicit agentic escalation signaling (`E_ESCALATION_REQUIRED`, exit code `6`, and `meta.extra.requiresEscalation`) so automations and external agents can auto-rerun with elevated permissions.
 - Updated `agent-worktree.sh init-smoke-agentic` to emit escalation-required diagnostics and deterministic non-zero exit when sandbox restrictions block required operations.
+
+## 0.27.0a1 - 2026-03-20
+
+### Changed
+- Started the `0.27.0` development cycle with `a1` suffix versioning after syncing `codex/agentic-upm-no-tui-output` with latest `main`.
+- Suppressed TUI body rendering during agentic project-mode execution to keep non-interactive output deterministic.
 
 ## 0.26.0 - 2026-03-20
 
