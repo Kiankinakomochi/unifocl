@@ -1,17 +1,28 @@
 using Spectre.Console;
 using System.Diagnostics;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
 internal sealed class ProjectLifecycleService
 {
+    private static readonly HttpClient UnityRegistryHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(12)
+    };
     private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan McpBatchInstallTimeout = TimeSpan.FromMinutes(8);
+    private static readonly TimeSpan CompileRecoveryRetryDelay = TimeSpan.FromSeconds(4);
     private const int DefaultRecentPruneStaleDays = 14;
+    private const int DefaultCompileRecoveryRetryCount = 3;
     private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
     private const string RequiredMcpPackageTarget = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main";
+    private static readonly Dictionary<string, string> RequiredMcpDependencyFloor = new(StringComparer.Ordinal)
+    {
+        // Required for Texture2D.EncodeToPNG used by MCP runtime screenshot helpers.
+        ["com.unity.modules.imageconversion"] = "1.0.0"
+    };
 
     private readonly EditorDependencyInitializerService _editorDependencyInitializerService = new();
     private readonly ProjectViewService _projectViewService = new();
@@ -193,7 +204,7 @@ internal sealed class ProjectLifecycleService
         var unityVersion = selectedEditor.Version;
 
         var projectPath = ResolveAbsolutePath(projectName, Directory.GetCurrentDirectory());
-        log($"[grey]new[/]: step 1/5 create project directory -> [white]{Markup.Escape(projectPath)}[/]");
+        log($"[grey]new[/]: step 1/6 create project directory -> [white]{Markup.Escape(projectPath)}[/]");
 
         if (Directory.Exists(projectPath) && Directory.EnumerateFileSystemEntries(projectPath).Any())
         {
@@ -214,7 +225,7 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        log("[grey]new[/]: step 2/5 write Unity package manifest");
+        log("[grey]new[/]: step 2/6 write Unity package manifest");
         var manifestResult = WriteDefaultUnityManifest(projectPath);
         if (!manifestResult.Ok)
         {
@@ -222,7 +233,7 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        log($"[grey]new[/]: step 3/5 set Unity editor version [white]{Markup.Escape(unityVersion)}[/]");
+        log($"[grey]new[/]: step 3/6 set Unity editor version [white]{Markup.Escape(unityVersion)}[/]");
         var versionResult = WriteProjectVersion(projectPath, unityVersion);
         if (!versionResult.Ok)
         {
@@ -235,7 +246,7 @@ internal sealed class ProjectLifecycleService
             log($"[yellow]new[/]: unable to persist project-editor pair ({Markup.Escape(saveEditorError ?? "unknown error")})");
         }
 
-        log("[grey]new[/]: step 4/5 generate local templates and bridge config");
+        log("[grey]new[/]: step 4/6 generate local templates and bridge config");
         var configResult = EnsureProjectLocalConfig(projectPath);
         if (!configResult.Ok)
         {
@@ -243,14 +254,22 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        log("[grey]new[/]: step 5/5 open bootstrapped project");
+        log("[grey]new[/]: step 5/6 initialize project bridge and MCP packages");
+        var initializeResult = await InitializeProjectForLifecycleAsync(projectPath, log);
+        if (!initializeResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(initializeResult.Error)}");
+            return true;
+        }
+
+        log("[grey]new[/]: step 6/6 open initialized project");
         if (await TryOpenProjectAsync(
                 projectPath,
                 session,
                 daemonControlService,
                 daemonRuntime,
                 _editorDependencyInitializerService,
-                promptForInitialization: true,
+                promptForInitialization: false,
                 allowUnsafe: allowUnsafe,
                 log: log))
         {
@@ -368,39 +387,10 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        var configResult = await RunWithStatusAsync(
-            "Preparing local bridge config...",
-            () => Task.FromResult(EnsureProjectLocalConfig(targetPath)));
-        if (!configResult.Ok)
+        var initializeResult = await InitializeProjectForLifecycleAsync(targetPath, log);
+        if (!initializeResult.Ok)
         {
-            log($"[red]error[/]: {Markup.Escape(configResult.Error)}");
-            return true;
-        }
-
-        var packageFixResult = await RunWithStatusAsync(
-            "Checking project package references...",
-            () => Task.FromResult(EnsureRequiredUnityPackageReferences(targetPath)));
-        if (!packageFixResult.Ok)
-        {
-            log($"[red]error[/]: {Markup.Escape(packageFixResult.Error)}");
-            return true;
-        }
-
-        var initResult = await RunWithStatusAsync(
-            "Installing editor bridge dependencies...",
-            () => Task.FromResult(_editorDependencyInitializerService.InitializeProject(targetPath, log)));
-        if (!initResult.Ok)
-        {
-            log($"[red]error[/]: {Markup.Escape(initResult.Error)}");
-            return true;
-        }
-
-        var mcpInstallResult = await RunWithStatusAsync(
-            "Installing required MCP package...",
-            () => EnsureMcpPackageInstalledAsync(targetPath, log));
-        if (!mcpInstallResult.Ok)
-        {
-            log($"[red]error[/]: {Markup.Escape(mcpInstallResult.Error)}");
+            log($"[red]error[/]: {Markup.Escape(initializeResult.Error)}");
             return true;
         }
 
@@ -408,120 +398,140 @@ internal sealed class ProjectLifecycleService
         return true;
     }
 
+    private async Task<OperationResult> InitializeProjectForLifecycleAsync(
+        string projectPath,
+        Action<string> log)
+    {
+        var configResult = await RunWithStatusAsync(
+            "Preparing local bridge config...",
+            () => Task.FromResult(EnsureProjectLocalConfig(projectPath)));
+        if (!configResult.Ok)
+        {
+            return configResult;
+        }
+
+        var packageFixResult = await RunWithStatusAsync(
+            "Checking project package references...",
+            () => EnsureRequiredUnityPackageReferencesAsync(projectPath));
+        if (!packageFixResult.Ok)
+        {
+            return packageFixResult;
+        }
+
+        var initResult = await RunWithStatusAsync(
+            "Installing editor bridge dependencies...",
+            () => Task.FromResult(_editorDependencyInitializerService.InitializeProject(projectPath, log)));
+        if (!initResult.Ok)
+        {
+            return initResult;
+        }
+
+        var mcpInstallResult = await RunWithStatusAsync(
+            "Ensuring required MCP package reference in manifest...",
+            () => EnsureMcpPackageInstalledAsync(projectPath, log));
+        if (!mcpInstallResult.Ok)
+        {
+            return mcpInstallResult;
+        }
+
+        return OperationResult.Success();
+    }
+
     private async Task<OperationResult> EnsureMcpPackageInstalledAsync(
         string projectPath,
         Action<string> log)
     {
-        if (!UnityEditorPathService.TryResolveEditorForProject(projectPath, out var unityPath, out var unityVersion, out var editorResolveError))
+        _ = log;
+        var ensureResult = await EnsureRequiredUnityPackageReferencesAsync(projectPath);
+        if (!ensureResult.Ok)
         {
-            return OperationResult.Fail(editorResolveError ?? "failed to resolve Unity editor for MCP package installation");
+            return ensureResult;
         }
 
-        if (!UnityEditorPathService.TrySetDefaultEditorPath(unityPath, out var defaultEditorSaveError))
+        if (!ManifestContainsPackage(projectPath, RequiredMcpPackageId))
         {
-            log($"[yellow]config[/]: unable to persist default editor path ({Markup.Escape(defaultEditorSaveError ?? "unknown error")})");
+            return OperationResult.Fail($"manifest install verification failed: missing {RequiredMcpPackageId}");
         }
 
-        Environment.SetEnvironmentVariable("UNITY_PATH", unityPath);
+        return OperationResult.Success();
+    }
 
-        var runtimeDir = Path.Combine(projectPath, ".unifocl", "runtime");
-        Directory.CreateDirectory(runtimeDir);
-        var statusPath = Path.Combine(runtimeDir, "mcp-install-status.json");
-        var unityLogPath = Path.Combine(runtimeDir, "mcp-install-unity.log");
-        TryDeleteFile(statusPath);
-        TryDeleteFile(unityLogPath);
-
-        var processStart = new ProcessStartInfo(unityPath)
+    private static async Task<bool> EnsureProjectDaemonWithCompileRecoveryAsync(
+        DaemonControlService daemonControlService,
+        string projectPath,
+        DaemonRuntime daemonRuntime,
+        CliSessionState session,
+        Action<string> log,
+        bool requireBridgeMode,
+        bool preferHostMode,
+        bool allowUnsafe)
+    {
+        var started = await daemonControlService.EnsureProjectDaemonAsync(
+            projectPath,
+            daemonRuntime,
+            session,
+            log,
+            requireBridgeMode: requireBridgeMode,
+            preferHostMode: preferHostMode,
+            allowUnsafe: allowUnsafe);
+        if (started || allowUnsafe)
         {
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        processStart.ArgumentList.Add("-projectPath");
-        processStart.ArgumentList.Add(projectPath);
-        processStart.ArgumentList.Add("-batchmode");
-        processStart.ArgumentList.Add("-nographics");
-        processStart.ArgumentList.Add("-vcsMode");
-        processStart.ArgumentList.Add("None");
-        processStart.ArgumentList.Add("-logFile");
-        processStart.ArgumentList.Add(unityLogPath);
-        processStart.ArgumentList.Add("-executeMethod");
-        processStart.ArgumentList.Add("UniFocl.EditorBridge.CLIDaemon.InstallRequiredMcpPackageBatch");
-        processStart.ArgumentList.Add("--upm-install-package");
-        processStart.ArgumentList.Add(RequiredMcpPackageId);
-        processStart.ArgumentList.Add("--upm-install-status-file");
-        processStart.ArgumentList.Add(statusPath);
-
-        var startedAt = DateTime.UtcNow;
-        var lastStageSignature = string.Empty;
-        try
-        {
-            using var process = Process.Start(processStart);
-            if (process is null)
-            {
-                return OperationResult.Fail("failed to start Unity batch process for MCP package installation");
-            }
-
-            log($"[grey]init[/]: launched Unity batch installer pid=[white]{process.Id}[/] version=[white]{Markup.Escape(unityVersion)}[/]");
-
-            while (!process.HasExited)
-            {
-                if (DateTime.UtcNow - startedAt > McpBatchInstallTimeout)
-                {
-                    try
-                    {
-                        process.Kill(entireProcessTree: true);
-                    }
-                    catch
-                    {
-                    }
-
-                    var timeoutDetail = TryReadUpmBatchInstallStatus(statusPath, out var timeoutStatus)
-                        ? $"lastStage={timeoutStatus!.Stage} message={timeoutStatus.Message}"
-                        : "status file unavailable";
-                    return OperationResult.Fail(
-                        $"Unity batch MCP install timed out after {(int)McpBatchInstallTimeout.TotalSeconds}s ({timeoutDetail})");
-                }
-
-                if (TryReadUpmBatchInstallStatus(statusPath, out var status))
-                {
-                    var signature = $"{status!.Stage}|{status.Message}";
-                    if (!signature.Equals(lastStageSignature, StringComparison.Ordinal))
-                    {
-                        lastStageSignature = signature;
-                        log($"[grey]init[/]: MCP install status stage=[white]{Markup.Escape(status.Stage)}[/] detail=[white]{Markup.Escape(status.Message)}[/]");
-                    }
-                }
-
-                await Task.Delay(500);
-            }
-
-            var exitCode = process.ExitCode;
-            var elapsedSeconds = (DateTime.UtcNow - startedAt).TotalSeconds;
-            log($"[grey]init[/]: Unity batch installer exited pid=[white]{process.Id}[/] code=[white]{exitCode}[/] elapsed=[white]{elapsedSeconds:0.0}s[/]");
-
-            if (!TryReadUpmBatchInstallStatus(statusPath, out var finalStatus))
-            {
-                var unityLogTail = ReadTailLines(unityLogPath, 20);
-                return OperationResult.Fail(
-                    $"MCP install status file was not produced by Unity batch process (exit={exitCode}, logTail={unityLogTail})");
-            }
-
-            var final = finalStatus!;
-            var manifestHasPackage = ManifestContainsPackage(projectPath, RequiredMcpPackageId);
-            if (exitCode != 0 || !final.Success || !manifestHasPackage)
-            {
-                var unityLogTail = ReadTailLines(unityLogPath, 20);
-                return OperationResult.Fail(
-                    $"MCP install failed (exit={exitCode}, stage={final.Stage}, message={final.Message}, manifestHasPackage={manifestHasPackage}, logTail={unityLogTail})");
-            }
-
-            log($"[green]init[/]: installed required package [white]{Markup.Escape(RequiredMcpPackageId)}[/]");
-            return OperationResult.Success();
+            return started;
         }
-        catch (Exception ex)
+
+        if (!ShouldRetryAfterCompileFailure(daemonControlService, out var summary))
         {
-            return OperationResult.Fail($"failed to run Unity batch MCP install ({ex.Message})");
+            return false;
         }
+
+        for (var attempt = 1; attempt <= DefaultCompileRecoveryRetryCount; attempt++)
+        {
+            if (!string.IsNullOrWhiteSpace(summary))
+            {
+                log($"[yellow]daemon[/]: compile errors detected during startup ({Markup.Escape(summary)}). waiting before retry {attempt}/{DefaultCompileRecoveryRetryCount}...");
+            }
+            else
+            {
+                log($"[yellow]daemon[/]: compile errors detected during startup. waiting before retry {attempt}/{DefaultCompileRecoveryRetryCount}...");
+            }
+
+            await Task.Delay(CompileRecoveryRetryDelay);
+
+            started = await daemonControlService.EnsureProjectDaemonAsync(
+                projectPath,
+                daemonRuntime,
+                session,
+                log,
+                requireBridgeMode: requireBridgeMode,
+                preferHostMode: preferHostMode,
+                allowUnsafe: allowUnsafe);
+            if (started)
+            {
+                log("[green]daemon[/]: daemon startup recovered after package/compile warmup retry");
+                return true;
+            }
+
+            if (!ShouldRetryAfterCompileFailure(daemonControlService, out summary))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ShouldRetryAfterCompileFailure(
+        DaemonControlService daemonControlService,
+        out string? summary)
+    {
+        summary = null;
+        if (!daemonControlService.TryGetLastStartupFailure(out var failure) || failure is null || !failure.IsCompileError)
+        {
+            return false;
+        }
+
+        summary = failure.Summary;
+        return true;
     }
 
     private async Task<bool> HandleRecentAsync(
@@ -1627,7 +1637,7 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
-        var packageFixResult = EnsureRequiredUnityPackageReferences(projectPath);
+        var packageFixResult = await EnsureRequiredUnityPackageReferencesAsync(projectPath);
         if (!packageFixResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(packageFixResult.Error)}");
@@ -1688,7 +1698,8 @@ internal sealed class ProjectLifecycleService
             log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster Host mode boot)");
         }
 
-        var started = await daemonControlService.EnsureProjectDaemonAsync(
+        var started = await EnsureProjectDaemonWithCompileRecoveryAsync(
+            daemonControlService,
             projectPath,
             daemonRuntime,
             session,
@@ -2143,9 +2154,7 @@ internal sealed class ProjectLifecycleService
                 {
                     dependencies = new Dictionary<string, string>
                     {
-                        ["com.unity.collab-proxy"] = "2.7.2",
                         ["com.unity.ide.rider"] = "3.0.35",
-                        ["com.unity.ide.visualstudio"] = "2.0.24",
                         ["com.unity.test-framework"] = "1.4.5",
                         ["com.unity.textmeshpro"] = "3.0.6",
                         ["com.unity.timeline"] = "1.8.9",
@@ -2180,7 +2189,7 @@ internal sealed class ProjectLifecycleService
         }
     }
 
-    private static OperationResult EnsureRequiredUnityPackageReferences(string projectPath)
+    private static async Task<OperationResult> EnsureRequiredUnityPackageReferencesAsync(string projectPath)
     {
         try
         {
@@ -2208,22 +2217,71 @@ internal sealed class ProjectLifecycleService
             {
                 foreach (var dep in depsElement.EnumerateObject())
                 {
-                    if (dep.Value.ValueKind == JsonValueKind.String)
+                    if (dep.Value.ValueKind != JsonValueKind.String)
                     {
-                        var version = dep.Value.GetString();
-                        if (!string.IsNullOrWhiteSpace(version))
-                        {
-                            dependencies[dep.Name] = version;
-                        }
+                        continue;
+                    }
+
+                    var version = dep.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(version))
+                    {
+                        dependencies[dep.Name] = version;
                     }
                 }
             }
 
             var requiredPackages = InferRequiredUnityPackages(projectPath);
             requiredPackages[RequiredMcpPackageId] = RequiredMcpPackageTarget;
-            var changed = false;
-            foreach (var required in requiredPackages)
+
+            var scopedRegistries = LoadScopedRegistries(projectPath);
+            var resolvedRequiredPackages = await ResolveRequiredPackageGraphAsync(requiredPackages, scopedRegistries);
+            foreach (var dependency in RequiredMcpDependencyFloor)
             {
+                if (!resolvedRequiredPackages.ContainsKey(dependency.Key))
+                {
+                    resolvedRequiredPackages[dependency.Key] = dependency.Value;
+                }
+            }
+            var seedPackageIds = new HashSet<string>(requiredPackages.Keys, StringComparer.Ordinal);
+            var hasTransitiveDependencies = resolvedRequiredPackages.Keys.Any(packageId => !seedPackageIds.Contains(packageId));
+            if (!hasTransitiveDependencies)
+            {
+                var mcpProbe = await ProbeRequiredMcpTransitiveDependenciesAsync(scopedRegistries);
+                if (!mcpProbe.Ok)
+                {
+                    return OperationResult.Fail(mcpProbe.Error);
+                }
+
+                foreach (var dependency in mcpProbe.Dependencies)
+                {
+                    if (!resolvedRequiredPackages.ContainsKey(dependency.Key))
+                    {
+                        resolvedRequiredPackages[dependency.Key] = dependency.Value;
+                    }
+                }
+            }
+
+            var changed = false;
+            var mcpTransitiveDependencies = resolvedRequiredPackages
+                .Where(entry => !entry.Key.Equals(RequiredMcpPackageId, StringComparison.Ordinal)
+                                && IsLikelyRegistryVersionSpec(entry.Value))
+                .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+
+            foreach (var required in resolvedRequiredPackages)
+            {
+                if (required.Key.Equals(RequiredMcpPackageId, StringComparison.Ordinal))
+                {
+                    if (dependencies.TryGetValue(required.Key, out var existingTarget)
+                        && existingTarget.Equals(required.Value, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    dependencies[required.Key] = required.Value;
+                    changed = true;
+                    continue;
+                }
+
                 if (dependencies.ContainsKey(required.Key))
                 {
                     continue;
@@ -2231,6 +2289,12 @@ internal sealed class ProjectLifecycleService
 
                 dependencies[required.Key] = required.Value;
                 changed = true;
+            }
+
+            var localPackageSyncResult = SyncInstalledMcpPackageJsonDependencies(projectPath, mcpTransitiveDependencies);
+            if (!localPackageSyncResult.Ok)
+            {
+                return localPackageSyncResult;
             }
 
             if (!changed)
@@ -2249,6 +2313,515 @@ internal sealed class ProjectLifecycleService
         {
             return OperationResult.Fail($"failed to update required Unity package references ({ex.Message})");
         }
+    }
+
+    private static async Task<(bool Ok, Dictionary<string, string> Dependencies, string Error)> ProbeRequiredMcpTransitiveDependenciesAsync(
+        IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        var dependencies = await TryFetchPackageDependenciesAsync(
+            RequiredMcpPackageId,
+            RequiredMcpPackageTarget,
+            scopedRegistries);
+        if (dependencies.Count > 0)
+        {
+            return (true, dependencies, string.Empty);
+        }
+
+        var diagnostics = await DiagnoseMcpDependencyResolutionFailureAsync(scopedRegistries);
+        if (!string.IsNullOrWhiteSpace(diagnostics))
+        {
+            return (false, new Dictionary<string, string>(StringComparer.Ordinal), diagnostics);
+        }
+
+        return (false, new Dictionary<string, string>(StringComparer.Ordinal),
+            "failed to resolve transitive dependencies for required package com.coplaydev.unity-mcp; package metadata returned no dependencies");
+    }
+
+    private static async Task<string?> DiagnoseMcpDependencyResolutionFailureAsync(IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        try
+        {
+            if (TryBuildGitHubRawPackageJsonUrl(RequiredMcpPackageTarget, out var packageJsonUrl))
+            {
+                using var gitResponse = await UnityRegistryHttpClient.GetAsync(packageJsonUrl);
+                if (!gitResponse.IsSuccessStatusCode)
+                {
+                    return $"failed to resolve transitive dependencies for required package {RequiredMcpPackageId} (git package metadata lookup returned {(int)gitResponse.StatusCode})";
+                }
+            }
+        }
+        catch (Exception ex) when (LooksLikePermissionOrNetworkRestriction(ex.Message))
+        {
+            return $"failed to resolve transitive dependencies for required package {RequiredMcpPackageId} ({ex.Message}); rerun with elevated permissions";
+        }
+        catch (Exception ex)
+        {
+            return $"failed to resolve transitive dependencies for required package {RequiredMcpPackageId} ({ex.Message})";
+        }
+
+        try
+        {
+            var registryUrl = ResolveRegistryUrlForPackage(RequiredMcpPackageId, scopedRegistries);
+            var endpoint = $"{registryUrl.TrimEnd('/')}/{Uri.EscapeDataString(RequiredMcpPackageId)}";
+            using var registryResponse = await UnityRegistryHttpClient.GetAsync(endpoint);
+            if (!registryResponse.IsSuccessStatusCode)
+            {
+                return $"failed to resolve transitive dependencies for required package {RequiredMcpPackageId} (registry lookup returned {(int)registryResponse.StatusCode})";
+            }
+        }
+        catch (Exception ex) when (LooksLikePermissionOrNetworkRestriction(ex.Message))
+        {
+            return $"failed to resolve transitive dependencies for required package {RequiredMcpPackageId} ({ex.Message}); rerun with elevated permissions";
+        }
+        catch (Exception ex)
+        {
+            return $"failed to resolve transitive dependencies for required package {RequiredMcpPackageId} ({ex.Message})";
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikePermissionOrNetworkRestriction(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        var normalized = message.ToLowerInvariant();
+        return normalized.Contains("access to the path")
+               || normalized.Contains("operation not permitted")
+               || normalized.Contains("permission denied")
+               || normalized.Contains("could not resolve host")
+               || normalized.Contains("nodename nor servname provided")
+               || normalized.Contains("name or service not known")
+               || normalized.Contains("temporary failure in name resolution")
+               || normalized.Contains("network is unreachable")
+               || normalized.Contains("sandbox");
+    }
+
+    private static OperationResult SyncInstalledMcpPackageJsonDependencies(
+        string projectPath,
+        IReadOnlyDictionary<string, string> transitiveDependencies)
+    {
+        if (transitiveDependencies.Count == 0)
+        {
+            return OperationResult.Success();
+        }
+
+        try
+        {
+            var packageJsonPaths = new List<string>();
+            var directPackageJson = Path.Combine(projectPath, "Packages", RequiredMcpPackageId, "package.json");
+            if (File.Exists(directPackageJson))
+            {
+                packageJsonPaths.Add(directPackageJson);
+            }
+
+            var packageCacheRoot = Path.Combine(projectPath, "Library", "PackageCache");
+            if (Directory.Exists(packageCacheRoot))
+            {
+                foreach (var cacheDir in Directory.EnumerateDirectories(packageCacheRoot, $"{RequiredMcpPackageId}@*"))
+                {
+                    var packageJsonPath = Path.Combine(cacheDir, "package.json");
+                    if (File.Exists(packageJsonPath))
+                    {
+                        packageJsonPaths.Add(packageJsonPath);
+                    }
+                }
+            }
+
+            foreach (var packageJsonPath in packageJsonPaths.Distinct(StringComparer.Ordinal))
+            {
+                var syncResult = MergeDependenciesIntoPackageJson(packageJsonPath, transitiveDependencies);
+                if (!syncResult.Ok)
+                {
+                    return syncResult;
+                }
+            }
+
+            return OperationResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail($"failed to sync local MCP package.json dependencies ({ex.Message})");
+        }
+    }
+
+    private static OperationResult MergeDependenciesIntoPackageJson(
+        string packageJsonPath,
+        IReadOnlyDictionary<string, string> dependenciesToMerge)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(packageJsonPath));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return OperationResult.Fail($"failed to sync local MCP package.json dependencies (invalid JSON root: {packageJsonPath})");
+            }
+
+            var root = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                root[property.Name] = JsonSerializer.Deserialize<object>(property.Value.GetRawText());
+            }
+
+            var dependencies = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (document.RootElement.TryGetProperty("dependencies", out var depsElement)
+                && depsElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var dep in depsElement.EnumerateObject())
+                {
+                    if (dep.Value.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var value = dep.Value.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        dependencies[dep.Name] = value!;
+                    }
+                }
+            }
+
+            var changed = false;
+            foreach (var dependency in dependenciesToMerge)
+            {
+                if (dependencies.ContainsKey(dependency.Key))
+                {
+                    continue;
+                }
+
+                dependencies[dependency.Key] = dependency.Value;
+                changed = true;
+            }
+
+            if (!changed)
+            {
+                return OperationResult.Success();
+            }
+
+            root["dependencies"] = dependencies
+                .OrderBy(item => item.Key, StringComparer.Ordinal)
+                .ToDictionary(item => item.Key, item => (object?)item.Value, StringComparer.Ordinal);
+            var updated = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(packageJsonPath, updated + Environment.NewLine);
+            return OperationResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail($"failed to sync local MCP package.json dependencies ({ex.Message})");
+        }
+    }
+
+    private static async Task<Dictionary<string, string>> ResolveRequiredPackageGraphAsync(
+        Dictionary<string, string> seedPackages,
+        IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        var resolved = new Dictionary<string, string>(seedPackages, StringComparer.Ordinal);
+        var queue = new Queue<KeyValuePair<string, string>>(seedPackages);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (!visited.Add(current.Key))
+            {
+                continue;
+            }
+
+            var dependencies = await TryFetchPackageDependenciesAsync(current.Key, current.Value, scopedRegistries);
+            foreach (var dependency in dependencies)
+            {
+                if (!IsRegistryPackageId(dependency.Key))
+                {
+                    continue;
+                }
+
+                var value = dependency.Value?.Trim() ?? string.Empty;
+                if (!IsLikelyRegistryVersionSpec(value))
+                {
+                    continue;
+                }
+
+                if (!resolved.TryGetValue(dependency.Key, out var existing))
+                {
+                    resolved[dependency.Key] = value;
+                    queue.Enqueue(new KeyValuePair<string, string>(dependency.Key, value));
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(existing) && !string.IsNullOrWhiteSpace(value))
+                {
+                    resolved[dependency.Key] = value;
+                }
+            }
+        }
+
+        return resolved;
+    }
+
+    private static async Task<Dictionary<string, string>> TryFetchPackageDependenciesAsync(
+        string packageId,
+        string packageTarget,
+        IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(packageTarget))
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        if (packageTarget.Contains(".git", StringComparison.OrdinalIgnoreCase)
+            || packageTarget.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || packageTarget.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            var gitDependencies = await TryFetchGitPackageDependenciesAsync(packageTarget);
+            var registryDependencies = await TryFetchRegistryPackageDependenciesAsync(
+                packageId,
+                versionSpec: "latest",
+                scopedRegistries);
+            if (gitDependencies.Count == 0)
+            {
+                return registryDependencies;
+            }
+
+            foreach (var dependency in registryDependencies)
+            {
+                if (!gitDependencies.ContainsKey(dependency.Key))
+                {
+                    gitDependencies[dependency.Key] = dependency.Value;
+                }
+            }
+
+            return gitDependencies;
+        }
+
+        return await TryFetchRegistryPackageDependenciesAsync(packageId, packageTarget, scopedRegistries);
+    }
+
+    private static async Task<Dictionary<string, string>> TryFetchRegistryPackageDependenciesAsync(
+        string packageId,
+        string versionSpec,
+        IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            var registryUrl = ResolveRegistryUrlForPackage(packageId, scopedRegistries);
+            var endpoint = $"{registryUrl.TrimEnd('/')}/{Uri.EscapeDataString(packageId)}";
+            using var response = await UnityRegistryHttpClient.GetAsync(endpoint);
+            if (!response.IsSuccessStatusCode)
+            {
+                return map;
+            }
+
+            var raw = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(raw);
+            if (!document.RootElement.TryGetProperty("versions", out var versionsElement)
+                || versionsElement.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+
+            var selectedVersion = versionSpec.Trim();
+            if (!versionsElement.TryGetProperty(selectedVersion, out var packageNode)
+                || packageNode.ValueKind != JsonValueKind.Object)
+            {
+                if (document.RootElement.TryGetProperty("dist-tags", out var tagsElement)
+                    && tagsElement.ValueKind == JsonValueKind.Object
+                    && tagsElement.TryGetProperty("latest", out var latestElement)
+                    && latestElement.ValueKind == JsonValueKind.String)
+                {
+                    var latest = latestElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(latest)
+                        && versionsElement.TryGetProperty(latest, out var latestNode)
+                        && latestNode.ValueKind == JsonValueKind.Object)
+                    {
+                        packageNode = latestNode;
+                    }
+                }
+            }
+
+            if (packageNode.ValueKind != JsonValueKind.Object
+                || !packageNode.TryGetProperty("dependencies", out var dependenciesElement)
+                || dependenciesElement.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+
+            foreach (var dependency in dependenciesElement.EnumerateObject())
+            {
+                if (dependency.Value.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = dependency.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    map[dependency.Name] = value!;
+                }
+            }
+
+            return map;
+        }
+        catch
+        {
+            return map;
+        }
+    }
+
+    private static async Task<Dictionary<string, string>> TryFetchGitPackageDependenciesAsync(string gitTarget)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!TryBuildGitHubRawPackageJsonUrl(gitTarget, out var packageJsonUrl))
+        {
+            return map;
+        }
+
+        try
+        {
+            using var response = await UnityRegistryHttpClient.GetAsync(packageJsonUrl);
+            if (!response.IsSuccessStatusCode)
+            {
+                return map;
+            }
+
+            var raw = await response.Content.ReadAsStringAsync();
+            return TryReadDependenciesFromPackageJson(raw);
+        }
+        catch
+        {
+            return map;
+        }
+    }
+
+    private static bool TryBuildGitHubRawPackageJsonUrl(string gitTarget, out string packageJsonUrl)
+    {
+        packageJsonUrl = string.Empty;
+        if (string.IsNullOrWhiteSpace(gitTarget))
+        {
+            return false;
+        }
+
+        var normalized = gitTarget.Trim();
+        if (normalized.StartsWith("git+", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["git+".Length..];
+        }
+
+        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
+            || !uri.Host.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var fragment = uri.Fragment.TrimStart('#');
+        var reference = string.IsNullOrWhiteSpace(fragment) ? "main" : fragment;
+
+        var path = uri.AbsolutePath.Trim('/');
+        if (path.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[..^4];
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return false;
+        }
+
+        var owner = segments[0];
+        var repository = segments[1];
+
+        var packagePath = "package.json";
+        var query = uri.Query.TrimStart('?');
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var kv = part.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (kv.Length != 2 || !kv[0].Equals("path", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var decodedPath = Uri.UnescapeDataString(kv[1]).Trim('/');
+            packagePath = string.IsNullOrWhiteSpace(decodedPath)
+                ? "package.json"
+                : $"{decodedPath}/package.json";
+            break;
+        }
+
+        packageJsonUrl = $"https://raw.githubusercontent.com/{owner}/{repository}/{reference}/{packagePath}";
+        return true;
+    }
+
+    private static Dictionary<string, string> TryReadDependenciesFromPackageJson(string rawPackageJson)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(rawPackageJson))
+        {
+            return map;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawPackageJson);
+            if (!document.RootElement.TryGetProperty("dependencies", out var dependenciesElement)
+                || dependenciesElement.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+
+            foreach (var dependency in dependenciesElement.EnumerateObject())
+            {
+                if (dependency.Value.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = dependency.Value.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    map[dependency.Name] = value!;
+                }
+            }
+
+            return map;
+        }
+        catch
+        {
+            return map;
+        }
+    }
+
+    private static bool IsLikelyRegistryVersionSpec(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return !value.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
+               && !value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+               && !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+               && !value.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRegistryPackageId(string packageId)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return false;
+        }
+
+        var segments = packageId.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return false;
+        }
+
+        return segments.All(segment => segment.All(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_'));
     }
 
     private static Dictionary<string, string> InferRequiredUnityPackages(string projectPath)
@@ -2290,42 +2863,6 @@ internal sealed class ProjectLifecycleService
         return required;
     }
 
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private static bool TryReadUpmBatchInstallStatus(string statusPath, out UpmBatchInstallStatusRecord? status)
-    {
-        status = null;
-        if (!File.Exists(statusPath))
-        {
-            return false;
-        }
-
-        try
-        {
-            var raw = File.ReadAllText(statusPath);
-            status = JsonSerializer.Deserialize<UpmBatchInstallStatusRecord>(
-                raw,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            return status is not null;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private static bool ManifestContainsPackage(string projectPath, string packageId)
     {
         try
@@ -2345,36 +2882,97 @@ internal sealed class ProjectLifecycleService
         }
     }
 
-    private static string ReadTailLines(string path, int maxLines)
+    private static List<ScopedRegistryConfig> LoadScopedRegistries(string projectPath)
     {
+        var manifestPath = Path.Combine(projectPath, "Packages", "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            return [];
+        }
+
         try
         {
-            if (!File.Exists(path))
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (!document.RootElement.TryGetProperty("scopedRegistries", out var scopedRegistriesElement)
+                || scopedRegistriesElement.ValueKind != JsonValueKind.Array)
             {
-                return "log unavailable";
+                return [];
             }
 
-            var lines = File.ReadLines(path)
-                .Where(line => !string.IsNullOrWhiteSpace(line))
-                .TakeLast(Math.Max(1, maxLines))
-                .ToArray();
-            if (lines.Length == 0)
+            var resolved = new List<ScopedRegistryConfig>();
+            foreach (var registryElement in scopedRegistriesElement.EnumerateArray())
             {
-                return "log empty";
+                if (registryElement.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (!registryElement.TryGetProperty("url", out var urlElement)
+                    || urlElement.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var url = urlElement.GetString()?.Trim();
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    continue;
+                }
+
+                var scopes = new List<string>();
+                if (registryElement.TryGetProperty("scopes", out var scopesElement)
+                    && scopesElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var scopeElement in scopesElement.EnumerateArray())
+                    {
+                        if (scopeElement.ValueKind != JsonValueKind.String)
+                        {
+                            continue;
+                        }
+
+                        var scope = scopeElement.GetString()?.Trim();
+                        if (!string.IsNullOrWhiteSpace(scope))
+                        {
+                            scopes.Add(scope);
+                        }
+                    }
+                }
+
+                resolved.Add(new ScopedRegistryConfig(url, scopes));
             }
 
-            var joined = string.Join(" | ", lines);
-            if (joined.Length > 1000)
-            {
-                return joined[..1000] + "...";
-            }
-
-            return joined;
+            return resolved;
         }
-        catch (Exception ex)
+        catch
         {
-            return $"log read failed: {ex.Message}";
+            return [];
         }
+    }
+
+    private static string ResolveRegistryUrlForPackage(string packageId, IReadOnlyList<ScopedRegistryConfig> scopedRegistries)
+    {
+        var resolvedUrl = "https://packages.unity.com";
+        var bestScopeLength = -1;
+        foreach (var scopedRegistry in scopedRegistries)
+        {
+            foreach (var scope in scopedRegistry.Scopes)
+            {
+                if (!packageId.StartsWith($"{scope}.", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (scope.Length <= bestScopeLength)
+                {
+                    continue;
+                }
+
+                bestScopeLength = scope.Length;
+                resolvedUrl = scopedRegistry.Url;
+            }
+        }
+
+        return resolvedUrl;
     }
 
     private static async Task<ProcessResult> RunProcessAsync(
@@ -2674,11 +3272,6 @@ internal sealed class ProjectLifecycleService
         public int? RecentPruneStaleDays { get; set; }
     }
 
-    private sealed record UpmBatchInstallStatusRecord(
-        int Pid,
-        string PackageId,
-        string Stage,
-        bool Success,
-        string Message,
-        string Detail);
+    private sealed record ScopedRegistryConfig(string Url, List<string> Scopes);
+
 }
