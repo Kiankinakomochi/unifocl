@@ -592,13 +592,13 @@ internal sealed partial class ProjectViewService
     private void EmitImmediateLoadFeedback(ProjectViewState state, string targetName)
     {
         var prefix = ProjectViewServiceUtils.ResolveLoadAssetKind(Path.GetExtension(targetName));
-        ProjectViewTranscriptUtils.Append(state, [$"[*] loading {prefix}: {targetName}"]);
+        EmitOutputs(state, [$"[*] loading {prefix}: {targetName}"]);
         RenderFrame(state);
     }
 
     private void EmitLoadDiagnostic(ProjectViewState state, string message)
     {
-        ProjectViewTranscriptUtils.Append(state, [$"[grey]load[/]: {Markup.Escape(message)}"]);
+        EmitOutputs(state, [$"[grey]load[/]: {Markup.Escape(message)}"]);
         RenderFrame(state);
     }
 

@@ -5,6 +5,11 @@ internal static class KeyboardIntentReader
     public static KeyboardIntent ReadIntent()
     {
         var key = Console.ReadKey(intercept: true);
+        return ReadIntentFromFirstKey(key);
+    }
+
+    public static KeyboardIntent ReadIntentFromFirstKey(ConsoleKeyInfo key)
+    {
         if (key.Key == ConsoleKey.Escape)
         {
             var (sequenceIntent, consumedSequence) = TryReadAnsiEscapeSequenceIntent();
@@ -71,7 +76,7 @@ internal static class KeyboardIntentReader
             return KeyboardIntent.Escape;
         }
 
-        if (key.Key == ConsoleKey.F7)
+        if (key.Key is ConsoleKey.F7 or ConsoleKey.F8)
         {
             return KeyboardIntent.FocusProject;
         }

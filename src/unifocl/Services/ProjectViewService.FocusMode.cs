@@ -3,7 +3,8 @@ internal sealed partial class ProjectViewService
     public async Task RunKeyboardFocusModeAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
-        DaemonRuntime daemonRuntime)
+        DaemonRuntime daemonRuntime,
+        Action<string>? log = null)
     {
         if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
         {
@@ -21,12 +22,13 @@ internal sealed partial class ProjectViewService
         {
             "[i] project focus mode enabled (up/down select, idx jump, tab open/reveal, shift+tab back, esc exit)"
         };
-        ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+        EmitOutputs(session.ProjectView, outputs);
         outputs.Clear();
 
         var selectedEntryPosition = 0;
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
         while (true)
         {
             ProjectViewTreeUtils.RefreshTree(session.CurrentProjectPath, session.ProjectView);
@@ -52,7 +54,12 @@ internal sealed partial class ProjectViewService
                 RenderFrame(session.ProjectView, entries[selectedEntryPosition].Index, focusModeEnabled: true);
             }
 
-            var intent = KeyboardIntentReader.ReadIntent();
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (SelectionIndexJumpHelper.TryApply(
                     intent,
                     index =>
@@ -103,7 +110,7 @@ internal sealed partial class ProjectViewService
                     var tabResult = await HandleProjectFocusTabAsync(selectedEntry, session, daemonControlService, daemonRuntime, outputs);
                     if (session.ContextMode != CliContextMode.Project)
                     {
-                        ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                        EmitOutputs(session.ProjectView, outputs);
                         RenderFrame(session.ProjectView);
                         return;
                     }
@@ -130,7 +137,7 @@ internal sealed partial class ProjectViewService
                 case KeyboardIntent.FocusProject:
                     outputs.Add("[i] project focus mode disabled");
                     session.ProjectView.FocusHighlightedEntryIndex = null;
-                    ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                    EmitOutputs(session.ProjectView, outputs);
                     RenderFrame(session.ProjectView);
                     return;
                 default:
@@ -139,7 +146,7 @@ internal sealed partial class ProjectViewService
 
             if (outputs.Count > 0)
             {
-                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                EmitOutputs(session.ProjectView, outputs);
                 outputs.Clear();
             }
         }
@@ -147,7 +154,8 @@ internal sealed partial class ProjectViewService
 
     private static bool ShouldRunUpmFocusMode(ProjectViewState state)
     {
-        return state.ExpandTranscriptForUpmList && state.LastUpmPackages.Count > 0;
+        _ = state;
+        return false;
     }
 
     private async Task RunUpmPackageFocusModeAsync(
@@ -160,16 +168,17 @@ internal sealed partial class ProjectViewService
         state.UpmActionMenuVisible = false;
         state.UpmActionSelectedIndex = 0;
         state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, Math.Max(0, state.LastUpmPackages.Count - 1));
-        ProjectViewTranscriptUtils.Append(state, ["[i] upm selection mode enabled (up/down select, idx jump, enter action menu, esc/F7 exit)"]);
+        EmitOutputs(state, ["[i] upm selection mode enabled (up/down select, idx jump, enter action menu, esc/F7 exit)"]);
         RenderFrame(state);
 
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
         while (true)
         {
             if (state.LastUpmPackages.Count == 0)
             {
-                ProjectViewTranscriptUtils.Append(state, ["[i] upm selection mode disabled (no packages to select)"]);
+                EmitOutputs(state, ["[i] upm selection mode disabled (no packages to select)"]);
                 state.UpmFocusModeEnabled = false;
                 state.UpmActionMenuVisible = false;
                 RenderFrame(state);
@@ -179,8 +188,12 @@ internal sealed partial class ProjectViewService
             state.UpmFocusSelectedIndex = Math.Clamp(state.UpmFocusSelectedIndex, 0, state.LastUpmPackages.Count - 1);
             RenderFrame(state);
 
-            var key = Console.ReadKey(intercept: true);
-            var intent = KeyboardIntentReader.FromConsoleKey(key);
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (intent is KeyboardIntent.Escape or KeyboardIntent.FocusProject)
             {
                 if (state.UpmActionMenuVisible)
@@ -189,7 +202,7 @@ internal sealed partial class ProjectViewService
                     continue;
                 }
 
-                ProjectViewTranscriptUtils.Append(state, ["[i] upm selection mode disabled"]);
+                EmitOutputs(state, ["[i] upm selection mode disabled"]);
                 state.UpmFocusModeEnabled = false;
                 state.UpmActionMenuVisible = false;
                 RenderFrame(state);
@@ -294,21 +307,22 @@ internal sealed partial class ProjectViewService
         int actionIndex,
         CliSessionState session,
         DaemonControlService daemonControlService,
-        DaemonRuntime daemonRuntime)
+        DaemonRuntime daemonRuntime,
+        Action<string>? log = null)
     {
         var packageId = selectedPackage.PackageId;
         switch (actionIndex)
         {
             case 0:
-                await TryHandleProjectViewCommandAsync($"upm update {packageId}", session, daemonControlService, daemonRuntime);
+                await TryHandleProjectViewCommandAsync($"upm update {packageId}", session, daemonControlService, daemonRuntime, log);
                 break;
             case 1:
-                await TryHandleProjectViewCommandAsync($"upm remove {packageId}", session, daemonControlService, daemonRuntime);
+                await TryHandleProjectViewCommandAsync($"upm remove {packageId}", session, daemonControlService, daemonRuntime, log);
                 break;
             default:
                 if (!selectedPackage.Source.Equals("Registry", StringComparison.OrdinalIgnoreCase))
                 {
-                    ProjectViewTranscriptUtils.Append(session.ProjectView, ["[x] clean install supports registry packages only"]);
+                    EmitOutputs(session.ProjectView, ["[x] clean install supports registry packages only"]);
                     RenderFrame(session.ProjectView);
                     return true;
                 }
@@ -316,12 +330,12 @@ internal sealed partial class ProjectViewService
                 var installTarget = string.IsNullOrWhiteSpace(selectedPackage.Version)
                     ? selectedPackage.PackageId
                     : $"{selectedPackage.PackageId}@{selectedPackage.Version}";
-                await TryHandleProjectViewCommandAsync($"upm remove {packageId}", session, daemonControlService, daemonRuntime);
-                await TryHandleProjectViewCommandAsync($"upm install {installTarget}", session, daemonControlService, daemonRuntime);
+                await TryHandleProjectViewCommandAsync($"upm remove {packageId}", session, daemonControlService, daemonRuntime, log);
+                await TryHandleProjectViewCommandAsync($"upm install {installTarget}", session, daemonControlService, daemonRuntime, log);
                 break;
         }
 
-        await TryHandleProjectViewCommandAsync("upm ls", session, daemonControlService, daemonRuntime);
+        await TryHandleProjectViewCommandAsync("upm ls", session, daemonControlService, daemonRuntime, log);
         return session.ProjectView.LastUpmPackages.Count > 0;
     }
 

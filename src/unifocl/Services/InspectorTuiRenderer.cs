@@ -2,7 +2,7 @@ using Spectre.Console;
 
 internal sealed class InspectorTuiRenderer
 {
-    private const int DefaultInnerWidth = 78;
+    private const int DefaultInnerWidth = TuiConsoleViewport.DefaultColumns - 2;
     private const int MinInnerWidth = 40;
     private const int MinBodyRows = 4;
     private const int MinStreamRows = 4;
@@ -19,8 +19,6 @@ internal sealed class InspectorTuiRenderer
     {
         AnsiConsole.Clear();
         var innerWidth = ResolveInnerWidth();
-        var availableRows = Math.Max(MinBodyRows + MinStreamRows, Console.WindowHeight - ReservedPromptRows);
-        var dynamicRows = Math.Max(MinBodyRows + MinStreamRows, availableRows - FrameOverheadRows);
 
         var bodyLayout = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName, innerWidth);
         var pinnedBodyRows = bodyLayout.PinnedRows.ToList();
@@ -28,6 +26,9 @@ internal sealed class InspectorTuiRenderer
         var totalBodyRowCount = pinnedBodyRows.Count + scrollableBodyRows.Count;
         var streamRows = BuildStreamRows(context, Math.Max(1, innerWidth - 1)).ToList();
         var hasStreamPane = streamRows.Count > 0;
+        var minimumDynamicRows = MinBodyRows + MinStreamRows;
+        var intendedDynamicRows = hasStreamPane ? totalBodyRowCount + streamRows.Count + 1 : totalBodyRowCount;
+        var dynamicRows = ResolveDynamicRows(intendedDynamicRows, minimumDynamicRows);
         var (bodyViewportRows, streamViewportRows) = hasStreamPane
             ? AllocateViewportRows(dynamicRows, totalBodyRowCount, streamRows.Count)
             : (Math.Max(1, dynamicRows), 0);
@@ -403,6 +404,18 @@ internal sealed class InspectorTuiRenderer
             visible.Add(new RenderRow(string.Empty, false));
         }
 
+        var hiddenAbove = offset;
+        var hiddenBelow = Math.Max(0, rows.Count - (offset + visible.Count));
+        if (hiddenAbove > 0 && visible.Count > 0)
+        {
+            visible[0] = new RenderRow($"... {hiddenAbove} line(s) above ...", false);
+        }
+
+        if (hiddenBelow > 0 && visible.Count > 1)
+        {
+            visible[^1] = new RenderRow($"... {hiddenBelow} line(s) below ...", false);
+        }
+
         return visible;
     }
 
@@ -454,12 +467,29 @@ internal sealed class InspectorTuiRenderer
 
     private static int ResolveInnerWidth()
     {
-        var windowWidth = Console.WindowWidth;
+        var (windowWidth, _) = TuiConsoleViewport.GetWindowSizeOrDefault();
         if (windowWidth <= 2)
         {
             return DefaultInnerWidth;
         }
 
         return Math.Max(MinInnerWidth, windowWidth - 2);
+    }
+
+    private static int ResolveWindowHeight()
+    {
+        var (_, windowHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
+        return windowHeight > 0 ? windowHeight : TuiConsoleViewport.DefaultRows;
+    }
+
+    private static int ResolveDynamicRows(int intendedDynamicRows, int minimumDynamicRows)
+    {
+        intendedDynamicRows = Math.Max(1, intendedDynamicRows);
+        var intendedTotalRows = ReservedPromptRows + FrameOverheadRows + intendedDynamicRows;
+        var excessRows = TuiConsoleViewport.GetExcessRows(intendedTotalRows);
+        var availableDynamicRows = Math.Max(1, ResolveWindowHeight() - ReservedPromptRows - FrameOverheadRows);
+        var minimumRowsThatFit = Math.Min(Math.Max(1, minimumDynamicRows), availableDynamicRows);
+        var resolved = Math.Max(minimumRowsThatFit, intendedDynamicRows - excessRows);
+        return Math.Min(availableDynamicRows, resolved);
     }
 }

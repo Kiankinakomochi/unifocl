@@ -39,9 +39,7 @@ internal sealed partial class ProjectViewService
         }
 
         var subcommand = tokens[1];
-        session.ProjectView.ExpandTranscriptForUpmList =
-            subcommand.Equals("list", StringComparison.OrdinalIgnoreCase)
-            || subcommand.Equals("ls", StringComparison.OrdinalIgnoreCase);
+        session.ProjectView.ExpandTranscriptForUpmList = false;
 
         if (subcommand.Equals("install", StringComparison.OrdinalIgnoreCase)
             || subcommand.Equals("add", StringComparison.OrdinalIgnoreCase)

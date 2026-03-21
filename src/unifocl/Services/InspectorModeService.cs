@@ -198,6 +198,7 @@ internal sealed class InspectorModeService
         var selectedFieldPosition = 0;
         var typedIndexBuffer = string.Empty;
         long typedIndexLastInputTick = 0;
+        var (knownViewportWidth, knownViewportHeight) = TuiConsoleViewport.GetWindowSizeOrDefault();
 
         while (true)
         {
@@ -252,7 +253,12 @@ internal sealed class InspectorModeService
                 }
             }
 
-            var intent = KeyboardIntentReader.ReadIntent();
+            if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
+            {
+                continue;
+            }
+
+            var intent = KeyboardIntentReader.ReadIntentFromFirstKey(key);
             if (SelectionIndexJumpHelper.TryApply(
                     intent,
                     index =>

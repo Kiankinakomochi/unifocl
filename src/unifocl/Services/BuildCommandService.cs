@@ -324,7 +324,7 @@ internal sealed class BuildCommandService
             prompt.AddChoice(scene.Path!);
         }
 
-        var selected = AnsiConsole.Prompt(prompt);
+        var selected = CliTheme.PromptWithDividers(() => AnsiConsole.Prompt(prompt));
         var selectedSet = new HashSet<string>(selected, StringComparer.OrdinalIgnoreCase);
         var updatePayload = new BuildScenesUpdateRequestPayload(
             scenes.Select(scene => new BuildSceneEntryPayload(scene.Path!, selectedSet.Contains(scene.Path!))).ToList());
@@ -553,7 +553,7 @@ internal sealed class BuildCommandService
                 ? $"[white]{Markup.Escape(target.DisplayName)}[/] [green](installed)[/]"
                 : $"[grey]{Markup.Escape(target.DisplayName)}[/] [dim](not installed, will install)[/]")
             .AddChoices(ordered);
-        return AnsiConsole.Prompt(prompt);
+        return CliTheme.PromptWithDividers(() => AnsiConsole.Prompt(prompt));
     }
 
     private static BuildTargetCandidate? MatchTarget(string raw, IReadOnlyList<BuildTargetCandidate> targets)

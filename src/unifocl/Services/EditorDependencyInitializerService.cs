@@ -68,7 +68,7 @@ internal sealed class EditorDependencyInitializerService
             return false;
         }
 
-        return AnsiConsole.Confirm("Initialize editor dependencies now?", defaultValue: true);
+        return CliTheme.ConfirmWithDividers("Initialize editor dependencies now?", defaultValue: true);
     }
 
     public bool NeedsInitialization(string projectPath, out string reason)

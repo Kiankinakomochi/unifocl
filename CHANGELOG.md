@@ -20,6 +20,12 @@
   - project mutation commands now return `E_VCS_SETUP_REQUIRED` with actionable hint
   - non-mutation agentic commands remain unaffected
 - Classified `E_VCS_SETUP_REQUIRED` under validation-class exit code `2`.
+- Hardened composer redraw stability so divider/prompt rendering is replaced deterministically (not appended) during typing and log traversal (`Ctrl+E/B/F`), preventing output drift.
+- Reserved prompt/intellisense rows first in composer viewport allocation to keep the command prompt divider visible under constrained terminal heights.
+- Applied viewport-aware clamp/omission behavior across project/recent/hierarchy/inspector TUI flows to avoid bleed-out when the terminal is resized smaller.
+- Updated project focus navigation to reveal hidden rows while traversing long lists, with explicit visible-range and omitted-count summaries.
+- Added hierarchy mode divider rendering consistency with composer prompt framing.
+- Changed inspector interactive selection auto-entry to opt-in via `inspect --focus` / `inspect --interactive` flags.
 
 ## 0.28.0 - 2026-03-21
 
