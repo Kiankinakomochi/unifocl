@@ -3,8 +3,9 @@
 ## 1.0.0 - 2026-03-22
 
 ### Changed
-- Officialized `1.0.0` release version.
-- Promoted CLI semantic versioning from `0.32.0` to `1.0.0` while keeping protocol `v8`.
+- First stable `1.0.0` release.
+- Declares the CLI surface and agentic contract as production-ready for regular use.
+- Continues using protocol `v8` for compatibility with existing integrations.
 
 ## 0.32.0 - 2026-03-22
 
