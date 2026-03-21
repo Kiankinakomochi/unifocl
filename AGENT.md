@@ -264,6 +264,10 @@ At task start:
 - **Cause:** sandbox restrictions around local socket binding.
 - **Required handling:**
   - Retry the same `init-smoke-agentic` command with escalated permissions (`require_escalated`) and approval.
+  - Helper behavior: `src/unifocl/scripts/agent-worktree.sh init-smoke-agentic` now emits:
+    - `[agent-worktree] escalation-required: ...`
+    - `[agent-worktree] rerun-command: ...`
+    - exits with code `86` when sandbox/network denial patterns are detected.
 
 ## 2) Network/API access blocked for GitHub PR creation
 

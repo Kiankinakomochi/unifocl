@@ -100,6 +100,13 @@ internal static class CliOneShotExecutionService
                 var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
                 errors.AddRange(parsed.Errors);
                 warnings.AddRange(parsed.Warnings);
+                if (parsed.RequiresEscalation)
+                {
+                    extraMeta["requiresEscalation"] = true;
+                    extraMeta["escalationEvidence"] = parsed.EscalationEvidence;
+                    extraMeta["escalatedRerunCommand"] = BuildEscalatedRerunCommand(options);
+                }
+
                 data = new Dictionary<string, object?>
                 {
                     ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
@@ -142,6 +149,58 @@ internal static class CliOneShotExecutionService
                 DateTime.UtcNow.ToString("O"),
                 extraMeta),
             diff);
+    }
+
+    private static string BuildEscalatedRerunCommand(ExecLaunchOptions options)
+    {
+        static string QuoteIfNeeded(string value)
+        {
+            return value.Contains(' ', StringComparison.Ordinal)
+                ? $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+                : value;
+        }
+
+        var args = new List<string>
+        {
+            "unifocl",
+            "exec",
+            QuoteIfNeeded(options.CommandText),
+            "--agentic",
+            "--format",
+            options.Format.ToString().ToLowerInvariant()
+        };
+
+        if (!string.IsNullOrWhiteSpace(options.ProjectPath))
+        {
+            args.Add("--project");
+            args.Add(QuoteIfNeeded(options.ProjectPath!));
+        }
+
+        if (options.ContextMode is not null)
+        {
+            args.Add("--mode");
+            args.Add(options.ContextMode.Value.ToString().ToLowerInvariant());
+        }
+
+        if (options.AttachPort is int attachPort)
+        {
+            args.Add("--attach-port");
+            args.Add(attachPort.ToString());
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.RequestId))
+        {
+            args.Add("--request-id");
+            args.Add(QuoteIfNeeded(options.RequestId!));
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.SessionSeed))
+        {
+            args.Add("--session-seed");
+            args.Add(QuoteIfNeeded(options.SessionSeed!));
+        }
+
+        return string.Join(' ', args);
     }
 
     private static void ApplyPersistedSessionSnapshot(CliSessionState session, AgenticSessionSnapshot snapshot)

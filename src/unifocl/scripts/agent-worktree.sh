@@ -494,6 +494,11 @@ run_init_smoke_agentic() {
     local init_command
     printf -v init_command '/init "%s"' "$project_abs"
 
+    local output_log
+    output_log="$(mktemp -t unifocl-init-smoke-agentic.XXXXXX.log)"
+    local exit_code=0
+
+    set +e
     (
         cd "$worktree_path"
         env \
@@ -505,7 +510,26 @@ run_init_smoke_agentic() {
                 --project "$project_abs" \
                 --mode project \
                 --format "$format"
-    )
+    ) >"$output_log" 2>&1
+    exit_code=$?
+    set -e
+
+    cat "$output_log"
+
+    if [ "$exit_code" -ne 0 ]; then
+        if grep -Eiq \
+            'operation not permitted|access to the path .* denied|permission denied|listen EPERM|could not resolve host|failed to connect|network is unreachable|temporary failure in name resolution|sandboxdenied|api\.nuget\.org' \
+            "$output_log"; then
+            echo "[agent-worktree] escalation-required: init-smoke-agentic likely hit sandbox/network restrictions." >&2
+            echo "[agent-worktree] rerun-command: src/unifocl/scripts/agent-worktree.sh init-smoke-agentic --worktree-path \"$worktree_path\" --project-path \"$project_abs\" --format \"$format\"" >&2
+            echo "[agent-worktree] codex-hint: rerun the same command with sandbox_permissions=require_escalated." >&2
+            rm -f "$output_log"
+            return 86
+        fi
+    fi
+
+    rm -f "$output_log"
+    return "$exit_code"
 }
 
 run_start_daemon() {

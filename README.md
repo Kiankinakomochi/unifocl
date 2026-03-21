@@ -459,7 +459,9 @@ unifocl now supports durable project-mutation execution (`submit -> status -> re
   - `POST /project/mutation/cancel?requestId=<id>`
 Recent stability hardening:
 * `/init` now installs `com.coplaydev.unity-mcp` through a dedicated Unity batch process with PID/status tracking instead of daemon mutation round-trips.
-* MCP install uses fallback Git target resolution and recursively installs transitive package dependencies declared in installed package `package.json` files.
+* MCP install uses fallback Git target resolution plus scoped-registry-aware recursive dependency resolution from package metadata.
+* `/init` now syncs resolved MCP transitive dependencies back into local MCP package manifests (`Packages/.../package.json` and `Library/PackageCache/.../package.json`) to prevent dependency desync.
+* MCP bootstrap enforces `com.unity.modules.imageconversion` so runtime screenshot helpers using `Texture2D.EncodeToPNG` keep compile-safe module references.
 * `exec --agentic` UPM commands with `--project <path>` auto-run an `/open` lifecycle step before executing package commands.
 
 ### 2. Daemon Management
