@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -30,6 +31,9 @@ namespace UniFocl.EditorBridge
         private static bool _buildInProgress;
         private static bool _cancelRequested;
         private static string _activeBuildAction = string.Empty;
+        private const string VcsModeUvcsAll = "uvcs_all";
+        private const string VcsModeUvcsHybridGitIgnore = "uvcs_hybrid_gitignore";
+        private const string VcsOwnerUvcs = "uvcs";
 
         public static string Execute(string payload)
         {
@@ -230,7 +234,8 @@ namespace UniFocl.EditorBridge
 
                 if (request.intent is not null && request.intent.flags.dryRun)
                 {
-                    var payload = DaemonDryRunDiffService.BuildFileDiffPayload(
+                    var payload = BuildFileDiffPayloadWithVcs(
+                        request,
                         "project script create preview",
                         new[]
                         {
@@ -248,6 +253,15 @@ namespace UniFocl.EditorBridge
                         message = "dry-run preview",
                         kind = "dry-run",
                         content = payload
+                    });
+                }
+
+                if (!EnsureVcsWriteAccess(request, new[] { assetPath, assetPath + ".meta" }, out var vcsError))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = vcsError ?? $"failed to acquire UVCS checkout for {assetPath}"
                     });
                 }
 
@@ -3119,7 +3133,7 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
 
                 if (request.intent.flags.dryRun)
                 {
-                    var payload = BuildFileDryRunPayload(mutationName, preMutationTargets, rollbackCleanupTargets);
+                    var payload = BuildFileDryRunPayload(request, mutationName, preMutationTargets, rollbackCleanupTargets);
                     return JsonUtility.ToJson(new ProjectCommandResponse
                     {
                         ok = true,
@@ -3134,6 +3148,15 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                 var stashEntries = new List<StashEntry>();
                 try
                 {
+                    if (!EnsureVcsWriteAccess(request, preMutationTargets.Concat(rollbackCleanupTargets ?? Array.Empty<string>()), out var vcsError))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = vcsError ?? $"failed UVCS preflight for {mutationName}"
+                        });
+                    }
+
                     Directory.CreateDirectory(stashRoot);
                     foreach (var assetPath in preMutationTargets
                                  .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -3156,7 +3179,7 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                         return responsePayload;
                     }
 
-                    if (!TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out var revertError))
+                    if (!TryRevertFromStash(projectRoot, request, stashEntries, rollbackCleanupTargets, out var revertError))
                     {
                         AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                         DeleteDirectorySafe(stashRoot);
@@ -3173,7 +3196,7 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                 }
                 catch (Exception ex)
                 {
-                    TryRevertFromStash(projectRoot, stashEntries, rollbackCleanupTargets, out _);
+                    TryRevertFromStash(projectRoot, request, stashEntries, rollbackCleanupTargets, out _);
                     AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                     DeleteDirectorySafe(stashRoot);
                     return JsonUtility.ToJson(new ProjectCommandResponse
@@ -3186,6 +3209,7 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
         }
 
         private static string BuildFileDryRunPayload(
+            ProjectCommandRequest request,
             string mutationName,
             IEnumerable<string> preMutationTargets,
             IEnumerable<string>? rollbackCleanupTargets)
@@ -3253,7 +3277,7 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                 }
             }
 
-            return DaemonDryRunDiffService.BuildFileDiffPayload($"{mutationName} preview", changes);
+            return BuildFileDiffPayloadWithVcs(request, $"{mutationName} preview", changes);
         }
 
         private static string ExecuteWithFileSystemCriticalSection(Func<string> operation)
@@ -3276,7 +3300,36 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                 : SanitizePathToken(transactionId);
             var safeMutationName = SanitizePathToken(mutationName);
             var nonce = Guid.NewGuid().ToString("N")[..8];
-            return Path.Combine(projectRoot, ".unifocl", "stash", $"{safeTransactionId}-{safeMutationName}-{nonce}");
+            var root = ResolveTransactionStashBase(projectRoot);
+            return Path.Combine(root, $"{safeTransactionId}-{safeMutationName}-{nonce}");
+        }
+
+        private static string ResolveTransactionStashBase(string projectRoot)
+        {
+            var overrideRoot = Environment.GetEnvironmentVariable("UNIFOCL_PROJECT_STASH_ROOT");
+            var baseRoot = string.IsNullOrWhiteSpace(overrideRoot)
+                ? Path.Combine(Path.GetTempPath(), "unifocl-stash")
+                : Path.GetFullPath(overrideRoot);
+            var digest = ComputeSha256Hex(projectRoot);
+            if (digest.Length > 12)
+            {
+                digest = digest.Substring(0, 12);
+            }
+
+            return Path.Combine(baseRoot, digest);
+        }
+
+        private static string ComputeSha256Hex(string value)
+        {
+            using var sha = SHA256.Create();
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(value));
+            var builder = new StringBuilder(bytes.Length * 2);
+            foreach (var b in bytes)
+            {
+                builder.Append(b.ToString("x2"));
+            }
+
+            return builder.ToString();
         }
 
         private static string SanitizePathToken(string token)
@@ -3367,6 +3420,7 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
 
         private static bool TryRevertFromStash(
             string projectRoot,
+            ProjectCommandRequest request,
             IReadOnlyList<StashEntry> entries,
             IEnumerable<string>? rollbackCleanupTargets,
             out string? error)
@@ -3374,6 +3428,16 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
             error = null;
             try
             {
+                if (!EnsureVcsWriteAccess(
+                        request,
+                        entries.Select(entry => entry.RelativePath)
+                            .Concat(rollbackCleanupTargets ?? Array.Empty<string>()),
+                        out var vcsError))
+                {
+                    error = vcsError ?? "failed UVCS preflight while reverting rollback stash";
+                    return false;
+                }
+
                 if (rollbackCleanupTargets is not null)
                 {
                     foreach (var cleanupTarget in rollbackCleanupTargets
@@ -3447,6 +3511,201 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                 var targetSubdirectory = Path.Combine(targetDirectory, Path.GetFileName(directory));
                 CopyDirectoryRecursive(directory, targetSubdirectory);
             }
+        }
+
+        private static string BuildFileDiffPayloadWithVcs(
+            ProjectCommandRequest request,
+            string summary,
+            IEnumerable<MutationPathChange> changes)
+        {
+            var list = changes.ToList();
+            ApplyVcsMetadataToChanges(request, list);
+            return DaemonDryRunDiffService.BuildFileDiffPayload(summary, list);
+        }
+
+        private static void ApplyVcsMetadataToChanges(ProjectCommandRequest request, List<MutationPathChange> changes)
+        {
+            var ownedLookup = request.intent?.flags?.vcsOwnedPaths?
+                .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.path))
+                .GroupBy(entry => NormalizeAssetPath(entry.path), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase)
+                ?? new Dictionary<string, MutationVcsOwnedPath>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var change in changes)
+            {
+                var normalizedPath = NormalizeAssetPath(change.path);
+                if (ownedLookup.TryGetValue(normalizedPath, out var owner))
+                {
+                    change.owner = owner.owner ?? string.Empty;
+                    change.requiresCheckout = owner.requiresCheckout;
+                }
+            }
+        }
+
+        private static bool EnsureVcsWriteAccess(
+            ProjectCommandRequest request,
+            IEnumerable<string> candidatePaths,
+            out string? error)
+        {
+            error = null;
+            if (request.intent is null || request.intent.flags is null)
+            {
+                return true;
+            }
+
+            var mode = request.intent.flags.vcsMode ?? string.Empty;
+            if (!mode.Equals(VcsModeUvcsAll, StringComparison.OrdinalIgnoreCase)
+                && !mode.Equals(VcsModeUvcsHybridGitIgnore, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var ownedLookup = request.intent.flags.vcsOwnedPaths?
+                .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.path))
+                .GroupBy(entry => NormalizeAssetPath(entry.path), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase)
+                ?? new Dictionary<string, MutationVcsOwnedPath>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var rawPath in candidatePaths
+                         .Where(path => !string.IsNullOrWhiteSpace(path))
+                         .Select(NormalizeAssetPath)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!RequiresUvcsCheckoutForPath(mode, rawPath, ownedLookup))
+                {
+                    continue;
+                }
+
+                if (!EnsureUvcsCheckoutAndWritable(rawPath, out error))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool RequiresUvcsCheckoutForPath(
+            string mode,
+            string path,
+            IReadOnlyDictionary<string, MutationVcsOwnedPath> ownedLookup)
+        {
+            if (ownedLookup.TryGetValue(path, out var owned))
+            {
+                return string.Equals(owned.owner, VcsOwnerUvcs, StringComparison.OrdinalIgnoreCase) || owned.requiresCheckout;
+            }
+
+            return mode.Equals(VcsModeUvcsAll, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool EnsureUvcsCheckoutAndWritable(string assetPath, out string? error)
+        {
+            error = null;
+            var projectRoot = GetProjectRoot();
+            var absolutePath = Path.Combine(projectRoot, assetPath.Replace('/', Path.DirectorySeparatorChar));
+            var existsAsFile = File.Exists(absolutePath);
+            var existsAsDirectory = Directory.Exists(absolutePath);
+            if (!existsAsFile && !existsAsDirectory)
+            {
+                return true;
+            }
+
+            var checkoutAttempted = TryCheckoutViaUvcs(assetPath, out var checkoutError);
+            if (!checkoutAttempted && !string.IsNullOrWhiteSpace(checkoutError))
+            {
+                error = $"UVCS checkout failed for '{assetPath}': {checkoutError}";
+                return false;
+            }
+
+            if (existsAsFile && IsReadOnlyFile(absolutePath))
+            {
+                error = $"UVCS checkout did not unlock writable file '{assetPath}'. Open Unity Version Control and check out the file.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsReadOnlyFile(string absolutePath)
+        {
+            try
+            {
+                var attributes = File.GetAttributes(absolutePath);
+                return (attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryCheckoutViaUvcs(string assetPath, out string? error)
+        {
+            error = null;
+            try
+            {
+                var providerType = Type.GetType("UnityEditor.VersionControl.Provider, UnityEditor");
+                if (providerType is null)
+                {
+                    error = "UnityEditor.VersionControl.Provider is unavailable in this Unity runtime";
+                    return false;
+                }
+
+                var checkoutModeType = Type.GetType("UnityEditor.VersionControl.CheckoutMode, UnityEditor");
+                if (checkoutModeType is null)
+                {
+                    error = "UnityEditor.VersionControl.CheckoutMode is unavailable in this Unity runtime";
+                    return false;
+                }
+
+                var checkoutMethod = providerType.GetMethod(
+                    "Checkout",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(string), checkoutModeType },
+                    null);
+                if (checkoutMethod is null)
+                {
+                    error = "Provider.Checkout(string, CheckoutMode) API is unavailable";
+                    return false;
+                }
+
+                var checkoutMode = Enum.GetValues(checkoutModeType).GetValue(0);
+                var task = checkoutMethod.Invoke(null, new[] { assetPath, checkoutMode });
+                if (task is null)
+                {
+                    error = "Provider.Checkout returned null task";
+                    return false;
+                }
+
+                var taskType = task.GetType();
+                var waitMethod = taskType.GetMethod("Wait", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                waitMethod?.Invoke(task, null);
+
+                var successProperty = taskType.GetProperty("success", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                if (successProperty?.GetValue(task) is bool success && !success)
+                {
+                    var textProperty = taskType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                    var text = textProperty?.GetValue(task)?.ToString();
+                    error = string.IsNullOrWhiteSpace(text) ? "checkout task reported failure" : text;
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static string NormalizeAssetPath(string path)
+        {
+            return (path ?? string.Empty)
+                .Replace('\\', '/')
+                .Trim()
+                .TrimStart('/');
         }
 
         private static bool TryReadProjectResponseStatus(string payload, out bool ok)

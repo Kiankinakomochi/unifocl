@@ -200,6 +200,16 @@ namespace UniFocl.EditorBridge
     {
         public bool dryRun;
         public bool requireRollback = true;
+        public string vcsMode = string.Empty;
+        public MutationVcsOwnedPath[] vcsOwnedPaths = Array.Empty<MutationVcsOwnedPath>();
+    }
+
+    [Serializable]
+    internal sealed class MutationVcsOwnedPath
+    {
+        public string path = string.Empty;
+        public string owner = string.Empty;
+        public bool requiresCheckout;
     }
 
     [Serializable]
@@ -209,6 +219,8 @@ namespace UniFocl.EditorBridge
         public string path = string.Empty;
         public string nextPath = string.Empty;
         public string metaPath = string.Empty;
+        public string owner = string.Empty;
+        public bool requiresCheckout;
     }
 
     [Serializable]

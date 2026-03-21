@@ -139,11 +139,15 @@ internal sealed partial class ProjectViewService
                     TimeSpan.FromSeconds(8),
                     () => ExecuteProjectCommandAsync(
                         session,
-                        new ProjectCommandRequestDto(
-                            "mk-script",
+                        BuildVcsAwareProjectRequest(
+                            session,
+                            new ProjectCommandRequestDto(
+                                "mk-script",
+                                targetRelative,
+                                null,
+                                content),
                             targetRelative,
-                            null,
-                            content)));
+                            targetRelative + ".meta")));
                 if (!response.Ok)
                 {
                     outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("create", response.Message));
@@ -234,7 +238,11 @@ internal sealed partial class ProjectViewService
                     TimeSpan.FromSeconds(6),
                     () => ExecuteProjectCommandAsync(
                         session,
-                        new ProjectCommandRequestDto("remove-asset", sourcePath, null, null)));
+                        BuildVcsAwareProjectRequest(
+                            session,
+                            new ProjectCommandRequestDto("remove-asset", sourcePath, null, null),
+                            sourcePath,
+                            sourcePath + ".meta")));
                 if (!response.Ok && ProjectViewServiceUtils.IsAssetNotFoundFailure(response.Message))
                 {
                     var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourcePath, allowDirectoryFallback: target.IsDirectory);
@@ -248,7 +256,11 @@ internal sealed partial class ProjectViewService
                             TimeSpan.FromSeconds(6),
                             () => ExecuteProjectCommandAsync(
                                 session,
-                                new ProjectCommandRequestDto("remove-asset", sourcePath, null, null)));
+                                BuildVcsAwareProjectRequest(
+                                    session,
+                                    new ProjectCommandRequestDto("remove-asset", sourcePath, null, null),
+                                    sourcePath,
+                                    sourcePath + ".meta")));
                     }
                 }
 
@@ -446,7 +458,13 @@ internal sealed partial class ProjectViewService
         {
             var response = await ExecuteProjectCommandAsync(
                 session,
-                new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null));
+                BuildVcsAwareProjectRequest(
+                    session,
+                    new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null),
+                    sourceRelativePath,
+                    sourceRelativePath + ".meta",
+                    destinationRelative,
+                    destinationRelative + ".meta"));
             if (!response.Ok && ProjectViewServiceUtils.IsAssetNotFoundFailure(response.Message))
             {
                 var fallbackPath = await ResolveAssetFallbackPathAsync(session, sourceRelativePath, allowDirectoryFallback: target.IsDirectory);
@@ -457,7 +475,13 @@ internal sealed partial class ProjectViewService
                     destinationRelative = ProjectViewServiceUtils.ComputeRenameDestinationPath(sourceRelativePath, target.IsDirectory, newName);
                     response = await ExecuteProjectCommandAsync(
                         session,
-                        new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null));
+                        BuildVcsAwareProjectRequest(
+                            session,
+                            new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null),
+                            sourceRelativePath,
+                            sourceRelativePath + ".meta",
+                            destinationRelative,
+                            destinationRelative + ".meta"));
                 }
             }
 
@@ -576,5 +600,18 @@ internal sealed partial class ProjectViewService
     {
         ProjectViewTranscriptUtils.Append(state, [$"[grey]load[/]: {Markup.Escape(message)}"]);
         RenderFrame(state);
+    }
+
+    private static ProjectCommandRequestDto BuildVcsAwareProjectRequest(
+        CliSessionState session,
+        ProjectCommandRequestDto request,
+        params string?[] candidatePaths)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return request;
+        }
+
+        return ProjectVcsProfileService.EnrichProjectMutationIntent(request, session.CurrentProjectPath!, candidatePaths);
     }
 }
