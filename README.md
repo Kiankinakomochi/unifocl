@@ -3,6 +3,7 @@
 A terminal-first Unity development companion. **unifocl** provides a structured way to interact with and navigate your Unity projects directly from the command line.
 
 It is not designed to replace the Unity Editor. Instead, it serves as a supplementary tool for developers who prefer managing project structure, assets, and hierarchies via a CLI or TUI (Terminal User Interface).
+unifocl is an independent project and is not affiliated with or endorsed by Unity Technologies.
 
 ## Features
 
@@ -73,7 +74,7 @@ rm 7 --dry-run
 
 ## Persistence Safety Contract
 
-unifocl now enforces an enterprise-style mutation safety contract across `hierarchy`, `inspector`, and `project` modes. The implementation is split into four layers.
+unifocl now enforces a mutation safety contract across `hierarchy`, `inspector`, and `project` modes. The implementation is split into four layers.
 
 ### 1. Transactional Envelope (Daemon Core)
 
@@ -124,6 +125,13 @@ Project-mode mutations that bypass Unity Undo are protected with transactional s
 * Before execution, target assets and matching `.meta` files are shadow-copied into runtime stash storage under `$(UNIFOCL_PROJECT_STASH_ROOT || <temp>/unifocl-stash)/<project-hash>/...`.
 * On success, stash contents are removed (commit path).
 * On failure or exception, the stash is restored and cleanup targets are removed, then `AssetDatabase.Refresh(ForceUpdate)` is called to re-sync Unity state.
+
+Unity Version Control (formerly Plastic SCM) behavior:
+* UVCS uses checkout semantics, so writable filesystem state alone is not treated as authority for safe mutation.
+* unifocl resolves ownership per target path, then performs checkout preflight before any file mutation is attempted.
+* Paths classified as UVCS-owned must pass checkout preflight first; otherwise the mutation is rejected before file I/O begins.
+* In `uvcs_hybrid_gitignore` mode, `.gitignore` is used as a pragmatic ownership split so UVCS checkout is enforced only for paths considered UVCS-owned.
+* Dry-run includes ownership and checkout hints so automation can validate mutation viability before execution.
 
 Interactive setup guard:
 * When UVCS is auto-detected but unconfigured, the first project mutation prompts for one-time VCS setup and stores `.unifocl/vcs-config.json`.
@@ -289,8 +297,10 @@ Agentic VCS setup guard:
 | `2` | Validation / parse / context-state error |
 | `3` | Daemon/bridge availability or timeout class failure |
 | `4` | Internal execution error |
+| `6` | Escalation required (likely sandbox/network restriction prevented execution) |
 
 `E_VCS_SETUP_REQUIRED` is classified under exit code `2`.
+`E_ESCALATION_REQUIRED` is classified under exit code `6`.
 
 ### 4. `/dump` State Serialization
 
@@ -342,6 +352,8 @@ The daemon-side agent endpoint delegates to the same `exec --agentic` pathway so
 | `E_NOT_FOUND` | Requested object/asset/component not found |
 | `E_TIMEOUT` | Operation timed out |
 | `E_UNITY_API` | Daemon/bridge Unity execution path failure |
+| `E_VCS_SETUP_REQUIRED` | Mutation blocked until interactive UVCS setup is completed |
+| `E_ESCALATION_REQUIRED` | Command likely blocked by sandbox/network and needs elevated rerun |
 | `E_VALIDATION` | Semantic validation failed |
 | `E_INTERNAL` | Unhandled runtime error |
 
@@ -415,11 +427,21 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/open <path> [--allow-unsafe]` | `/o` | Open a Unity project. Starts/attaches to the daemon and loads metadata. |
 | `/close` | `/c` | Detach from the current project and stop the attached daemon. |
 | `/quit` | `/q`, `/exit` | Exit the CLI client (leaves the daemon running). |
+| `/daemon <start|stop|restart|ps|attach|detach>` | `/d` | Manage daemon lifecycle commands. |
 | `/new <name> [version]` | | Bootstrap a new Unity project. |
 | `/clone <git-url>` | | Clone a repository and set up local CLI bridge-mode config. |
 | `/recent [idx]` | | List recent projects or open one by index. |
 | `/config <get/set/list/reset>`| `/cfg` | Manage CLI preferences (e.g., themes). |
 | `/status` | `/st` | Show daemon, mode, editor, project, and session status summary. |
+| `/doctor` | | Run environment and tooling diagnostics. |
+| `/scan [--root <dir>] [--depth <n>]` | | Scan directories for Unity projects. |
+| `/info <path?>` | | Inspect Unity project metadata and protocol details. |
+| `/logs [daemon|unity] [-f]` | | Show daemon runtime summary or follow logs. |
+| `/examples` | | Show common operational command flows. |
+| `/update` | | Show installed CLI version and update guidance. |
+| `/install-hook` | | Run bridge dependency install flow (`/init`) against current/open project. |
+| `/unity detect` | | List installed Unity editors. |
+| `/unity set <path>` | | Set default Unity editor path. |
 | `/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]` | `/b` | Trigger a Unity player build. If target is omitted, choose from an interactive target selector. |
 | `/build exec <Method>` | `/bx` | Execute a static build method (e.g., `CI.Builder.BuildAndroidProd`). |
 | `/build scenes` | | Open an interactive TUI to view, toggle, and reorder build scenes. |
@@ -427,28 +449,24 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/build cancel` | | Request cancellation for the active build process via daemon. |
 | `/build targets` | | List platform build support currently available in this Unity Editor. |
 | `/build logs` | | Reopen live build log tail (restartable, with error filtering). |
+| `/upm` | | Show Unity Package Manager command usage and options. |
+| `/upm list [--outdated] [--builtin] [--git]` | `/upm ls` | List installed Unity packages (with optional outdated/builtin/git filters). |
+| `/upm install <target>` | `/upm add`, `/upm i` | Install a package by package ID, Git URL, or `file:` target. |
+| `/upm remove <id>` | `/upm rm`, `/upm uninstall` | Remove a package by package ID. |
+| `/upm update <id> [version]` | `/upm u` | Update a package to latest or a specified version. |
 | `/init [path]` | | Generate bridge-mode config, install editor-side dependencies, and install required MCP package through a Unity batch lifecycle (open/install/teardown). |
+| `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
+| `/version` | | Show CLI and protocol version. |
+| `/protocol` | | Show supported JSON schema capabilities. |
+| `/dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]` | | Dump deterministic mode state for agentic workflows. |
 | `/clear` | | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
-### Newly Implemented Command Coverage
+Behavior notes:
+* `/daemon` without a subcommand returns usage plus process summary.
+* Unsupported slash-command routes return explicit `unsupported route` messaging.
 
-The following command routes are now implemented with deterministic behavior in both interactive and one-shot (`exec --agentic`) pathways:
-
-* `/status`: prints session mode/context, attached daemon, project path, and active daemon runtime entries.
-* `/help [topic]`: structured command help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`).
-* `/doctor`: local environment diagnostics (dotnet, git, Unity editor detection, project layout, daemon entry count).
-* `/scan [--root <dir>] [--depth <n>]`: scans directories for Unity projects (`Assets/` + `ProjectSettings/`).
-* `/info <path?>`: inspects project metadata (Unity version, default daemon port, bridge protocol, dependency count).
-* `/logs [daemon|unity] [-f]`: daemon runtime summary or cached Unity log-pane tail.
-* `/examples`: prints common operational command flows.
-* `/update`: reports installed CLI version and update guidance.
-* `/install-hook`: runs bridge dependency install flow (`/init`) against current/open project.
-
-Also implemented:
-
-* `/daemon` (without subcommand) now returns usage + process summary instead of a generic unimplemented response.
-* Unsupported slash command routes now return explicit "unsupported route" messaging instead of "not implemented yet".
+Warning: Unity 6 editors have a known issue where the Package Manager can report packages as invalid, even though they have a valid package signature. Packages installed through unifocl commands may be flagged as invalid packages in these versions. This issue is fixed in `6000.3.5f2` and later. Update to one of these builds to address the issue. See [Unity package signing documentation](https://docs.unity3d.com/6000.3/Documentation/Manual/upm-signature.html).
 
 ### Host-Mode Hierarchy Fallback (No GUI Bridge Attached)
 
@@ -464,13 +482,6 @@ Safety constraints in host-mode fallback:
 * Move/rename path-escape is rejected.
 * Moving a directory into itself/descendants is rejected.
 * `mk` validates names and supports typed placeholders (`Empty`, `EmptyChild`, `EmptyParent`, `Text/TMP`, `Sprite`, default prefab).
-
-### UPM Management Stability Note
-
-UPM commands in CLI mode (`upm list/install/remove/update`) are currently under active stabilization.  
-For critical package operations, the recommended workflow is still Unity Editor GUI (Package Manager window), then use unifocl for verification and follow-up automation.
-
-Warning: Unity 6 editors have a known issue where the Package Manager can report packages as invalid, even though they have a valid package signature. This issue is fixed in `6000.3.5f2` and later. Update to one of these builds to address the issue. See [Unity package signing documentation](https://docs.unity3d.com/6000.3/Documentation/Manual/upm-signature.html).
 
 ### MCP Integration (Hybrid Durable Mutations)
 

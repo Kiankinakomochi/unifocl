@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0 - 2026-03-22
+
+### Changed
+- Officialized `1.0.0` release version.
+- Promoted CLI semantic versioning from `0.32.0` to `1.0.0` while keeping protocol `v8`.
+
 ## 0.32.0 - 2026-03-22
 
 ### Changed
