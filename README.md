@@ -87,6 +87,8 @@ Current envelope fields:
 * `newValue`
 * `flags.dryRun`
 * `flags.requireRollback` (must be `true`)
+* `flags.vcsMode` (optional: `uvcs_all` or `uvcs_hybrid_gitignore`)
+* `flags.vcsOwnedPaths[]` (optional per-path owner metadata used for checkout policy)
 
 Daemon-side validation is centralized in `DaemonMutationTransactionCoordinator` and rejects mutation requests that are missing or invalid. Valid intents are routed to a deterministic safety handler by mode:
 * `hierarchy` / `inspector` -> `memory`
@@ -114,10 +116,18 @@ Persistence hooks for scene/prefab integrity:
 
 ### 3. Filesystem Layer Safety (Project Mode)
 
-Project-mode mutations that bypass Unity Undo are protected with transactional stashing:
-* Before execution, target assets and matching `.meta` files are shadow-copied into `.unifocl/stash/<transaction>-<mutation>-<nonce>/`.
+Project-mode mutations that bypass Unity Undo are protected with transactional stashing and VCS-aware preflight:
+* Before execution, UVCS-owned paths are preflighted for checkout (checkout-first policy; mutation fails if checkout is unavailable).
+* Ownership mode is resolved per project:
+  * `uvcs_all`: all mutation targets are treated as UVCS-owned.
+  * `uvcs_hybrid_gitignore`: ownership is resolved from `.gitignore` rules at path level.
+* Before execution, target assets and matching `.meta` files are shadow-copied into runtime stash storage under `$(UNIFOCL_PROJECT_STASH_ROOT || <temp>/unifocl-stash)/<project-hash>/...`.
 * On success, stash contents are removed (commit path).
 * On failure or exception, the stash is restored and cleanup targets are removed, then `AssetDatabase.Refresh(ForceUpdate)` is called to re-sync Unity state.
+
+Interactive setup guard:
+* When UVCS is auto-detected but unconfigured, the first project mutation prompts for one-time VCS setup and stores `.unifocl/vcs-config.json`.
+* If setup is declined, mutation is aborted with actionable guidance.
 
 Critical filesystem mutation sections are serialized with `SemaphoreSlim` to avoid concurrent race conditions during stash/restore and mutation execution.
 
@@ -134,7 +144,7 @@ Memory dry-run (`hierarchy` / `inspector`):
 
 Filesystem dry-run (`project`):
 * No `System.IO` mutation occurs.
-* Daemon returns proposed path and metadata changes (including `.meta` side effects).
+* Daemon returns proposed path and metadata changes (including `.meta` side effects), plus ownership/checkout hints for each path change.
 
 CLI / agentic integration:
 * Interactive outputs append unified dry-run diff lines in Spectre command logs.
@@ -255,6 +265,10 @@ Field semantics:
 * `diff`: optional dry-run diff payload (present when `--dry-run` preview is returned).
 * `meta`: schema/protocol/exit metadata plus optional command-specific extras.
 
+Agentic VCS setup guard:
+* Agentic project mutations short-circuit with `E_VCS_SETUP_REQUIRED` when UVCS is detected but project VCS setup is incomplete.
+* Non-mutation agentic commands continue to run.
+
 ### 3. Agentic Exit Codes
 
 | Exit Code | Meaning |
@@ -263,6 +277,8 @@ Field semantics:
 | `2` | Validation / parse / context-state error |
 | `3` | Daemon/bridge availability or timeout class failure |
 | `4` | Internal execution error |
+
+`E_VCS_SETUP_REQUIRED` is classified under exit code `2`.
 
 ### 4. `/dump` State Serialization
 
@@ -459,7 +475,9 @@ unifocl now supports durable project-mutation execution (`submit -> status -> re
   - `POST /project/mutation/cancel?requestId=<id>`
 Recent stability hardening:
 * `/init` now installs `com.coplaydev.unity-mcp` through a dedicated Unity batch process with PID/status tracking instead of daemon mutation round-trips.
-* MCP install uses fallback Git target resolution and recursively installs transitive package dependencies declared in installed package `package.json` files.
+* MCP install uses fallback Git target resolution plus scoped-registry-aware recursive dependency resolution from package metadata.
+* `/init` now syncs resolved MCP transitive dependencies back into local MCP package manifests (`Packages/.../package.json` and `Library/PackageCache/.../package.json`) to prevent dependency desync.
+* MCP bootstrap enforces `com.unity.modules.imageconversion` so runtime screenshot helpers using `Texture2D.EncodeToPNG` keep compile-safe module references.
 * `exec --agentic` UPM commands with `--project <path>` auto-run an `/open` lifecycle step before executing package commands.
 
 ### 2. Daemon Management

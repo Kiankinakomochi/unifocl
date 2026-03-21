@@ -11,8 +11,12 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonSourceResource = "Payload/EditorScripts/CLIDaemon.cs";
     private const string DaemonRuntimeModelsResource = "Payload/EditorScripts/Models/DaemonBridgeModels.cs";
     private const string DaemonAssetIndexServiceResource = "Payload/EditorScripts/Services/DaemonAssetIndexService.cs";
+    private const string DaemonDryRunServicesResource = "Payload/EditorScripts/Services/DaemonDryRunServices.cs";
     private const string DaemonHierarchyServiceResource = "Payload/EditorScripts/Services/DaemonHierarchyService.cs";
     private const string DaemonInspectorServiceResource = "Payload/EditorScripts/Services/DaemonInspectorService.cs";
+    private const string DaemonMutationCommandDispatcherResource = "Payload/EditorScripts/Services/DaemonMutationCommandDispatcher.cs";
+    private const string DaemonMutationCommandStoreResource = "Payload/EditorScripts/Services/DaemonMutationCommandStore.cs";
+    private const string DaemonMutationTransactionCoordinatorResource = "Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs";
     private const string DaemonProjectServiceResource = "Payload/EditorScripts/Services/DaemonProjectService.cs";
     private const string DaemonSceneManagerResource = "Payload/EditorScripts/Services/DaemonSceneManager.cs";
     private const string DaemonScenePersistenceServiceResource = "Payload/EditorScripts/Services/DaemonScenePersistenceService.cs";
@@ -112,8 +116,12 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "BridgeModels.cs"),
             Path.Combine(packagePath, "Editor", "Models", "DaemonBridgeModels.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonAssetIndexService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunServices.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonHierarchyService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonMutationCommandDispatcher.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonMutationCommandStore.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonMutationTransactionCoordinator.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonSceneManager.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonScenePersistenceService.cs")
@@ -217,8 +225,12 @@ internal sealed class EditorDependencyInitializerService
                 (SharedModelsSourceResource, Path.Combine("Editor", "BridgeModels.cs")),
                 (DaemonRuntimeModelsResource, Path.Combine("Editor", "Models", "DaemonBridgeModels.cs")),
                 (DaemonAssetIndexServiceResource, Path.Combine("Editor", "Services", "DaemonAssetIndexService.cs")),
+                (DaemonDryRunServicesResource, Path.Combine("Editor", "Services", "DaemonDryRunServices.cs")),
                 (DaemonHierarchyServiceResource, Path.Combine("Editor", "Services", "DaemonHierarchyService.cs")),
                 (DaemonInspectorServiceResource, Path.Combine("Editor", "Services", "DaemonInspectorService.cs")),
+                (DaemonMutationCommandDispatcherResource, Path.Combine("Editor", "Services", "DaemonMutationCommandDispatcher.cs")),
+                (DaemonMutationCommandStoreResource, Path.Combine("Editor", "Services", "DaemonMutationCommandStore.cs")),
+                (DaemonMutationTransactionCoordinatorResource, Path.Combine("Editor", "Services", "DaemonMutationTransactionCoordinator.cs")),
                 (DaemonProjectServiceResource, Path.Combine("Editor", "Services", "DaemonProjectService.cs")),
                 (DaemonSceneManagerResource, Path.Combine("Editor", "Services", "DaemonSceneManager.cs")),
                 (DaemonScenePersistenceServiceResource, Path.Combine("Editor", "Services", "DaemonScenePersistenceService.cs"))

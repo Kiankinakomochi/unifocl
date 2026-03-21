@@ -61,6 +61,7 @@ internal static class CliOneShotExecutionService
         object? data = null;
         var errors = new List<AgenticError>();
         var warnings = new List<AgenticWarning>();
+        var blockedByGuard = false;
         CliDryRunDiffService.Reset();
         try
         {
@@ -85,25 +86,56 @@ internal static class CliOneShotExecutionService
             }
             else
             {
-                await ExecuteCommandForOneShotAsync(
-                    input,
-                    commands,
-                    streamLog,
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    projectLifecycleService,
-                    projectCommandRouterService,
-                    hierarchyTui,
-                    buildCommandService,
-                    cancellationToken).WaitAsync(cancellationToken);
-                var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
-                errors.AddRange(parsed.Errors);
-                warnings.AddRange(parsed.Warnings);
-                data = new Dictionary<string, object?>
+                if (options.Agentic
+                    && session.Mode == CliMode.Project
+                    && !string.IsNullOrWhiteSpace(session.CurrentProjectPath)
+                    && !input.StartsWith('/')
+                    && ProjectVcsProfileService.IsProjectMutationCommand(input))
                 {
-                    ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
-                };
+                    var guard = ProjectVcsProfileService.EvaluateMutationGuardForAgentic(session.CurrentProjectPath!);
+                    if (!guard.Allowed)
+                    {
+                    errors.Add(new AgenticError(
+                            "E_VCS_SETUP_REQUIRED",
+                            guard.Message,
+                            "Prompt the user to run a project mutation in interactive mode and approve VCS setup first."));
+                    }
+                }
+
+                if (errors.Count > 0)
+                {
+                    blockedByGuard = true;
+                }
+
+                if (!blockedByGuard)
+                {
+                    await ExecuteCommandForOneShotAsync(
+                        input,
+                        commands,
+                        streamLog,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        projectLifecycleService,
+                        projectCommandRouterService,
+                        hierarchyTui,
+                        buildCommandService,
+                        cancellationToken).WaitAsync(cancellationToken);
+                    var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
+                    errors.AddRange(parsed.Errors);
+                    warnings.AddRange(parsed.Warnings);
+                    if (parsed.RequiresEscalation)
+                    {
+                        extraMeta["requiresEscalation"] = true;
+                        extraMeta["escalationEvidence"] = parsed.EscalationEvidence;
+                        extraMeta["escalatedRerunCommand"] = BuildEscalatedRerunCommand(options);
+                    }
+
+                    data = new Dictionary<string, object?>
+                    {
+                        ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
+                    };
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -142,6 +174,58 @@ internal static class CliOneShotExecutionService
                 DateTime.UtcNow.ToString("O"),
                 extraMeta),
             diff);
+    }
+
+    private static string BuildEscalatedRerunCommand(ExecLaunchOptions options)
+    {
+        static string QuoteIfNeeded(string value)
+        {
+            return value.Contains(' ', StringComparison.Ordinal)
+                ? $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+                : value;
+        }
+
+        var args = new List<string>
+        {
+            "unifocl",
+            "exec",
+            QuoteIfNeeded(options.CommandText),
+            "--agentic",
+            "--format",
+            options.Format.ToString().ToLowerInvariant()
+        };
+
+        if (!string.IsNullOrWhiteSpace(options.ProjectPath))
+        {
+            args.Add("--project");
+            args.Add(QuoteIfNeeded(options.ProjectPath!));
+        }
+
+        if (options.ContextMode is not null)
+        {
+            args.Add("--mode");
+            args.Add(options.ContextMode.Value.ToString().ToLowerInvariant());
+        }
+
+        if (options.AttachPort is int attachPort)
+        {
+            args.Add("--attach-port");
+            args.Add(attachPort.ToString());
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.RequestId))
+        {
+            args.Add("--request-id");
+            args.Add(QuoteIfNeeded(options.RequestId!));
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.SessionSeed))
+        {
+            args.Add("--session-seed");
+            args.Add(QuoteIfNeeded(options.SessionSeed!));
+        }
+
+        return string.Join(' ', args);
     }
 
     private static void ApplyPersistedSessionSnapshot(CliSessionState session, AgenticSessionSnapshot snapshot)

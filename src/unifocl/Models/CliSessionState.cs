@@ -28,6 +28,8 @@ internal sealed class CliSessionState
     public bool RecentSelectionAllowUnsafe { get; set; }
     public bool SafeModeEnabled { get; set; }
     public CompileErrorState? LastCompileError { get; set; }
+    public string? VcsSetupPromptProjectPath { get; set; }
+    public bool VcsSetupDeclinedForProject { get; set; }
 
     public void ResetToBoot()
     {
@@ -61,6 +63,8 @@ internal sealed class CliSessionState
         RecentSelectionAllowUnsafe = false;
         SafeModeEnabled = false;
         LastCompileError = null;
+        VcsSetupPromptProjectPath = null;
+        VcsSetupDeclinedForProject = false;
     }
 }
 

@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+#nullable enable
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -1757,4 +1758,5 @@ namespace UniFocl.EditorBridge
         }
     }
 }
+#nullable restore
 #endif

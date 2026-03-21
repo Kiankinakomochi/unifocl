@@ -31,8 +31,8 @@ internal static class CliUpmIntellisenseService
             candidates.Add((isSlash ? "/upm remove <id>" : "upm remove <id>", isSlash ? "/upm remove " : "upm remove "));
             candidates.Add((isSlash ? "/upm rm <id>" : "upm rm <id>", isSlash ? "/upm rm " : "upm rm "));
             candidates.Add((isSlash ? "/upm uninstall <id>" : "upm uninstall <id>", isSlash ? "/upm uninstall " : "upm uninstall "));
-            candidates.Add((isSlash ? "/upm update [id]" : "upm update [id]", isSlash ? "/upm update " : "upm update "));
-            candidates.Add((isSlash ? "/upm u [id]" : "upm u [id]", isSlash ? "/upm u " : "upm u "));
+            candidates.Add((isSlash ? "/upm update <id> [version]" : "upm update <id> [version]", isSlash ? "/upm update " : "upm update "));
+            candidates.Add((isSlash ? "/upm u <id> [version]" : "upm u <id> [version]", isSlash ? "/upm u " : "upm u "));
             return true;
         }
 
@@ -46,8 +46,8 @@ internal static class CliUpmIntellisenseService
             (isSlash ? "/upm remove <id>" : "upm remove <id>", isSlash ? "/upm remove " : "upm remove "),
             (isSlash ? "/upm rm <id>" : "upm rm <id>", isSlash ? "/upm rm " : "upm rm "),
             (isSlash ? "/upm uninstall <id>" : "upm uninstall <id>", isSlash ? "/upm uninstall " : "upm uninstall "),
-            (isSlash ? "/upm update [id]" : "upm update [id]", isSlash ? "/upm update " : "upm update "),
-            (isSlash ? "/upm u [id]" : "upm u [id]", isSlash ? "/upm u " : "upm u ")
+            (isSlash ? "/upm update <id> [version]" : "upm update <id> [version]", isSlash ? "/upm update " : "upm update "),
+            (isSlash ? "/upm u <id> [version]" : "upm u <id> [version]", isSlash ? "/upm u " : "upm u ")
         };
 
         var suffixLower = suffix.ToLowerInvariant();
