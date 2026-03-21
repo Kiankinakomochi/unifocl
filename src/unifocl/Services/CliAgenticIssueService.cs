@@ -55,7 +55,7 @@ internal static class CliAgenticIssueService
             return 6;
         }
 
-        if (errors.Any(error => error.Code is "E_PARSE" or "E_VALIDATION" or "E_MODE_INVALID" or "E_NOT_FOUND"))
+        if (errors.Any(error => error.Code is "E_PARSE" or "E_VALIDATION" or "E_MODE_INVALID" or "E_NOT_FOUND" or "E_VCS_SETUP_REQUIRED"))
         {
             return 2;
         }
@@ -90,6 +90,11 @@ internal static class CliAgenticIssueService
         if (normalizedLine.Contains("usage") || normalizedLine.Contains("invalid"))
         {
             return "E_PARSE";
+        }
+
+        if (normalizedLine.Contains("vcs setup", StringComparison.OrdinalIgnoreCase))
+        {
+            return "E_VCS_SETUP_REQUIRED";
         }
 
         if (normalizedLine.Contains("open a project first") || normalizedLine.Contains("mode"))

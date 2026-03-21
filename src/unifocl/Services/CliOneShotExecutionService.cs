@@ -61,6 +61,7 @@ internal static class CliOneShotExecutionService
         object? data = null;
         var errors = new List<AgenticError>();
         var warnings = new List<AgenticWarning>();
+        var blockedByGuard = false;
         CliDryRunDiffService.Reset();
         try
         {
@@ -85,32 +86,56 @@ internal static class CliOneShotExecutionService
             }
             else
             {
-                await ExecuteCommandForOneShotAsync(
-                    input,
-                    commands,
-                    streamLog,
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    projectLifecycleService,
-                    projectCommandRouterService,
-                    hierarchyTui,
-                    buildCommandService,
-                    cancellationToken).WaitAsync(cancellationToken);
-                var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
-                errors.AddRange(parsed.Errors);
-                warnings.AddRange(parsed.Warnings);
-                if (parsed.RequiresEscalation)
+                if (options.Agentic
+                    && session.Mode == CliMode.Project
+                    && !string.IsNullOrWhiteSpace(session.CurrentProjectPath)
+                    && !input.StartsWith('/')
+                    && ProjectVcsProfileService.IsProjectMutationCommand(input))
                 {
-                    extraMeta["requiresEscalation"] = true;
-                    extraMeta["escalationEvidence"] = parsed.EscalationEvidence;
-                    extraMeta["escalatedRerunCommand"] = BuildEscalatedRerunCommand(options);
+                    var guard = ProjectVcsProfileService.EvaluateMutationGuardForAgentic(session.CurrentProjectPath!);
+                    if (!guard.Allowed)
+                    {
+                    errors.Add(new AgenticError(
+                            "E_VCS_SETUP_REQUIRED",
+                            guard.Message,
+                            "Prompt the user to run a project mutation in interactive mode and approve VCS setup first."));
+                    }
                 }
 
-                data = new Dictionary<string, object?>
+                if (errors.Count > 0)
                 {
-                    ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
-                };
+                    blockedByGuard = true;
+                }
+
+                if (!blockedByGuard)
+                {
+                    await ExecuteCommandForOneShotAsync(
+                        input,
+                        commands,
+                        streamLog,
+                        session,
+                        daemonControlService,
+                        daemonRuntime,
+                        projectLifecycleService,
+                        projectCommandRouterService,
+                        hierarchyTui,
+                        buildCommandService,
+                        cancellationToken).WaitAsync(cancellationToken);
+                    var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
+                    errors.AddRange(parsed.Errors);
+                    warnings.AddRange(parsed.Warnings);
+                    if (parsed.RequiresEscalation)
+                    {
+                        extraMeta["requiresEscalation"] = true;
+                        extraMeta["escalationEvidence"] = parsed.EscalationEvidence;
+                        extraMeta["escalatedRerunCommand"] = BuildEscalatedRerunCommand(options);
+                    }
+
+                    data = new Dictionary<string, object?>
+                    {
+                        ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
+                    };
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -68,9 +68,12 @@ namespace UniFocl.EditorBridge
                 var path = change.path ?? string.Empty;
                 var nextPath = string.IsNullOrWhiteSpace(change.nextPath) ? "-" : change.nextPath!;
                 var metaPath = string.IsNullOrWhiteSpace(change.metaPath) ? "-" : change.metaPath!;
+                var owner = string.IsNullOrWhiteSpace(change.owner) ? "unknown" : change.owner;
+                var checkout = change.requiresCheckout ? "required" : "no";
                 lines.Add($"- {change.action}: {path}");
                 lines.Add($"+ {change.action}: {nextPath}");
                 lines.Add($"~ meta: {metaPath}");
+                lines.Add($"~ owner: {owner} (checkout={checkout})");
             }
 
             var payload = new MutationDryRunDiffPayload

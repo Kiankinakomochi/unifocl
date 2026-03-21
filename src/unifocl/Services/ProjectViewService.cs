@@ -70,6 +70,14 @@ internal sealed partial class ProjectViewService
                  && (tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase)
                      || tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase)))
         {
+            if (!EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleMkViaBridgeAsync(tokens, session, outputs);
         }
@@ -80,11 +88,27 @@ internal sealed partial class ProjectViewService
         }
         else if (tokens.Count >= 3 && tokens[0].Equals("rename", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out index))
         {
+            if (!EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleRenameViaBridgeAsync(index, tokens[2], session, outputs);
         }
         else if (tokens.Count >= 2 && tokens[0].Equals("rm", StringComparison.OrdinalIgnoreCase))
         {
+            if (!EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleRemoveViaBridgeAsync(tokens[1], session, outputs);
         }
@@ -118,6 +142,28 @@ internal sealed partial class ProjectViewService
         ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
         RenderFrame(session.ProjectView);
         return true;
+    }
+
+    private static bool EnsureVcsSetupForMutation(CliSessionState session, List<string> outputs)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return true;
+        }
+
+        var guard = ProjectVcsProfileService.EnsureInteractiveMutationReady(session.CurrentProjectPath, session);
+        if (guard.Allowed)
+        {
+            if (!string.IsNullOrWhiteSpace(guard.Message))
+            {
+                outputs.Add($"[i] {guard.Message}");
+            }
+
+            return true;
+        }
+
+        outputs.Add($"[x] {guard.Message}");
+        return false;
     }
 
     private async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.29.0 - 2026-03-21
+
+### Changed
+- Officialized `0.29.0` by closing the development cycle suffix.
+- Added Unity Version Control-aware mutation safety for project filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`) with support for:
+  - `uvcs_all` mode (UVCS owns all mutation targets)
+  - `uvcs_hybrid_gitignore` mode (ownership resolved from `.gitignore` rules per path)
+- Added project VCS profile detection/setup flow:
+  - auto-detect UVCS and Git markers
+  - one-time interactive setup prompt on first mutation when unconfigured
+  - persisted local setup state at `.unifocl/vcs-config.json`
+- Extended mutation intent envelopes with additive VCS metadata (`flags.vcsMode`, `flags.vcsOwnedPaths`) and propagated ownership details into project mutation dispatch.
+- Hardened project rollback persistence flow with VCS-aware preflight checks and moved transaction stash root to runtime-safe temp storage:
+  - default: `<temp>/unifocl-stash/<project-hash>/...`
+  - override: `UNIFOCL_PROJECT_STASH_ROOT`
+- Extended project dry-run previews to include per-path ownership and checkout expectation hints.
+- Added agentic early-return guard for unconfigured UVCS projects:
+  - project mutation commands now return `E_VCS_SETUP_REQUIRED` with actionable hint
+  - non-mutation agentic commands remain unaffected
+- Classified `E_VCS_SETUP_REQUIRED` under validation-class exit code `2`.
+
 ## 0.28.0 - 2026-03-21
 
 ### Changed

@@ -1,6 +1,13 @@
 internal sealed record MutationIntentFlagsDto(
     bool DryRun = false,
-    bool RequireRollback = true);
+    bool RequireRollback = true,
+    string? VcsMode = null,
+    List<MutationIntentVcsPathDto>? VcsOwnedPaths = null);
+
+internal sealed record MutationIntentVcsPathDto(
+    string Path,
+    string Owner,
+    bool RequiresCheckout = false);
 
 internal sealed record MutationIntentDto(
     string TransactionId,
