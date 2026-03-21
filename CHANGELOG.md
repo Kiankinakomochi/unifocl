@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.30.0 - 2026-03-21
+
+### Changed
+- Officialized `0.30.0` by closing the development cycle suffix.
+- Removed `/upm install` transitive dependency hydration from manifest mutation flow and delegated transitive resolution responsibility to Unity Package Manager.
+- Removed unused daemon `upm-install` (`Client.Add`) command path from Unity editor bridge project command routing.
+- Added README warning about the Unity 6 package-signature invalid-report issue and fixed-editor-version guidance.
+
 ## 0.29.0 - 2026-03-21
 
 ### Changed
