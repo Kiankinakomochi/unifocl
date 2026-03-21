@@ -458,6 +458,8 @@ Safety constraints in host-mode fallback:
 UPM commands in CLI mode (`upm list/install/remove/update`) are currently under active stabilization.  
 For critical package operations, the recommended workflow is still Unity Editor GUI (Package Manager window), then use unifocl for verification and follow-up automation.
 
+Warning: Unity 6 editors have a known issue where the Package Manager can report packages as invalid, even though they have a valid package signature. This issue is fixed in `6000.3.5f2` and later. Update to one of these builds to address the issue. See [Unity package signing documentation](https://docs.unity3d.com/6000.3/Documentation/Manual/upm-signature.html).
+
 ### MCP Integration (Hybrid Durable Mutations)
 
 unifocl now supports durable project-mutation execution (`submit -> status -> result`) so mutation outcomes remain queryable even if Unity refresh/compile/domain reload interrupts an in-flight HTTP response.

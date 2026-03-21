@@ -252,7 +252,6 @@ namespace UniFocl.EditorBridge
                 "remove-asset" => Task.FromResult(ExecuteRemoveAsset(request)),
                 "load-asset" => Task.FromResult(ExecuteLoadAsset(request)),
                 "upm-list" => Task.FromResult(ExecuteUpmList(request)),
-                "upm-install" => ExecuteUpmInstall(request),
                 "upm-remove" => ExecuteUpmRemove(request),
                 "build-run" => Task.FromResult(ExecuteBuildRun(request)),
                 "build-exec" => Task.FromResult(ExecuteBuildExec(request)),
@@ -700,71 +699,6 @@ namespace UniFocl.EditorBridge
                 kind = "upm-list",
                 content = payload
             });
-        }
-
-        private static Task<string> ExecuteUpmInstall(ProjectCommandRequest request)
-        {
-            var options = ParseUpmInstallOptions(request.content);
-            var target = options.target?.Trim() ?? string.Empty;
-            if (!TryClassifyUpmInstallTarget(target, out var targetType))
-            {
-                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
-                {
-                    ok = false,
-                    message = "upm install target must be registry ID, Git URL, or file: path"
-                }));
-            }
-
-            var resolvedTarget = ResolveInstallTargetVersion(target, targetType);
-            AddRequest addRequest;
-            try
-            {
-                addRequest = Client.Add(resolvedTarget);
-            }
-            catch (Exception ex)
-            {
-                return Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse
-                {
-                    ok = false,
-                    message = $"failed to start UPM install: {ex.Message}"
-                }));
-            }
-
-            var packageId = TryExtractRegistryPackageId(resolvedTarget) ?? TryExtractRegistryPackageId(target) ?? target;
-            return AwaitRequestWithResolveAsync(
-                addRequest,
-                timeoutMessage: "upm install timed out after 120 seconds",
-                failurePrefix: "upm install failed",
-                onSuccess: () =>
-                {
-                    var installed = addRequest.Result;
-                    var payload = JsonUtility.ToJson(new UpmInstallResponse
-                    {
-                        packageId = installed?.name ?? packageId,
-                        version = installed?.version ?? string.Empty,
-                        source = installed?.source.ToString() ?? string.Empty,
-                        targetType = targetType
-                    });
-
-                    return JsonUtility.ToJson(new ProjectCommandResponse
-                    {
-                        ok = true,
-                        message = "upm install completed",
-                        kind = "upm-install",
-                        content = payload
-                    });
-                },
-                postVerify: () =>
-                {
-                    if (!IsRegistryPackageId(packageId))
-                    {
-                        return true;
-                    }
-
-                    var installed = FindRegisteredPackage(packageId);
-                    return installed is not null;
-                },
-                postVerifyMessage: $"upm install completed but package is not loaded: {packageId}");
         }
 
         private static Task<string> ExecuteUpmRemove(ProjectCommandRequest request)
@@ -2001,23 +1935,6 @@ namespace UniFocl.EditorBridge
             }
         }
 
-        private static UpmInstallRequestOptions ParseUpmInstallOptions(string rawContent)
-        {
-            if (string.IsNullOrWhiteSpace(rawContent))
-            {
-                return new UpmInstallRequestOptions();
-            }
-
-            try
-            {
-                return JsonUtility.FromJson<UpmInstallRequestOptions>(rawContent) ?? new UpmInstallRequestOptions();
-            }
-            catch
-            {
-                return new UpmInstallRequestOptions();
-            }
-        }
-
         private static UpmRemoveRequestOptions ParseUpmRemoveOptions(string rawContent)
         {
             if (string.IsNullOrWhiteSpace(rawContent))
@@ -2033,35 +1950,6 @@ namespace UniFocl.EditorBridge
             {
                 return new UpmRemoveRequestOptions();
             }
-        }
-
-        private static bool TryClassifyUpmInstallTarget(string target, out string targetType)
-        {
-            targetType = string.Empty;
-            if (string.IsNullOrWhiteSpace(target))
-            {
-                return false;
-            }
-
-            if (IsRegistryPackageId(target))
-            {
-                targetType = "registry";
-                return true;
-            }
-
-            if (IsGitPackageUrl(target))
-            {
-                targetType = "git";
-                return true;
-            }
-
-            if (IsLocalFilePackagePath(target))
-            {
-                targetType = "file";
-                return true;
-            }
-
-            return false;
         }
 
         private static bool IsRegistryPackageId(string value)
@@ -2119,52 +2007,6 @@ namespace UniFocl.EditorBridge
             }
 
             return packageId;
-        }
-
-        private static string ResolveInstallTargetVersion(string target, string targetType)
-        {
-            if (!targetType.Equals("registry", StringComparison.OrdinalIgnoreCase))
-            {
-                return target;
-            }
-
-            if (!IsRegistryPackageId(target))
-            {
-                return target;
-            }
-
-            if (target.Contains('@'))
-            {
-                return target;
-            }
-
-            var packageId = TryExtractRegistryPackageId(target);
-            if (string.IsNullOrWhiteSpace(packageId))
-            {
-                return target;
-            }
-
-            var installed = FindRegisteredPackage(packageId);
-            var latestCompatible = installed?.versions?.latestCompatible;
-            if (string.IsNullOrWhiteSpace(latestCompatible))
-            {
-                return target;
-            }
-
-            return $"{packageId}@{latestCompatible}";
-        }
-
-        private static UpmPackageInfo? FindRegisteredPackage(string packageId)
-        {
-            if (string.IsNullOrWhiteSpace(packageId))
-            {
-                return null;
-            }
-
-            var all = UpmPackageInfo.GetAllRegisteredPackages() ?? Array.Empty<UpmPackageInfo>();
-            return all.FirstOrDefault(package =>
-                package is not null
-                && package.name.Equals(packageId, StringComparison.OrdinalIgnoreCase));
         }
 
         private static bool IsPackageInManifest(string packageId)
