@@ -24,3 +24,5 @@ src/unifocl.unity/EditorScripts/Plugins/*.dll
 # local machine bootstrap artifacts
 local.config.json
 .local/
+
+AGENT.md
