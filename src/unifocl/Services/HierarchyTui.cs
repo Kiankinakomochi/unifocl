@@ -247,6 +247,105 @@ internal sealed class HierarchyTui
         log("[grey]hierarchy[/]: exited hierarchy mode");
     }
 
+    public async Task<bool> TryHandleOneShotCommandAsync(
+        string input,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log,
+        Func<string, Task<bool>>? transitionToInspectorAsync = null)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            log("[yellow]hierarchy[/]: open a project first with /open");
+            return true;
+        }
+
+        var touched = await daemonControlService.TouchAttachedDaemonAsync(session);
+        if (!touched)
+        {
+            await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, log);
+        }
+
+        if (session.AttachedPort is null)
+        {
+            log("[red]hierarchy[/]: daemon is not attached");
+            return true;
+        }
+
+        var port = session.AttachedPort.Value;
+        var snapshot = await _daemonClient.GetSnapshotAsync(port);
+        if (snapshot is null)
+        {
+            log("[red]hierarchy[/]: failed to load hierarchy snapshot from daemon");
+            return true;
+        }
+
+        var cwdId = ResolveCwdId(snapshot, session.FocusPath);
+        BuildTreeLines(snapshot, cwdId, out var indexMap, out _, out _, _collapsedNodeIds);
+        var commandLog = new List<string>();
+
+        var (inspectCommandHandled, inspectTransitioned) = await TryHandleInspectTransitionCommandAsync(
+            input,
+            indexMap,
+            cwdId,
+            snapshot,
+            commandLog,
+            transitionToInspectorAsync);
+        if (inspectCommandHandled)
+        {
+            foreach (var line in commandLog)
+            {
+                log(line);
+            }
+
+            if (inspectTransitioned)
+            {
+                session.ContextMode = CliContextMode.Inspector;
+            }
+
+            return true;
+        }
+
+        var handled = await TryHandleInFrameCommandAsync(
+            input,
+            indexMap,
+            cwdId,
+            port,
+            snapshot,
+            commandLog,
+            newCwdId => cwdId = newCwdId);
+        if (!handled)
+        {
+            return false;
+        }
+
+        var nextSnapshot = await _daemonClient.GetSnapshotAsync(port);
+        if (nextSnapshot is not null)
+        {
+            snapshot = nextSnapshot;
+            if (!ContainsNode(snapshot.Root, cwdId))
+            {
+                cwdId = snapshot.Root.Id;
+            }
+
+            PruneCollapsedNodeSet(snapshot.Root, _collapsedNodeIds);
+        }
+
+        session.FocusPath = BuildPath(snapshot.Root, cwdId);
+        if (session.ContextMode != CliContextMode.Inspector)
+        {
+            session.ContextMode = CliContextMode.Hierarchy;
+        }
+
+        foreach (var line in commandLog)
+        {
+            log(line);
+        }
+
+        return true;
+    }
+
     private async Task<bool> TryHandleInFrameCommandAsync(
         string input,
         IReadOnlyDictionary<int, int> indexMap,
@@ -978,6 +1077,57 @@ internal sealed class HierarchyTui
     }
 
     private static bool ContainsNode(HierarchyNodeDto node, int id) => FindNode(node, id) is not null;
+
+    private static int ResolveCwdId(HierarchySnapshotDto snapshot, string? focusPath)
+    {
+        if (string.IsNullOrWhiteSpace(focusPath) || focusPath == "/")
+        {
+            return snapshot.Root.Id;
+        }
+
+        return TryFindNodeByPath(snapshot.Root, focusPath, out var node)
+            ? node.Id
+            : snapshot.Root.Id;
+    }
+
+    private static bool TryFindNodeByPath(HierarchyNodeDto root, string path, out HierarchyNodeDto node)
+    {
+        node = root;
+        if (string.IsNullOrWhiteSpace(path) || path == "/")
+        {
+            return true;
+        }
+
+        var normalized = path.Trim();
+        if (!normalized.StartsWith('/'))
+        {
+            normalized = "/" + normalized;
+        }
+
+        var segments = normalized
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+        {
+            return true;
+        }
+
+        var current = root;
+        foreach (var segment in segments)
+        {
+            var next = current.Children.FirstOrDefault(child =>
+                child.Name.Equals(segment, StringComparison.OrdinalIgnoreCase));
+            if (next is null)
+            {
+                return false;
+            }
+
+            current = next;
+        }
+
+        node = current;
+        return true;
+    }
 
     private static bool TryResolveInspectTargetPath(
         IReadOnlyList<string> tokens,

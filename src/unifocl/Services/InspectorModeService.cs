@@ -460,7 +460,8 @@ internal sealed class InspectorModeService
             return;
         }
 
-        var target = argument.StartsWith('/') ? argument : "/" + argument;
+        var rawTarget = argument.StartsWith('/') ? argument : "/" + argument;
+        var target = await NormalizeInspectorTargetPathAsync(session, rawTarget);
         await EnterInspectorRootAsync(context, session, target, input);
     }
 
@@ -643,9 +644,25 @@ internal sealed class InspectorModeService
             var separatorIndex = fieldName.IndexOf('.');
             if (separatorIndex <= 0 || separatorIndex >= fieldName.Length - 1)
             {
-                AddStream(context, $"{context.PromptLabel} > {input}");
-                AddStream(context, "[!] usage at inspector root: set <Component>.<field> <value...>");
-                _renderer.Render(context);
+                var resolved = await TryResolveRootFieldByNameAsync(session, context, fieldName);
+                if (resolved is null)
+                {
+                    AddStream(context, $"{context.PromptLabel} > {input}");
+                    AddStream(context, "[!] usage at inspector root: set <Component>.<field> <value...>");
+                    _renderer.Render(context);
+                    return;
+                }
+
+                await ApplySetFieldAsync(
+                    input,
+                    session,
+                    context,
+                    resolved.Value.Component.Index,
+                    resolved.Value.Component.Name,
+                    resolved.Value.Field,
+                    valueTokens,
+                    successLabel: $"{resolved.Value.Component.Name}.{resolved.Value.Field.Name}",
+                    updateSelectedComponentFields: false);
                 return;
             }
 
@@ -2644,6 +2661,142 @@ internal sealed class InspectorModeService
         }
     }
 
+    private async Task<string> NormalizeInspectorTargetPathAsync(CliSessionState session, string rawTargetPath)
+    {
+        var normalized = NormalizeInspectorPath(rawTargetPath);
+        if (session.AttachedPort is null)
+        {
+            return normalized;
+        }
+
+        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+        if (snapshot is null)
+        {
+            return normalized;
+        }
+
+        var stripped = StripSceneRootPrefix(normalized, snapshot.Root.Name);
+        return TryResolveHierarchyPathLenient(snapshot.Root, stripped, out var resolved)
+            ? resolved
+            : stripped;
+    }
+
+    private static string StripSceneRootPrefix(string normalizedPath, string sceneRootName)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedPath)
+            || normalizedPath == "/"
+            || string.IsNullOrWhiteSpace(sceneRootName))
+        {
+            return normalizedPath;
+        }
+
+        var prefix = "/" + sceneRootName;
+        if (normalizedPath.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return "/";
+        }
+
+        if (normalizedPath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalizedPath[prefix.Length..];
+        }
+
+        return normalizedPath;
+    }
+
+    private static bool TryResolveHierarchyPathLenient(HierarchyNodeDto root, string normalizedPath, out string resolvedPath)
+    {
+        resolvedPath = "/";
+        if (string.IsNullOrWhiteSpace(normalizedPath) || normalizedPath == "/")
+        {
+            return true;
+        }
+
+        var segments = normalizedPath
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+        {
+            return true;
+        }
+
+        var current = root;
+        var resolvedSegments = new List<string>(segments.Length);
+        foreach (var segment in segments)
+        {
+            var exact = current.Children
+                .Where(child => child.Name.Equals(segment, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (exact.Count == 1)
+            {
+                current = exact[0];
+                resolvedSegments.Add(current.Name);
+                continue;
+            }
+
+            if (exact.Count > 1)
+            {
+                return false;
+            }
+
+            var prefixed = current.Children
+                .Where(child => child.Name.StartsWith(segment + " (", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (prefixed.Count != 1)
+            {
+                return false;
+            }
+
+            current = prefixed[0];
+            resolvedSegments.Add(current.Name);
+        }
+
+        resolvedPath = "/" + string.Join('/', resolvedSegments);
+        return true;
+    }
+
+    private async Task<(InspectorComponentEntry Component, InspectorFieldEntry Field)?> TryResolveRootFieldByNameAsync(
+        CliSessionState session,
+        InspectorContext context,
+        string fieldName)
+    {
+        await PopulateComponentsAsync(context, session, forceRefresh: context.Components.Count == 0);
+        if (context.Components.Count == 0)
+        {
+            return null;
+        }
+
+        var matches = new List<(InspectorComponentEntry, InspectorFieldEntry)>();
+        foreach (var component in context.Components)
+        {
+            var fields = await TryFetchFieldsFromBridgeAsync(session, context.TargetPath, component.Index);
+            if (fields is null)
+            {
+                continue;
+            }
+
+            var field = fields.FirstOrDefault(f => f.Name.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
+            if (field is not null)
+            {
+                matches.Add((component, field));
+            }
+        }
+
+        if (matches.Count == 1)
+        {
+            return matches[0];
+        }
+
+        if (matches.Count > 1)
+        {
+            AddStream(context, $"{context.PromptLabel} > set {fieldName} <value...>");
+            AddStream(context, $"[!] ambiguous field '{fieldName}' at inspector root; use Component.{fieldName}");
+            _renderer.Render(context);
+        }
+
+        return null;
+    }
+
     private static InspectorComponentEntry? ResolveComponentRemoveTarget(InspectorContext context, string selector)
     {
         if (int.TryParse(selector, out var index))
@@ -2983,7 +3136,18 @@ internal sealed class InspectorModeService
             return null;
         }
 
-        return TryFindNodeByInspectorPath(snapshot.Root, targetPath, includeRoot, out var resolved)
+        if (TryFindNodeByInspectorPath(snapshot.Root, targetPath, includeRoot, out var resolved))
+        {
+            return resolved;
+        }
+
+        var stripped = StripSceneRootPrefix(NormalizeInspectorPath(targetPath), snapshot.Root.Name);
+        if (TryResolveHierarchyPathLenient(snapshot.Root, stripped, out var lenient))
+        {
+            stripped = lenient;
+        }
+
+        return TryFindNodeByInspectorPath(snapshot.Root, stripped, includeRoot, out resolved)
             ? resolved
             : null;
     }

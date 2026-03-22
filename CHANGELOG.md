@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 - 2026-03-22
+
+### Changed
+- Officialized `1.3.0` by closing the development cycle suffix.
+- Hardened one-shot agentic hierarchy routing and command handling:
+  - added one-shot `/hierarchy` route support
+  - enabled hierarchy contextual commands in one-shot mode without interactive TUI fallback
+- Fixed Unity bridge hierarchy create/parent sequencing to prevent root-scene parenting failures during UI object creation.
+- Improved one-shot inspector mutation reliability:
+  - normalized scene-root-prefixed hierarchy paths
+  - added lenient resolution for Unity-suffixed object names (for example `Name (1)`)
+  - enabled root-level `set <field> <value>` when field mapping is uniquely resolvable
+- Updated the one-shot agentic playbook with current-state guidance, validated flow for steps 4-6, and residual caveats.
+- Bumped bridge protocol to `v9`; projects should re-run `/init` to refresh embedded bridge payloads.
+
 ## 1.2.0 - 2026-03-22
 
 ### Changed
