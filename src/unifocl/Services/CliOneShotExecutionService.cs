@@ -133,18 +133,22 @@ internal static class CliOneShotExecutionService
 
                 if (!blockedByGuard)
                 {
-                    await ExecuteCommandForOneShotAsync(
-                        input,
-                        commands,
-                        streamLog,
-                        session,
-                        daemonControlService,
-                        daemonRuntime,
-                        projectLifecycleService,
-                        projectCommandRouterService,
-                        hierarchyTui,
-                        buildCommandService,
-                        cancellationToken).WaitAsync(cancellationToken);
+                    var commandSequence = SplitOneShotCommands(input);
+                    foreach (var step in commandSequence)
+                    {
+                        await ExecuteCommandForOneShotAsync(
+                            step,
+                            commands,
+                            streamLog,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            projectLifecycleService,
+                            projectCommandRouterService,
+                            hierarchyTui,
+                            buildCommandService,
+                            cancellationToken).WaitAsync(cancellationToken);
+                    }
                     var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
                     errors.AddRange(parsed.Errors);
                     warnings.AddRange(parsed.Warnings);
@@ -217,6 +221,23 @@ internal static class CliOneShotExecutionService
 
         return input.StartsWith("/dump hierarchy", StringComparison.OrdinalIgnoreCase)
                || input.StartsWith("/dump inspector", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<string> SplitOneShotCommands(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return [];
+        }
+
+        var lines = input
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        return lines.Count == 0 ? [input.Trim()] : lines;
     }
 
     private static async Task TryAutoOpenProjectForEndpointAsync(
