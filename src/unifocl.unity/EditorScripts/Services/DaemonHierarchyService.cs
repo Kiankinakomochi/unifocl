@@ -579,8 +579,14 @@ namespace UniFocl.EditorBridge
 
             if (parentTransform is not null)
             {
+                // Move the root object to destination scene before parenting.
+                // Moving after parenting can throw "Gameobject is not a root in a scene".
+                if (created.scene != parentScene)
+                {
+                    SceneManager.MoveGameObjectToScene(created, parentScene);
+                }
+
                 Undo.SetTransformParent(created.transform, parentTransform, "unifocl create hierarchy object");
-                SceneManager.MoveGameObjectToScene(created, parentScene);
                 created.name = GameObjectUtility.GetUniqueNameForSibling(parentTransform, created.name);
                 return created;
             }

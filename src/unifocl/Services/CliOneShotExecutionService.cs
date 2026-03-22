@@ -297,6 +297,39 @@ internal static class CliOneShotExecutionService
 
         if (!input.StartsWith('/'))
         {
+            if (session.ContextMode == CliContextMode.Hierarchy)
+            {
+                var handledHierarchyCommand = await hierarchyTui.TryHandleOneShotCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line),
+                    async targetPath =>
+                    {
+                        var inspectInput = targetPath.Contains(' ', StringComparison.Ordinal)
+                            ? $"inspect \"{targetPath}\""
+                            : $"inspect {targetPath}";
+                        await projectCommandRouterService.TryHandleProjectCommandAsync(
+                            inspectInput,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            line => CliLogService.AppendLog(streamLog, line));
+                        if (session.Inspector is null)
+                        {
+                            return false;
+                        }
+
+                        session.ContextMode = CliContextMode.Inspector;
+                        return true;
+                    }).WaitAsync(cancellationToken);
+                if (handledHierarchyCommand)
+                {
+                    return;
+                }
+            }
+
             if (CliCommandParsingService.TryNormalizeProjectBuildCommand(input, out var normalizedBuildInput))
             {
                 await AwaitWithCancellationAsync(
@@ -359,6 +392,20 @@ internal static class CliOneShotExecutionService
             await AwaitWithCancellationAsync(
                 () => CliDumpService.HandleDumpCommandAsync(input, session, streamLog),
                 cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger == "/hierarchy")
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            session.ContextMode = CliContextMode.Hierarchy;
+            session.Inspector = null;
+            CliLogService.AppendLog(streamLog, "[grey]mode[/]: switched to hierarchy context (agentic one-shot)");
             return;
         }
 
