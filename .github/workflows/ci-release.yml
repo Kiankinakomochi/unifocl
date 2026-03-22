@@ -203,6 +203,21 @@ jobs:
 
           sed -i -E "s|^  url \".*\"$|  url \"${release_asset_url}\"|" "${formula_path}"
           sed -i -E "s|^  sha256 \".*\"$|  sha256 \"${asset_sha256}\"|" "${formula_path}"
+          if grep -Eq "^  version \".*\"$" "${formula_path}"; then
+            sed -i -E "s|^  version \".*\"$|  version \"${version}\"|" "${formula_path}"
+          else
+            awk -v v="${version}" '
+              BEGIN { inserted=0 }
+              {
+                print
+                if (!inserted && $0 ~ /^  homepage "/) {
+                  print "  version \"" v "\""
+                  inserted=1
+                }
+              }
+            ' "${formula_path}" > "${formula_path}.tmp"
+            mv "${formula_path}.tmp" "${formula_path}"
+          fi
 
           if git -C "${formula_repo_dir}" diff --quiet -- Formula/unifocl.rb; then
             echo "No formula changes detected; skipping commit."
