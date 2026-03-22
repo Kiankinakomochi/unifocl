@@ -341,7 +341,46 @@ internal sealed class EditorDependencyInitializerService
         }
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".unifocl", EmbeddedPackageFolder);
+        var homePayload = Path.Combine(home, ".unifocl", EmbeddedPackageFolder);
+        if (CanUsePayloadPath(homePayload))
+        {
+            return homePayload;
+        }
+
+        var cwdPayload = Path.Combine(
+            Path.GetFullPath(Environment.CurrentDirectory),
+            ".unifocl-runtime",
+            "global-payload",
+            EmbeddedPackageFolder);
+        if (CanUsePayloadPath(cwdPayload))
+        {
+            return cwdPayload;
+        }
+
+        var tempPayload = Path.Combine(Path.GetTempPath(), "unifocl", "global-payload", EmbeddedPackageFolder);
+        if (CanUsePayloadPath(tempPayload))
+        {
+            return tempPayload;
+        }
+
+        // Final fallback keeps deterministic behavior even if all probes fail.
+        return homePayload;
+    }
+
+    private static bool CanUsePayloadPath(string payloadPath)
+    {
+        try
+        {
+            Directory.CreateDirectory(payloadPath);
+            var probePath = Path.Combine(payloadPath, ".write-probe");
+            File.WriteAllText(probePath, "ok", Encoding.UTF8);
+            File.Delete(probePath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string NormalizeExcludePattern(string value)

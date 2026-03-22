@@ -133,18 +133,62 @@ internal static class CliOneShotExecutionService
 
                 if (!blockedByGuard)
                 {
-                    await ExecuteCommandForOneShotAsync(
-                        input,
-                        commands,
-                        streamLog,
-                        session,
-                        daemonControlService,
-                        daemonRuntime,
-                        projectLifecycleService,
-                        projectCommandRouterService,
-                        hierarchyTui,
-                        buildCommandService,
-                        cancellationToken).WaitAsync(cancellationToken);
+                    var commandSequence = SplitOneShotCommands(input);
+                    foreach (var step in commandSequence)
+                    {
+                        if (step.StartsWith("/dump", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var dump = await CliDumpService.ExecuteDumpCommandAsync(step, session).WaitAsync(cancellationToken);
+                            var autoOpenAttempted = false;
+                            if (!dump.Ok && ShouldAutoOpenForDump(step, session, dump.Error))
+                            {
+                                autoOpenAttempted = true;
+                                await TryAutoOpenProjectForEndpointAsync(
+                                    session,
+                                    streamLog,
+                                    daemonControlService,
+                                    daemonRuntime,
+                                    projectLifecycleService,
+                                    cancellationToken).WaitAsync(cancellationToken);
+                                dump = await CliDumpService.ExecuteDumpCommandAsync(step, session).WaitAsync(cancellationToken);
+                            }
+
+                            if (!dump.Ok)
+                            {
+                                if (autoOpenAttempted)
+                                {
+                                    var openParsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
+                                    if (openParsed.Errors.Count > 0)
+                                    {
+                                        errors.AddRange(openParsed.Errors);
+                                    }
+                                }
+
+                                errors.Add(dump.Error!);
+                            }
+                            else
+                            {
+                                data = dump.PayloadData;
+                                extraMeta["format"] = dump.Format.ToString().ToLowerInvariant();
+                                extraMeta["category"] = $"dump-{dump.Category}";
+                            }
+
+                            continue;
+                        }
+
+                        await ExecuteCommandForOneShotAsync(
+                            step,
+                            commands,
+                            streamLog,
+                            session,
+                            daemonControlService,
+                            daemonRuntime,
+                            projectLifecycleService,
+                            projectCommandRouterService,
+                            hierarchyTui,
+                            buildCommandService,
+                            cancellationToken).WaitAsync(cancellationToken);
+                    }
                     var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
                     errors.AddRange(parsed.Errors);
                     warnings.AddRange(parsed.Warnings);
@@ -155,10 +199,13 @@ internal static class CliOneShotExecutionService
                         extraMeta["escalatedRerunCommand"] = BuildEscalatedRerunCommand(options);
                     }
 
-                    data = new Dictionary<string, object?>
+                    if (data is null)
                     {
-                        ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
-                    };
+                        data = new Dictionary<string, object?>
+                        {
+                            ["logs"] = streamLog.Select(AgenticFormatter.StripMarkup).Where(line => !string.IsNullOrWhiteSpace(line)).ToList()
+                        };
+                    }
                 }
             }
         }
@@ -217,6 +264,23 @@ internal static class CliOneShotExecutionService
 
         return input.StartsWith("/dump hierarchy", StringComparison.OrdinalIgnoreCase)
                || input.StartsWith("/dump inspector", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<string> SplitOneShotCommands(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return [];
+        }
+
+        var lines = input
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        return lines.Count == 0 ? [input.Trim()] : lines;
     }
 
     private static async Task TryAutoOpenProjectForEndpointAsync(

@@ -58,6 +58,16 @@ namespace UniFocl.EditorBridge
                 });
             }
 
+            if (RequiresLoadedMutationContext(request.action)
+                && !DaemonHierarchyService.HasLoadedMutationContext())
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "no loaded scene or prefab context; load a scene/prefab first"
+                });
+            }
+
             if (DaemonMutationTransactionCoordinator.IsInspectorMutation(request.action))
             {
                 var decision = DaemonMutationTransactionCoordinator.ValidateInspectorIntent(request.action, request.intent);
@@ -226,6 +236,15 @@ namespace UniFocl.EditorBridge
                     message = $"unsupported inspector action for mutation core: {request.action}"
                 }
             };
+        }
+
+        private static bool RequiresLoadedMutationContext(string action)
+        {
+            return action.Equals("add-component", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("remove-component", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("toggle-component", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("toggle-field", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("set-field", StringComparison.OrdinalIgnoreCase);
         }
 
         private static InspectorComponentEntry[] GetComponents(string? targetPath)

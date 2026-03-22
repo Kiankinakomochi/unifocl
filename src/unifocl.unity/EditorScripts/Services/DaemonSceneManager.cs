@@ -108,7 +108,14 @@ namespace UniFocl.EditorBridge
 
         private static bool IsValidLoadedScene(Scene scene)
         {
-            return scene.IsValid() && scene.isLoaded;
+            if (!scene.IsValid() || !scene.isLoaded)
+            {
+                return false;
+            }
+
+            // Treat unsaved/untitled scenes as non-loadable mutation context.
+            // This forces callers to load a concrete .unity scene first.
+            return !string.IsNullOrWhiteSpace(NormalizePath(scene.path));
         }
 
         private static string NormalizePath(string? scenePath)

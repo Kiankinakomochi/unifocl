@@ -128,6 +128,19 @@ namespace UniFocl.EditorBridge
             }
         }
 
+        public static bool HasLoadedMutationContext()
+        {
+            lock (Sync)
+            {
+                if (_loadedPrefabRoot is not null && _loadedPrefabRoot)
+                {
+                    return true;
+                }
+
+                return DaemonSceneManager.TryGetActiveScene(out _);
+            }
+        }
+
         public static bool TryGetCurrentHierarchyRoots(out string rootLabel, out GameObject[] roots)
         {
             lock (Sync)
@@ -182,6 +195,16 @@ namespace UniFocl.EditorBridge
             if (request is null || string.IsNullOrWhiteSpace(request.action))
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "missing hierarchy command payload" });
+            }
+
+            if (DaemonMutationTransactionCoordinator.IsHierarchyMutation(request.action)
+                && !HasLoadedMutationContext())
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse
+                {
+                    ok = false,
+                    message = "no loaded scene or prefab context; load a scene/prefab first"
+                });
             }
 
             if (DaemonMutationTransactionCoordinator.IsHierarchyMutation(request.action))

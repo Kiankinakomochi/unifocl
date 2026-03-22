@@ -630,7 +630,20 @@ internal sealed class DaemonControlService
         var started = await StartDaemonAsync(startOptions, runtime, log, startupTimeout);
         if (!started)
         {
-            return false;
+            if (ShouldRetryAfterRecoverableStartupFailure(_lastStartupFailure))
+            {
+                log("[yellow]daemon[/]: detected recoverable startup failure; attempting one cleanup + restart");
+                await CleanupRecoverableStartupFailureAsync(projectPath, runtime, session, log);
+                started = await StartDaemonAsync(startOptions, runtime, log, startupTimeout);
+                if (!started)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
         }
 
         session.AttachedPort = port;
@@ -665,6 +678,58 @@ internal sealed class DaemonControlService
         }
 
         return true;
+    }
+
+    private static bool ShouldRetryAfterRecoverableStartupFailure(DaemonStartupFailure? failure)
+    {
+        if (failure is null)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(failure.Summary) && IsRecoverableStartupFailureLine(failure.Summary))
+        {
+            return true;
+        }
+
+        return failure.Lines.Any(IsRecoverableStartupFailureLine);
+    }
+
+    private static bool IsRecoverableStartupFailureLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return line.Contains("Failed to start primary listening socket", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("Failed to start secondary listening socket", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("Failed to start the Unity Package Manager local server process", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("Error: listen EPERM", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("Licensing initialization failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task CleanupRecoverableStartupFailureAsync(
+        string projectPath,
+        DaemonRuntime runtime,
+        CliSessionState session,
+        Action<string> log)
+    {
+        runtime.CleanStaleEntries();
+        var matchingInstances = runtime.GetAll()
+            .Where(instance =>
+                !string.IsNullOrWhiteSpace(instance.ProjectPath)
+                && Path.GetFullPath(instance.ProjectPath).Equals(Path.GetFullPath(projectPath), StringComparison.Ordinal))
+            .OrderBy(instance => instance.Port)
+            .ToList();
+
+        foreach (var instance in matchingInstances)
+        {
+            await StopDaemonByPortAsync(instance.Port, runtime, session, log);
+        }
+
+        StopUnityLicensingClients(log);
+        await Task.Delay(500);
     }
 
     public async Task<bool> HasStableProjectDaemonAsync(

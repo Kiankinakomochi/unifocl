@@ -29,6 +29,8 @@ internal sealed class ProjectLifecycleService
     private const string GitHubReleaseRepository = "unifocl";
     private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
     private const string RequiredMcpPackageTarget = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main";
+    private const string DefaultSampleSceneAssetPath = "Assets/SampleScene.unity";
+    private const string LastOpenedSceneMarkerRelativePath = ".unifocl/last-opened-scene.txt";
     private static readonly Dictionary<string, string> RequiredMcpDependencyFloor = new(StringComparer.Ordinal)
     {
         // Required for Texture2D.EncodeToPNG used by MCP runtime screenshot helpers.
@@ -2864,7 +2866,143 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]open[/]: step 5/5 load project context");
+        if (!await EnsureStartupSceneLoadedAsync(projectPath, session, log))
+        {
+            session.AttachedPort = null;
+            log("[red]open[/]: open aborted (no startup scene could be loaded)");
+            return false;
+        }
+
         _projectViewService.OpenInitialView(session);
+        return true;
+    }
+
+    private async Task<bool> EnsureStartupSceneLoadedAsync(
+        string projectPath,
+        CliSessionState session,
+        Action<string> log)
+    {
+        if (session.AttachedPort is null)
+        {
+            log("[red]open[/]: no daemon port attached for startup scene load");
+            return false;
+        }
+
+        var shouldCreateSampleScene = false;
+        var startupScenePath = ResolvePreferredStartupScenePath(projectPath, out shouldCreateSampleScene);
+        if (shouldCreateSampleScene)
+        {
+            log($"[grey]open[/]: creating fallback startup scene [white]{Markup.Escape(DefaultSampleSceneAssetPath)}[/]");
+            var createScenePayload = JsonSerializer.Serialize(new
+            {
+                type = "Scene",
+                count = 1,
+                name = "SampleScene"
+            });
+            var createSceneResponse = await _daemonClient.ExecuteProjectCommandAsync(
+                session.AttachedPort.Value,
+                new ProjectCommandRequestDto("mk-asset", "Assets", null, createScenePayload));
+            if (!createSceneResponse.Ok)
+            {
+                log($"[red]open[/]: failed to create fallback scene ({Markup.Escape(createSceneResponse.Message ?? "unknown error")})");
+                return false;
+            }
+
+            startupScenePath = DefaultSampleSceneAssetPath;
+        }
+
+        if (string.IsNullOrWhiteSpace(startupScenePath))
+        {
+            log("[red]open[/]: no scene assets available");
+            return false;
+        }
+
+        var loadResponse = await _daemonClient.ExecuteProjectCommandAsync(
+            session.AttachedPort.Value,
+            new ProjectCommandRequestDto("load-asset", startupScenePath, null, null));
+        if (!loadResponse.Ok)
+        {
+            log($"[red]open[/]: failed to load startup scene [white]{Markup.Escape(startupScenePath)}[/] ({Markup.Escape(loadResponse.Message ?? "unknown error")})");
+            return false;
+        }
+
+        log($"[grey]open[/]: startup scene loaded -> [white]{Markup.Escape(startupScenePath)}[/]");
+        return true;
+    }
+
+    private static string ResolvePreferredStartupScenePath(string projectPath, out bool shouldCreateSampleScene)
+    {
+        shouldCreateSampleScene = false;
+
+        var scenes = EnumerateProjectSceneAssets(projectPath);
+        var sampleSceneExists = scenes.Contains(DefaultSampleSceneAssetPath, StringComparer.OrdinalIgnoreCase);
+        var hasPersistedMarker = TryReadLastOpenedSceneMarker(projectPath, out var persistedScenePath);
+        if (hasPersistedMarker
+            && !string.IsNullOrWhiteSpace(persistedScenePath)
+            && scenes.Contains(persistedScenePath, StringComparer.OrdinalIgnoreCase))
+        {
+            return persistedScenePath;
+        }
+
+        if (sampleSceneExists)
+        {
+            return DefaultSampleSceneAssetPath;
+        }
+
+        if (hasPersistedMarker)
+        {
+            shouldCreateSampleScene = true;
+            return DefaultSampleSceneAssetPath;
+        }
+
+        if (scenes.Count > 0)
+        {
+            return scenes[0];
+        }
+
+        shouldCreateSampleScene = true;
+        return DefaultSampleSceneAssetPath;
+    }
+
+    private static List<string> EnumerateProjectSceneAssets(string projectPath)
+    {
+        var assetsRoot = Path.Combine(projectPath, "Assets");
+        if (!Directory.Exists(assetsRoot))
+        {
+            return [];
+        }
+
+        return Directory
+            .EnumerateFiles(assetsRoot, "*.unity", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(projectPath, path).Replace('\\', '/'))
+            .Where(path => path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool TryReadLastOpenedSceneMarker(string projectPath, out string sceneAssetPath)
+    {
+        sceneAssetPath = string.Empty;
+        var markerPath = Path.Combine(projectPath, LastOpenedSceneMarkerRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(markerPath))
+        {
+            return false;
+        }
+
+        var raw = (File.ReadAllText(markerPath) ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        var normalized = raw.Replace('\\', '/');
+        if (!normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+            || !normalized.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        sceneAssetPath = normalized;
         return true;
     }
 

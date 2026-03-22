@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.5.0 - 2026-03-23
+
+### Changed
+- Officialized `1.5.0` by closing the development cycle suffix.
+- Hardened daemon startup recovery for common Unity bootstrap failures:
+  - retries startup after recoverable UPM socket permission errors and Unity licensing initialization failures
+  - performs targeted runtime daemon/licensing client cleanup before retry
+- Fixed malformed multiline one-shot dump behavior:
+  - preserves structured `/dump` payload in `data` instead of collapsing to logs-only output
+  - improves inspector dump fallback target path resolution
+- Stabilized hierarchy parent targeting for `mk --parent`:
+  - prefers exact path matches first
+  - adds normalized path/name resolution tolerant of Unity auto-suffixed names (for example `Name (1)`)
+  - returns explicit ambiguity errors instead of unsafe best-guess parenting
+- Improved runtime environment robustness:
+  - adds writable fallback locations for global payload staging when home-directory paths are unavailable
+  - adds multiline one-shot command splitting/execution support
+
 ## 1.4.0 - 2026-03-22
 
 ### Changed

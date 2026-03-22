@@ -35,6 +35,7 @@ namespace UniFocl.EditorBridge
         private const string VcsModeUvcsAll = "uvcs_all";
         private const string VcsModeUvcsHybridGitIgnore = "uvcs_hybrid_gitignore";
         private const string VcsOwnerUvcs = "uvcs";
+        private const string LastOpenedSceneMarkerRelativePath = ".unifocl/last-opened-scene.txt";
 
         public static string Execute(string payload)
         {
@@ -425,6 +426,12 @@ namespace UniFocl.EditorBridge
 
                 var canonicalType = NormalizeMkAssetType(options.type);
                 var count = options.count <= 0 ? 1 : Math.Min(options.count, 100);
+
+                if (request.intent is not null && request.intent.flags.dryRun)
+                {
+                    return BuildMkAssetDryRunResponse(request, parentPath, canonicalType, count, options.name);
+                }
+
                 var createdPaths = new List<string>(count);
                 string? createError = null;
                 var editingStarted = false;
@@ -606,6 +613,7 @@ namespace UniFocl.EditorBridge
                         });
                     }
 
+                    TryPersistLastOpenedScenePath(requestedScenePath);
                     return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "scene loaded", kind = "scene" });
                 }
                 catch (Exception ex)
@@ -3129,7 +3137,166 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
         {
             return action.Equals("rename-asset", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("remove-asset", StringComparison.OrdinalIgnoreCase)
-                   || action.Equals("mk-script", StringComparison.OrdinalIgnoreCase);
+                   || action.Equals("mk-script", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("mk-asset", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string BuildMkAssetDryRunResponse(
+            ProjectCommandRequest request,
+            string parentPath,
+            string canonicalType,
+            int count,
+            string requestedName)
+        {
+            var plannedPaths = BuildMkAssetDryRunPaths(parentPath, canonicalType, requestedName, count);
+            var changes = plannedPaths
+                .Select(path => new MutationPathChange
+                {
+                    action = "create",
+                    path = path,
+                    nextPath = path,
+                    metaPath = path + ".meta"
+                })
+                .ToArray();
+
+            var payload = BuildFileDiffPayloadWithVcs(
+                request,
+                $"mk-asset preview ({canonicalType})",
+                changes);
+            return JsonUtility.ToJson(new ProjectCommandResponse
+            {
+                ok = true,
+                message = "dry-run preview",
+                kind = "dry-run",
+                content = payload
+            });
+        }
+
+        private static List<string> BuildMkAssetDryRunPaths(
+            string parentPath,
+            string canonicalType,
+            string requestedName,
+            int count)
+        {
+            var planned = new List<string>(count);
+            var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var extension = InferMkAssetExtension(canonicalType);
+            var asFolder = canonicalType.Equals("folder", StringComparison.OrdinalIgnoreCase);
+
+            for (var i = 0; i < count; i++)
+            {
+                var baseName = ResolveMkAssetName(canonicalType, requestedName, i, count);
+                var candidate = asFolder
+                    ? GenerateUniqueFolderPathWithReservations(parentPath, baseName, reserved)
+                    : GenerateUniqueAssetPathWithReservations(parentPath, baseName, extension, reserved);
+                reserved.Add(candidate);
+                planned.Add(candidate);
+            }
+
+            return planned;
+        }
+
+        private static string InferMkAssetExtension(string canonicalType)
+        {
+            return canonicalType switch
+            {
+                "scene" => ".unity",
+                "assemblydefinition" or "testingassemblydefinition" => ".asmdef",
+                "assemblydefinitionreference" or "testingassemblydefinitionreference" => ".asmref",
+                "shader" => ".shader",
+                "computeshader" => ".compute",
+                "shaderincludefile" => ".hlsl",
+                "material" => ".mat",
+                "animatorcontroller" => ".controller",
+                "animationclip" => ".anim",
+                "timeline" => ".playable",
+                "audiomixer" => ".mixer",
+                "physicsmaterial" => ".physicMaterial",
+                "physicsmaterial2d" => ".physicsMaterial2D",
+                "spriteatlas" => ".spriteatlas",
+                "inputactions" => ".inputactions",
+                "uidocument" or "uxmldocument" => ".uxml",
+                "ussstylesheet" => ".uss",
+                "lightingsettings" => ".lighting",
+                "terrainlayer" => ".terrainlayer",
+                "searchindex" => ".index",
+                _ => ".asset"
+            };
+        }
+
+        private static string GenerateUniqueAssetPathWithReservations(
+            string parentPath,
+            string baseName,
+            string extension,
+            HashSet<string> reservedPaths)
+        {
+            var normalizedParent = parentPath.TrimEnd('/', '\\');
+            var normalizedExtension = string.IsNullOrWhiteSpace(extension)
+                ? string.Empty
+                : extension.StartsWith(".", StringComparison.Ordinal) ? extension : $".{extension}";
+            var candidateName = baseName;
+            var suffix = 1;
+            while (true)
+            {
+                var candidatePath = $"{normalizedParent}/{candidateName}{normalizedExtension}".Replace('\\', '/');
+                if (!reservedPaths.Contains(candidatePath) && !DoesAssetPathExist(candidatePath))
+                {
+                    return candidatePath;
+                }
+
+                candidateName = $"{baseName}_{suffix++}";
+            }
+        }
+
+        private static string GenerateUniqueFolderPathWithReservations(
+            string parentPath,
+            string folderName,
+            HashSet<string> reservedPaths)
+        {
+            var resolvedName = string.IsNullOrWhiteSpace(folderName) ? "NewFolder" : folderName.Trim();
+            var basePath = $"{parentPath.TrimEnd('/', '\\')}/{resolvedName}".Replace('\\', '/');
+            var candidate = basePath;
+            var suffix = 1;
+            while (true)
+            {
+                if (!reservedPaths.Contains(candidate) && !AssetDatabase.IsValidFolder(candidate))
+                {
+                    return candidate;
+                }
+
+                candidate = $"{basePath}_{suffix++}".Replace('\\', '/');
+            }
+        }
+
+        private static void TryPersistLastOpenedScenePath(string sceneAssetPath)
+        {
+            if (string.IsNullOrWhiteSpace(sceneAssetPath))
+            {
+                return;
+            }
+
+            var normalized = sceneAssetPath.Replace('\\', '/');
+            if (!normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+                || !normalized.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                var markerPath = Path.Combine(GetProjectRoot(), LastOpenedSceneMarkerRelativePath.Replace('/', Path.DirectorySeparatorChar));
+                var markerDirectory = Path.GetDirectoryName(markerPath);
+                if (!string.IsNullOrWhiteSpace(markerDirectory))
+                {
+                    Directory.CreateDirectory(markerDirectory);
+                }
+
+                File.WriteAllText(markerPath, normalized + Environment.NewLine);
+            }
+            catch
+            {
+                // best effort only
+            }
         }
 
         private static string ExecuteWithRollbackStash(
