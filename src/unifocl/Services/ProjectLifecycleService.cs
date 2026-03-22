@@ -25,6 +25,7 @@ internal sealed class ProjectLifecycleService
     private const int DefaultRecentPruneStaleDays = 14;
     private const int DefaultCompileRecoveryRetryCount = 3;
     private const string ExternalDependencyAutoInstallEnv = "UNIFOCL_AUTO_INSTALL_EXTERNAL_DEPS";
+    private const string ProjectMutationTransportEnv = "UNIFOCL_PROJECT_MUTATION_TRANSPORT";
     private const string GitHubReleaseOwner = "Kiankinakomochi";
     private const string GitHubReleaseRepository = "unifocl";
     private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
@@ -290,7 +291,10 @@ internal sealed class ProjectLifecycleService
         }
 
         log("[grey]new[/]: step 5/6 initialize project bridge and MCP packages");
-        var initializeResult = await InitializeProjectForLifecycleAsync(projectPath, log);
+        var initializeResult = await InitializeProjectForLifecycleAsync(
+            projectPath,
+            log,
+            ensureMcpIntegration: ShouldRequireUnityMcpIntegration());
         if (!initializeResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(initializeResult.Error)}");
@@ -433,7 +437,10 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        var initializeResult = await InitializeProjectForLifecycleAsync(targetPath, log);
+        var initializeResult = await InitializeProjectForLifecycleAsync(
+            targetPath,
+            log,
+            ensureMcpIntegration: ShouldRequireUnityMcpIntegration());
         if (!initializeResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(initializeResult.Error)}");
@@ -446,7 +453,8 @@ internal sealed class ProjectLifecycleService
 
     private async Task<OperationResult> InitializeProjectForLifecycleAsync(
         string projectPath,
-        Action<string> log)
+        Action<string> log,
+        bool ensureMcpIntegration)
     {
         var configResult = await RunWithStatusAsync(
             "Preparing local bridge config...",
@@ -458,7 +466,7 @@ internal sealed class ProjectLifecycleService
 
         var packageFixResult = await RunWithStatusAsync(
             "Checking project package references...",
-            () => EnsureRequiredUnityPackageReferencesAsync(projectPath));
+            () => EnsureRequiredUnityPackageReferencesAsync(projectPath, includeMcpPackage: ensureMcpIntegration));
         if (!packageFixResult.Ok)
         {
             return packageFixResult;
@@ -470,6 +478,12 @@ internal sealed class ProjectLifecycleService
         if (!initResult.Ok)
         {
             return initResult;
+        }
+
+        if (!ensureMcpIntegration)
+        {
+            log("[grey]init[/]: skipping Unity MCP package setup (native transport policy)");
+            return OperationResult.Success();
         }
 
         var mcpInstallResult = await RunWithStatusAsync(
@@ -494,7 +508,7 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         _ = log;
-        var ensureResult = await EnsureRequiredUnityPackageReferencesAsync(projectPath);
+        var ensureResult = await EnsureRequiredUnityPackageReferencesAsync(projectPath, includeMcpPackage: true);
         if (!ensureResult.Ok)
         {
             return ensureResult;
@@ -2728,14 +2742,17 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
-        var packageFixResult = await EnsureRequiredUnityPackageReferencesAsync(projectPath);
+        var requiresUnityMcpIntegration = ShouldRequireUnityMcpIntegration();
+        var packageFixResult = await EnsureRequiredUnityPackageReferencesAsync(
+            projectPath,
+            includeMcpPackage: requiresUnityMcpIntegration);
         if (!packageFixResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(packageFixResult.Error)}");
             return false;
         }
 
-        if (ensureMcpHostDependencyCheck)
+        if (ensureMcpHostDependencyCheck && requiresUnityMcpIntegration)
         {
             var dependencyCheckResult = await EnsureRequiredMcpHostDependenciesAsync(log);
             if (!dependencyCheckResult.Ok)
@@ -2743,6 +2760,10 @@ internal sealed class ProjectLifecycleService
                 log($"[red]error[/]: {Markup.Escape(dependencyCheckResult.Error)}");
                 return false;
             }
+        }
+        else if (ensureMcpHostDependencyCheck)
+        {
+            log("[grey]open[/]: skipping Unity MCP host dependency checks (native transport policy)");
         }
 
         if (promptForInitialization)
@@ -3595,7 +3616,9 @@ internal sealed class ProjectLifecycleService
         }
     }
 
-    private static async Task<OperationResult> EnsureRequiredUnityPackageReferencesAsync(string projectPath)
+    private static async Task<OperationResult> EnsureRequiredUnityPackageReferencesAsync(
+        string projectPath,
+        bool includeMcpPackage = true)
     {
         try
         {
@@ -3637,20 +3660,23 @@ internal sealed class ProjectLifecycleService
             }
 
             var requiredPackages = InferRequiredUnityPackages(projectPath);
-            requiredPackages[RequiredMcpPackageId] = RequiredMcpPackageTarget;
+            if (includeMcpPackage)
+            {
+                requiredPackages[RequiredMcpPackageId] = RequiredMcpPackageTarget;
+            }
 
             var scopedRegistries = LoadScopedRegistries(projectPath);
             var resolvedRequiredPackages = await ResolveRequiredPackageGraphAsync(requiredPackages, scopedRegistries);
             foreach (var dependency in RequiredMcpDependencyFloor)
             {
-                if (!resolvedRequiredPackages.ContainsKey(dependency.Key))
+                if (includeMcpPackage && !resolvedRequiredPackages.ContainsKey(dependency.Key))
                 {
                     resolvedRequiredPackages[dependency.Key] = dependency.Value;
                 }
             }
             var seedPackageIds = new HashSet<string>(requiredPackages.Keys, StringComparer.Ordinal);
             var hasTransitiveDependencies = resolvedRequiredPackages.Keys.Any(packageId => !seedPackageIds.Contains(packageId));
-            if (!hasTransitiveDependencies)
+            if (includeMcpPackage && !hasTransitiveDependencies)
             {
                 var mcpProbe = await ProbeRequiredMcpTransitiveDependenciesAsync(scopedRegistries);
                 if (!mcpProbe.Ok)
@@ -3697,10 +3723,13 @@ internal sealed class ProjectLifecycleService
                 changed = true;
             }
 
-            var localPackageSyncResult = SyncInstalledMcpPackageJsonDependencies(projectPath, mcpTransitiveDependencies);
-            if (!localPackageSyncResult.Ok)
+            if (includeMcpPackage)
             {
-                return localPackageSyncResult;
+                var localPackageSyncResult = SyncInstalledMcpPackageJsonDependencies(projectPath, mcpTransitiveDependencies);
+                if (!localPackageSyncResult.Ok)
+                {
+                    return localPackageSyncResult;
+                }
             }
 
             if (!changed)
@@ -4669,6 +4698,19 @@ internal sealed class ProjectLifecycleService
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         return Path.Combine(home, ".unifocl", "config.json");
+    }
+
+    private static bool ShouldRequireUnityMcpIntegration()
+    {
+        var transportPolicy = Environment.GetEnvironmentVariable(ProjectMutationTransportEnv);
+        if (string.IsNullOrWhiteSpace(transportPolicy))
+        {
+            return false;
+        }
+
+        var normalized = transportPolicy.Trim();
+        return normalized.Equals("mcp", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("auto", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record ExternalDependencyRequirement(
