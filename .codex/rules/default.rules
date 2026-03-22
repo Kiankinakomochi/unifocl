@@ -1,0 +1,39 @@
+# ~/.codex/rules/default.rules
+
+prefix_rule(
+  pattern = ["git", ["status","diff","add","commit","switch","checkout","restore","reset","fetch","pull","push"]],
+  decision = "allow",
+  justification = "Allow core git workflow for Codex-created changes",
+  match = [
+    "git switch -c codex/test",
+    "git add -A",
+    "git commit -m fix",
+    "git push -u origin codex/test",
+  ],
+)
+
+prefix_rule(
+  pattern = ["gh", "auth", ["status","login"]],
+  decision = "allow",
+  justification = "Allow GH CLI auth checks/login",
+)
+
+prefix_rule(
+  pattern = ["gh", "pr", ["create","view","list","edit"]],
+  decision = "allow",
+  justification = "Allow PR creation and inspection via gh",
+  match = [
+    "gh pr create --fill",
+  ],
+)
+
+prefix_rule(
+  pattern = ["git", "submodule", ["add","update","init","sync","foreach","status","deinit"]],
+  decision = "allow",
+  justification = "Allow git submodule management for Codex-created changes",
+  match = [
+    "git submodule add",
+    "git submodule update --init --recursive",
+    "git submodule sync",
+  ],
+)
