@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.0 - 2026-03-22
+
+### Changed
+- Officialized `1.2.0` by advancing CLI minor version for automated release sequencing.
+- Implemented `/update` as a platform-aware binary updater using GitHub Releases:
+  - resolves latest release metadata from GitHub API
+  - selects matching asset for current runtime target (`macOS arm64`, `Windows x64`)
+  - downloads and extracts release archive, then installs/stages executable with platform-safe behavior
+- Added CI/CD automation workflow:
+  - runs build validation on pull requests targeting `main`
+  - publishes release artifacts and GitHub Release on push to `main`
+  - skips duplicate release attempts when tag already exists or when `DevCycle` is non-empty
+- Added Homebrew tap automation in release pipeline:
+  - updates `Formula/unifocl.rb` in `Kiankinakomochi/homebrew-unifocl`
+  - rewrites release URL and SHA256 for the latest macOS arm64 artifact
+  - commits and pushes formula update via `HOMEBREW_TAP_TOKEN`
+
 ## 1.1.0 - 2026-03-22
 
 ### Changed
