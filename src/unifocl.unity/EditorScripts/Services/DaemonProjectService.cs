@@ -66,19 +66,7 @@ namespace UniFocl.EditorBridge
                     requestId = string.Empty,
                     action = string.Empty,
                     stage = "error",
-                    message = "missing mutation command payload"
-                });
-            }
-
-            if (!DaemonMutationTransactionCoordinator.IsProjectMutation(request.action))
-            {
-                return JsonUtility.ToJson(new ProjectCommandAcceptedResponse
-                {
-                    ok = false,
-                    requestId = request.requestId ?? string.Empty,
-                    action = request.action,
-                    stage = "error",
-                    message = $"action is not a durable project mutation: {request.action}"
+                    message = "missing project command payload"
                 });
             }
 
@@ -116,7 +104,7 @@ namespace UniFocl.EditorBridge
                     active = false,
                     success = false,
                     stage = "not-found",
-                    detail = "mutation request id not found",
+                    detail = "project command request id not found",
                     startedAtUtc = string.Empty,
                     lastUpdatedAtUtc = DateTime.UtcNow.ToString("O"),
                     finishedAtUtc = string.Empty,
@@ -236,9 +224,7 @@ namespace UniFocl.EditorBridge
         private static Task<string> ExecuteCommandCoreAsync(ProjectCommandRequest request, bool durableDispatch)
         {
             var isDryRun = request.intent is not null && request.intent.flags is not null && request.intent.flags.dryRun;
-            if (durableDispatch
-                && !isDryRun
-                && DaemonMutationTransactionCoordinator.IsProjectMutation(request.action))
+            if (durableDispatch && !isDryRun)
             {
                 return Task.FromResult(SubmitMutationPayload(JsonUtility.ToJson(request)));
             }

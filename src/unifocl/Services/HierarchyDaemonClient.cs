@@ -115,60 +115,24 @@ internal sealed class HierarchyDaemonClient
     public async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(int port, ProjectCommandRequestDto request, Action<string>? onStatus = null)
     {
         request = MutationIntentFactory.EnsureProjectIntent(request);
-        var isProjectMutation = DaemonMutationActionCatalog.IsProjectMutation(request.Action);
-        if (isProjectMutation)
-        {
-            var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId!;
-            var requestWithId = request with { RequestId = requestId };
-            var mutationTimeout = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
-                                  || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
-                ? UpmMutationTimeout
-                : TimeSpan.FromSeconds(90);
-
-            var fallback = await HttpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
-            if (fallback is not null)
-            {
-                return fallback;
-            }
-
-            onStatus?.Invoke("durable mutation endpoints unavailable; falling back to legacy project command transport");
-            var legacy = await SendPostJsonWithDiagnosticsAsync(
-                $"http://127.0.0.1:{port}/project/command",
-                requestWithId,
-                mutationTimeout,
-                requestId: requestId,
-                detectDaemonRestart: request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
-                                     || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase),
-                onProgress: elapsed =>
-                {
-                    onStatus?.Invoke($"waiting for daemon response... {elapsed.TotalSeconds:0}s elapsed");
-                });
-            if (!string.IsNullOrWhiteSpace(legacy.Error))
-            {
-                return new ProjectCommandResponseDto(false, legacy.Error, null, null);
-            }
-
-            if (string.IsNullOrWhiteSpace(legacy.Payload))
-            {
-                return new ProjectCommandResponseDto(false, "mutation request did not return a terminal response", null, null);
-            }
-
-            try
-            {
-                var parsedLegacy = JsonSerializer.Deserialize<ProjectCommandResponseDto>(legacy.Payload, JsonOptions);
-                return parsedLegacy ?? new ProjectCommandResponseDto(false, "daemon returned empty project response", null, null);
-            }
-            catch
-            {
-                return new ProjectCommandResponseDto(false, "daemon returned invalid project response", null, null);
-            }
-        }
-
+        var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId!;
+        var requestWithId = request with { RequestId = requestId };
         var isSceneLoad = request.Action.Equals("load-asset", StringComparison.OrdinalIgnoreCase);
         var isBuildDispatch = request.Action.StartsWith("build-", StringComparison.OrdinalIgnoreCase);
+        var isUpmMutation = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
+                            || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase);
+        var isProjectMutation = DaemonMutationActionCatalog.IsProjectMutation(request.Action);
         var timeout = isSceneLoad
             ? SceneLoadTimeout
-            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : ProjectCommandTimeout);
+            : (isBuildDispatch ? TimeSpan.FromSeconds(20) : (isUpmMutation ? UpmMutationTimeout : TimeSpan.FromSeconds(90)));
+
+        var durable = await HttpMutationTransport.ExecuteAsync(port, requestWithId, timeout, onStatus);
+        if (durable is not null)
+        {
+            return durable;
+        }
+
+        onStatus?.Invoke("durable project command endpoints unavailable; falling back to legacy project command transport");
         var maxAttempts = isSceneLoad ? SceneLoadRetryCount + 1 : 1;
         if (isSceneLoad)
         {
@@ -184,10 +148,10 @@ internal sealed class HierarchyDaemonClient
 
             var result = await SendPostJsonWithDiagnosticsAsync(
                 $"http://127.0.0.1:{port}/project/command",
-                request,
+                requestWithId,
                 timeout,
-                requestId: null,
-                detectDaemonRestart: false,
+                requestId: requestId,
+                detectDaemonRestart: isProjectMutation || isUpmMutation,
                 onProgress: elapsed =>
                 {
                     if (isSceneLoad)
@@ -217,7 +181,7 @@ internal sealed class HierarchyDaemonClient
                     continue;
                 }
 
-                return new ProjectCommandResponseDto(false, "daemon returned an empty project response payload", null, null);
+                return new ProjectCommandResponseDto(false, "project command request did not return a terminal response", null, null);
             }
 
             try
