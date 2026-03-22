@@ -1,0 +1,173 @@
+name: CI And Release
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build src/unifocl/unifocl.csproj --disable-build-servers -v minimal
+
+  release:
+    name: Release (Main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_file="src/unifocl/Services/CliVersion.cs"
+          major="$(sed -n 's/.*Major = \([0-9]\+\);/\1/p' "$version_file" | head -n1)"
+          minor="$(sed -n 's/.*Minor = \([0-9]\+\);/\1/p' "$version_file" | head -n1)"
+          patch="$(sed -n 's/.*Patch = \([0-9]\+\);/\1/p' "$version_file" | head -n1)"
+          devcycle="$(sed -n 's/.*DevCycle = \"\(.*\)\";/\1/p' "$version_file" | head -n1)"
+
+          if [[ -z "$major" || -z "$minor" || -z "$patch" ]]; then
+            echo "failed to resolve version from $version_file"
+            exit 1
+          fi
+
+          semver="${major}.${minor}.${patch}${devcycle}"
+          tag="v${semver}"
+
+          if [[ -n "$devcycle" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=devcycle-present" >> "$GITHUB_OUTPUT"
+            echo "version=$semver" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=tag-exists" >> "$GITHUB_OUTPUT"
+            echo "version=$semver" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "skip_reason=none" >> "$GITHUB_OUTPUT"
+          echo "version=$semver" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Skip release notice
+        if: steps.version.outputs.skip == 'true'
+        run: |
+          echo "release skipped: ${{ steps.version.outputs.skip_reason }}"
+          echo "version: ${{ steps.version.outputs.version }}"
+          echo "tag: ${{ steps.version.outputs.tag }}"
+
+      - name: Publish binaries
+        if: steps.version.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          dist=".artifacts/v${version}/dist"
+          mkdir -p "$dist" ".artifacts/v${version}/macos-arm64" ".artifacts/v${version}/win-x64"
+
+          dotnet publish src/unifocl/unifocl.csproj \
+            -c Release \
+            -r osx-arm64 \
+            --self-contained true \
+            /p:PublishSingleFile=true \
+            /p:PublishTrimmed=false \
+            --disable-build-servers -v minimal \
+            -o ".artifacts/v${version}/macos-arm64"
+
+          dotnet publish src/unifocl/unifocl.csproj \
+            -c Release \
+            -r win-x64 \
+            --self-contained true \
+            /p:PublishSingleFile=true \
+            /p:PublishTrimmed=false \
+            --disable-build-servers -v minimal \
+            -o ".artifacts/v${version}/win-x64"
+
+          tar -C ".artifacts/v${version}/macos-arm64" -czf "$dist/unifocl-${version}-macos-arm64.tar.gz" .
+          (cd ".artifacts/v${version}/win-x64" && zip -qr "../../v${version}/dist/unifocl-${version}-win-x64.zip" .)
+          git archive --format=tar.gz --output "$dist/unifocl-${version}.tar.gz" HEAD
+
+      - name: Build release notes
+        if: steps.version.outputs.skip == 'false'
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          notes_file=".artifacts/v${version}/release-notes.md"
+          mkdir -p ".artifacts/v${version}"
+
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v v="$version" '
+              BEGIN { capture=0 }
+              $0 ~ "^## " v "([[:space:]]|$)" { capture=1; print; next }
+              $0 ~ "^## " && capture==1 { exit }
+              capture==1 { print }
+            ' CHANGELOG.md > "$notes_file"
+          fi
+
+          if [[ ! -s "$notes_file" ]]; then
+            {
+              echo "## ${version}"
+              echo
+              echo "Automated release from \`main\`."
+            } > "$notes_file"
+          fi
+
+          echo "file=$notes_file" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.notes.outputs.file }}
+          files: |
+            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
+            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-win-x64.zip
+            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}.tar.gz
