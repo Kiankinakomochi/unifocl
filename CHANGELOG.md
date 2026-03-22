@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0 - 2026-03-22
+
+### Changed
+- Officialized `1.4.0` by closing the development cycle suffix.
+- Added explicit parent targeting for hierarchy one-shot `mk` command:
+  - supports `--parent <path|id>` and `-p <path|id>`
+  - resolves parent by node id or hierarchy path (absolute or cwd-relative)
+  - keeps `EmptyParent` semantics explicit and rejects conflicting `--parent` usage
+- Improved hierarchy path resolution compatibility by allowing root-prefixed paths that include the scene root segment.
+
 ## 1.3.0 - 2026-03-22
 
 ### Changed
