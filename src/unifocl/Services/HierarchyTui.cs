@@ -438,7 +438,7 @@ internal sealed class HierarchyTui
                 new HierarchyCommandRequestDto("mk", parentId, targetId, null, false, normalizedMakeType, makeCount));
             if (!response.Ok)
             {
-                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
+                commandLog.Add($"[!] hierarchy command failed: {FormatHierarchyCommandFailure(response.Message)}");
                 return true;
             }
 
@@ -478,7 +478,7 @@ internal sealed class HierarchyTui
 
             if (!response.Ok)
             {
-                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
+                commandLog.Add($"[!] hierarchy command failed: {FormatHierarchyCommandFailure(response.Message)}");
                 return true;
             }
 
@@ -503,7 +503,7 @@ internal sealed class HierarchyTui
                 new HierarchyCommandRequestDto("toggle", null, targetId, null, false));
             if (!response.Ok)
             {
-                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
+                commandLog.Add($"[!] hierarchy command failed: {FormatHierarchyCommandFailure(response.Message)}");
                 return true;
             }
 
@@ -531,7 +531,7 @@ internal sealed class HierarchyTui
                 new HierarchyCommandRequestDto("rm", null, targetId, null, false));
             if (!response.Ok)
             {
-                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response.Message)}");
+                commandLog.Add($"[!] hierarchy command failed: {FormatHierarchyCommandFailure(response.Message)}");
                 return true;
             }
 
@@ -551,7 +551,7 @@ internal sealed class HierarchyTui
             var response = await _daemonClient.SearchAsync(port, new HierarchySearchRequestDto(query, 20, cwdId));
             if (response?.Ok != true)
             {
-                commandLog.Add($"[!] {FormatHierarchyCommandFailure(response?.Message, "hierarchy fuzzy search failed")}");
+                commandLog.Add($"[!] hierarchy command failed: {FormatHierarchyCommandFailure(response?.Message, "hierarchy fuzzy search failed")}");
                 return true;
             }
 
