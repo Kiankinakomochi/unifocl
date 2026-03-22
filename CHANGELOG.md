@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0 - 2026-03-23
+
+### Changed
+- Officialized `1.5.0` by advancing CLI minor version from incoming `1.4.0`.
+
 ## 1.4.0 - 2026-03-22
 
 ### Changed
