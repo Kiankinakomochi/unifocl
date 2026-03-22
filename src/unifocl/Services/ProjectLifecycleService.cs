@@ -1,5 +1,7 @@
 using Spectre.Console;
 using System.Diagnostics;
+using System.Formats.Tar;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -12,15 +14,19 @@ internal sealed class ProjectLifecycleService
     {
         Timeout = TimeSpan.FromSeconds(12)
     };
+    private static readonly HttpClient GitHubReleasesHttpClient = CreateGitHubReleasesHttpClient();
     private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan CompileRecoveryRetryDelay = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan DefaultOpenDaemonStartupTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan CliUpdateDownloadTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ExternalDependencyProbeTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ExternalDependencyInstallTimeout = TimeSpan.FromMinutes(5);
     private const int DefaultRecentPruneStaleDays = 14;
     private const int DefaultCompileRecoveryRetryCount = 3;
     private const string ExternalDependencyAutoInstallEnv = "UNIFOCL_AUTO_INSTALL_EXTERNAL_DEPS";
+    private const string GitHubReleaseOwner = "Kiankinakomochi";
+    private const string GitHubReleaseRepository = "unifocl";
     private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
     private const string RequiredMcpPackageTarget = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main";
     private static readonly Dictionary<string, string> RequiredMcpDependencyFloor = new(StringComparer.Ordinal)
@@ -1920,12 +1926,129 @@ internal sealed class ProjectLifecycleService
         return Task.FromResult(true);
     }
 
-    private static Task<bool> HandleUpdateAsync(Action<string> log)
+    private static async Task<bool> HandleUpdateAsync(Action<string> log)
     {
         log($"[grey]update[/]: installed version -> [white]{Markup.Escape(CliVersion.SemVer)}[/]");
-        log("[grey]update[/]: automatic updater is not wired in this CLI build");
-        log("[grey]update[/]: update by pulling latest source and rebuilding the binary");
-        return Task.FromResult(true);
+
+        if (!TryResolveCurrentPlatformUpdateSpec(out var platformSpec, out var platformError))
+        {
+            log($"[red]error[/]: {Markup.Escape(platformError)}");
+            return true;
+        }
+
+        log($"[grey]update[/]: target platform -> [white]{Markup.Escape(platformSpec.Label)}[/]");
+        var fetchReleaseResult = await TryFetchLatestGitHubReleaseAsync();
+        if (!fetchReleaseResult.Ok || fetchReleaseResult.Release is null)
+        {
+            log($"[red]error[/]: update check failed ({Markup.Escape(fetchReleaseResult.Error)})");
+            return true;
+        }
+
+        var release = fetchReleaseResult.Release;
+        var releaseVersion = release.TagName.TrimStart('v');
+        log($"[grey]update[/]: latest release -> [white]{Markup.Escape(release.TagName)}[/]");
+
+        if (TryParseComparableSemVer(CliVersion.SemVer, out var installedVersion)
+            && TryParseComparableSemVer(releaseVersion, out var latestVersion)
+            && latestVersion <= installedVersion)
+        {
+            log("[green]update[/]: already on the latest release");
+            return true;
+        }
+
+        var asset = release.Assets.FirstOrDefault(candidate =>
+            candidate.Name.EndsWith(platformSpec.AssetSuffix, StringComparison.OrdinalIgnoreCase));
+        if (asset is null)
+        {
+            log($"[red]error[/]: no release asset found for {Markup.Escape(platformSpec.Label)}");
+            log("[grey]update[/]: available assets");
+            foreach (var candidate in release.Assets)
+            {
+                log($"[grey]  -[/] {Markup.Escape(candidate.Name)}");
+            }
+
+            return true;
+        }
+
+        var tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "unifocl-update",
+            releaseVersion,
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var archivePath = Path.Combine(tempRoot, asset.Name);
+        var extractDirectory = Path.Combine(tempRoot, "extracted");
+        Directory.CreateDirectory(extractDirectory);
+
+        log($"[grey]update[/]: downloading [white]{Markup.Escape(asset.Name)}[/]");
+        var downloadResult = await DownloadReleaseAssetAsync(asset.DownloadUrl, archivePath);
+        if (!downloadResult.Ok)
+        {
+            log($"[red]error[/]: failed to download release asset ({Markup.Escape(downloadResult.Error)})");
+            return true;
+        }
+
+        var extractResult = await ExtractReleaseArchiveAsync(archivePath, extractDirectory, platformSpec.ArchiveType);
+        if (!extractResult.Ok)
+        {
+            log($"[red]error[/]: failed to extract release asset ({Markup.Escape(extractResult.Error)})");
+            return true;
+        }
+
+        var extractedExecutablePath = FindExtractedExecutablePath(extractDirectory, platformSpec.ExecutableName);
+        if (string.IsNullOrWhiteSpace(extractedExecutablePath))
+        {
+            log("[red]error[/]: extracted archive did not include an executable payload");
+            return true;
+        }
+
+        var processPath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+        {
+            var stagedPath = StageDownloadedExecutableForManualInstall(
+                extractedExecutablePath,
+                releaseVersion,
+                platformSpec.ExecutableName,
+                Directory.GetCurrentDirectory());
+            log("[yellow]update[/]: current executable path is unavailable (likely dotnet run/dev mode)");
+            log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
+            return true;
+        }
+
+        var processDirectory = Path.GetDirectoryName(processPath) ?? Directory.GetCurrentDirectory();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var stagedPath = StageDownloadedExecutableForManualInstall(
+                extractedExecutablePath,
+                releaseVersion,
+                platformSpec.ExecutableName,
+                processDirectory);
+            log("[yellow]update[/]: Windows locks the running executable; staged update for next swap");
+            log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
+            log($"[grey]update[/]: replace [white]{Markup.Escape(processPath)}[/] with staged binary after quitting unifocl");
+            return true;
+        }
+
+        try
+        {
+            File.Copy(extractedExecutablePath, processPath, overwrite: true);
+            TryApplyUnixExecutableMode(processPath);
+            log($"[green]update[/]: updated executable in place -> [white]{Markup.Escape(processPath)}[/]");
+            log("[grey]update[/]: restart unifocl to use the new version");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            var stagedPath = StageDownloadedExecutableForManualInstall(
+                extractedExecutablePath,
+                releaseVersion,
+                platformSpec.ExecutableName,
+                processDirectory);
+            log($"[yellow]update[/]: in-place replacement failed ({Markup.Escape(ex.Message)})");
+            log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
+            log($"[grey]update[/]: replace [white]{Markup.Escape(processPath)}[/] with staged binary after quitting unifocl");
+            return true;
+        }
     }
 
     private Task<bool> HandleInstallHookAsync(
@@ -2768,6 +2891,272 @@ internal sealed class ProjectLifecycleService
         File.WriteAllText(
             daemonPath,
             JsonSerializer.Serialize(session, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
+
+    private static HttpClient CreateGitHubReleasesHttpClient()
+    {
+        var httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(20)
+        };
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("unifocl-cli-updater");
+        httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return httpClient;
+    }
+
+    private static bool TryResolveCurrentPlatformUpdateSpec(out PlatformUpdateSpec spec, out string error)
+    {
+        var architecture = RuntimeInformation.ProcessArchitecture;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && architecture == Architecture.Arm64)
+        {
+            spec = new PlatformUpdateSpec(
+                "macOS arm64",
+                "-macos-arm64.tar.gz",
+                "unifocl",
+                ReleaseArchiveType.TarGz);
+            error = string.Empty;
+            return true;
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && architecture == Architecture.X64)
+        {
+            spec = new PlatformUpdateSpec(
+                "Windows x64",
+                "-win-x64.zip",
+                "unifocl.exe",
+                ReleaseArchiveType.Zip);
+            error = string.Empty;
+            return true;
+        }
+
+        spec = new PlatformUpdateSpec(string.Empty, string.Empty, string.Empty, ReleaseArchiveType.Zip);
+        error = $"unsupported update target: os={RuntimeInformation.OSDescription}, arch={architecture}";
+        return false;
+    }
+
+    private static async Task<ReleaseFetchResult> TryFetchLatestGitHubReleaseAsync()
+    {
+        try
+        {
+            var endpoint = $"https://api.github.com/repos/{GitHubReleaseOwner}/{GitHubReleaseRepository}/releases/latest";
+            using var response = await GitHubReleasesHttpClient.GetAsync(endpoint);
+            if (!response.IsSuccessStatusCode)
+            {
+                return ReleaseFetchResult.Fail($"{(int)response.StatusCode} {response.ReasonPhrase}");
+            }
+
+            var payload = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return ReleaseFetchResult.Fail("invalid release payload");
+            }
+
+            if (!root.TryGetProperty("tag_name", out var tagNameElement)
+                || tagNameElement.ValueKind != JsonValueKind.String)
+            {
+                return ReleaseFetchResult.Fail("release payload missing tag_name");
+            }
+
+            var tagName = tagNameElement.GetString();
+            if (string.IsNullOrWhiteSpace(tagName))
+            {
+                return ReleaseFetchResult.Fail("release tag_name is empty");
+            }
+
+            var assets = new List<ReleaseAsset>();
+            if (root.TryGetProperty("assets", out var assetsElement)
+                && assetsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var assetElement in assetsElement.EnumerateArray())
+                {
+                    if (assetElement.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    if (!assetElement.TryGetProperty("name", out var nameElement)
+                        || nameElement.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    if (!assetElement.TryGetProperty("browser_download_url", out var urlElement)
+                        || urlElement.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var name = nameElement.GetString();
+                    var url = urlElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(url))
+                    {
+                        assets.Add(new ReleaseAsset(name, url));
+                    }
+                }
+            }
+
+            return ReleaseFetchResult.Success(new ReleaseInfo(tagName!, assets));
+        }
+        catch (Exception ex)
+        {
+            return ReleaseFetchResult.Fail(ex.Message);
+        }
+    }
+
+    private static bool TryParseComparableSemVer(string value, out Version version)
+    {
+        version = new Version(0, 0, 0);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[1..];
+        }
+
+        var match = Regex.Match(normalized, @"^(?<core>\d+\.\d+\.\d+)", RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        if (!Version.TryParse(match.Groups["core"].Value, out var parsed) || parsed is null)
+        {
+            return false;
+        }
+
+        version = parsed;
+        return true;
+    }
+
+    private static async Task<OperationResult> DownloadReleaseAssetAsync(string downloadUrl, string destinationPath)
+    {
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(CliUpdateDownloadTimeout);
+            using var response = await GitHubReleasesHttpClient.GetAsync(
+                downloadUrl,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeoutCts.Token);
+            response.EnsureSuccessStatusCode();
+            await using var sourceStream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
+            await using var destinationStream = File.Create(destinationPath);
+            await sourceStream.CopyToAsync(destinationStream, timeoutCts.Token);
+            return OperationResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail(ex.Message);
+        }
+    }
+
+    private static async Task<OperationResult> ExtractReleaseArchiveAsync(
+        string archivePath,
+        string extractDirectory,
+        ReleaseArchiveType archiveType)
+    {
+        try
+        {
+            if (archiveType == ReleaseArchiveType.Zip)
+            {
+                ZipFile.ExtractToDirectory(archivePath, extractDirectory, overwriteFiles: true);
+                return OperationResult.Success();
+            }
+
+            await ExtractTarGzArchiveAsync(archivePath, extractDirectory);
+            return OperationResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail(ex.Message);
+        }
+    }
+
+    private static async Task ExtractTarGzArchiveAsync(string archivePath, string extractDirectory)
+    {
+        var extractRoot = Path.GetFullPath(extractDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        await using var archiveStream = File.OpenRead(archivePath);
+        await using var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress);
+        using var tarReader = new TarReader(gzipStream);
+
+        TarEntry? entry;
+        while ((entry = tarReader.GetNextEntry()) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Name) || entry.DataStream is null)
+            {
+                continue;
+            }
+
+            var destinationPath = Path.GetFullPath(Path.Combine(extractDirectory, entry.Name));
+            if (!destinationPath.StartsWith(extractRoot, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var directory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            await using var output = File.Create(destinationPath);
+            await entry.DataStream.CopyToAsync(output);
+        }
+    }
+
+    private static string? FindExtractedExecutablePath(string extractDirectory, string executableName)
+    {
+        if (!Directory.Exists(extractDirectory))
+        {
+            return null;
+        }
+
+        return Directory.EnumerateFiles(extractDirectory, executableName, SearchOption.AllDirectories).FirstOrDefault();
+    }
+
+    private static string StageDownloadedExecutableForManualInstall(
+        string sourcePath,
+        string releaseVersion,
+        string executableName,
+        string targetDirectory)
+    {
+        var extension = Path.GetExtension(executableName);
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(executableName);
+        var stagedFileName = $"{fileNameWithoutExtension}-{releaseVersion}{extension}";
+        var stagedPath = Path.Combine(targetDirectory, stagedFileName);
+        File.Copy(sourcePath, stagedPath, overwrite: true);
+        TryApplyUnixExecutableMode(stagedPath);
+        return stagedPath;
+    }
+
+    private static void TryApplyUnixExecutableMode(string executablePath)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return;
+        }
+
+        try
+        {
+            var mode =
+                UnixFileMode.UserRead
+                | UnixFileMode.UserWrite
+                | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead
+                | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead
+                | UnixFileMode.OtherExecute;
+            File.SetUnixFileMode(executablePath, mode);
+        }
+        catch
+        {
+            // best effort only
+        }
     }
 
     private static List<string> ParseCommandArgs(string input, string trigger)
@@ -4305,6 +4694,31 @@ internal sealed class ProjectLifecycleService
         public string? Theme { get; set; }
         public string? UnityProjectPath { get; set; }
         public int? RecentPruneStaleDays { get; set; }
+    }
+
+    private sealed record PlatformUpdateSpec(
+        string Label,
+        string AssetSuffix,
+        string ExecutableName,
+        ReleaseArchiveType ArchiveType);
+
+    private sealed record ReleaseInfo(string TagName, List<ReleaseAsset> Assets);
+
+    private sealed record ReleaseAsset(string Name, string DownloadUrl);
+
+    private sealed record ReleaseFetchResult(bool Ok, string Error, ReleaseInfo? Release)
+    {
+        public static ReleaseFetchResult Success(ReleaseInfo release)
+            => new(true, string.Empty, release);
+
+        public static ReleaseFetchResult Fail(string error)
+            => new(false, string.IsNullOrWhiteSpace(error) ? "unknown error" : error, null);
+    }
+
+    private enum ReleaseArchiveType
+    {
+        Zip,
+        TarGz
     }
 
     private sealed record ScopedRegistryConfig(string Url, List<string> Scopes);
