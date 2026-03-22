@@ -94,6 +94,32 @@ internal sealed class ProjectLifecycleService
         return true;
     }
 
+    public async Task<bool> EnsureProjectOpenForAgenticEndpointAsync(
+        string projectPath,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return false;
+        }
+
+        var resolvedProjectPath = ResolveAbsolutePath(projectPath, Directory.GetCurrentDirectory());
+        return await TryOpenProjectAsync(
+            resolvedProjectPath,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            _editorDependencyInitializerService,
+            promptForInitialization: true,
+            ensureMcpHostDependencyCheck: true,
+            allowUnsafe: false,
+            daemonStartupTimeout: DefaultOpenDaemonStartupTimeout,
+            log: log);
+    }
+
     public async Task PerformSafeExitCleanupAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -152,17 +178,6 @@ internal sealed class ProjectLifecycleService
         }
 
         var projectPath = ResolveAbsolutePath(openPath, Directory.GetCurrentDirectory());
-        if (IsAgenticCodexSandboxOpenFlow())
-        {
-            log("[red]error[/]: /open in agentic sandbox mode requires elevated permissions (operation not permitted in restricted sandbox)");
-            var escapedProjectPath = projectPath.Replace("\"", "\\\"", StringComparison.Ordinal);
-            var escapedOpenInput = $"/open \\\"{escapedProjectPath}\\\"" + (allowUnsafe ? " --allow-unsafe" : string.Empty);
-            var rerunCommand =
-                $"unifocl exec \"{escapedOpenInput}\" --agentic --project \"{escapedProjectPath}\" --mode project --format json";
-            log("[yellow]hint[/]: rerun with sandbox_permissions=require_escalated");
-            log($"[grey]hint[/]: {Markup.Escape(rerunCommand)}");
-            return true;
-        }
 
         await TryOpenProjectAsync(
             projectPath,
@@ -289,8 +304,10 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        log("[grey]new[/]: step 5/6 initialize project bridge and MCP packages");
-        var initializeResult = await InitializeProjectForLifecycleAsync(projectPath, log);
+        log("[grey]new[/]: step 5/6 initialize project bridge packages");
+        var initializeResult = await InitializeProjectForLifecycleAsync(
+            projectPath,
+            log);
         if (!initializeResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(initializeResult.Error)}");
@@ -433,7 +450,9 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
-        var initializeResult = await InitializeProjectForLifecycleAsync(targetPath, log);
+        var initializeResult = await InitializeProjectForLifecycleAsync(
+            targetPath,
+            log);
         if (!initializeResult.Ok)
         {
             log($"[red]error[/]: {Markup.Escape(initializeResult.Error)}");
@@ -470,20 +489,6 @@ internal sealed class ProjectLifecycleService
         if (!initResult.Ok)
         {
             return initResult;
-        }
-
-        var mcpInstallResult = await RunWithStatusAsync(
-            "Ensuring required MCP package reference in manifest...",
-            () => EnsureMcpPackageInstalledAsync(projectPath, log));
-        if (!mcpInstallResult.Ok)
-        {
-            return mcpInstallResult;
-        }
-
-        var mcpHostDependencies = await EnsureRequiredMcpHostDependenciesAsync(log);
-        if (!mcpHostDependencies.Ok)
-        {
-            return mcpHostDependencies;
         }
 
         return OperationResult.Success();
@@ -2201,6 +2206,20 @@ internal sealed class ProjectLifecycleService
         {
             log($"[grey]info[/]: unity-version={Markup.Escape(editorVersion)}");
         }
+        else
+        {
+            log("[grey]info[/]: unity-version=unknown");
+        }
+
+        if (UnityEditorPathService.TryResolveEditorForProject(targetPath, out var resolvedEditorPath, out var resolvedEditorVersion, out _))
+        {
+            log($"[grey]info[/]: unity-editor-match={Markup.Escape(resolvedEditorVersion)}");
+            log($"[grey]info[/]: unity-editor-path={Markup.Escape(resolvedEditorPath)}");
+        }
+        else
+        {
+            log("[yellow]info[/]: unity-editor-match=not found");
+        }
 
         var daemonPort = DaemonControlService.ResolveProjectDaemonPort(targetPath);
         log($"[grey]info[/]: default-daemon-port={daemonPort}");
@@ -2735,16 +2754,6 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
-        if (ensureMcpHostDependencyCheck)
-        {
-            var dependencyCheckResult = await EnsureRequiredMcpHostDependenciesAsync(log);
-            if (!dependencyCheckResult.Ok)
-            {
-                log($"[red]error[/]: {Markup.Escape(dependencyCheckResult.Error)}");
-                return false;
-            }
-        }
-
         if (promptForInitialization)
         {
             if (hasProtocolMismatch)
@@ -2826,6 +2835,15 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
+        var hierarchyReady = await WaitForHierarchySnapshotReadyAsync(session.AttachedPort!.Value, log);
+        if (!hierarchyReady)
+        {
+            session.AttachedPort = null;
+            log("[red]daemon[/]: hierarchy snapshot endpoint is not ready after /open");
+            log("[red]open[/]: open aborted (hierarchy mode would be unavailable)");
+            return false;
+        }
+
         SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
         log($"[grey]daemon[/]: managed daemon ready on [white]127.0.0.1:{daemonPort}[/]");
         session.SafeModeEnabled = false;
@@ -2848,6 +2866,27 @@ internal sealed class ProjectLifecycleService
         log("[grey]open[/]: step 5/5 load project context");
         _projectViewService.OpenInitialView(session);
         return true;
+    }
+
+    private static async Task<bool> WaitForHierarchySnapshotReadyAsync(int port, Action<string> log)
+    {
+        var client = new HierarchyDaemonClient();
+        for (var attempt = 1; attempt <= 6; attempt++)
+        {
+            var snapshot = await client.GetSnapshotAsync(port);
+            if (snapshot is not null)
+            {
+                return true;
+            }
+
+            if (attempt < 6)
+            {
+                await Task.Delay(250);
+            }
+        }
+
+        log($"[yellow]daemon[/]: hierarchy snapshot probe failed on port {port}");
+        return false;
     }
 
     private static bool HandleDaemonStartupFailure(
@@ -3208,22 +3247,6 @@ internal sealed class ProjectLifecycleService
         }
 
         return tokens;
-    }
-
-    private static bool IsAgenticCodexSandboxOpenFlow()
-    {
-        if (!CliRuntimeState.SuppressConsoleOutput)
-        {
-            return false;
-        }
-
-        var sandboxMode = Environment.GetEnvironmentVariable("CODEX_SANDBOX");
-        if (string.IsNullOrWhiteSpace(sandboxMode))
-        {
-            return false;
-        }
-
-        return true;
     }
 
     private static bool TryParseOpenArgs(
@@ -3637,57 +3660,14 @@ internal sealed class ProjectLifecycleService
             }
 
             var requiredPackages = InferRequiredUnityPackages(projectPath);
-            requiredPackages[RequiredMcpPackageId] = RequiredMcpPackageTarget;
 
             var scopedRegistries = LoadScopedRegistries(projectPath);
             var resolvedRequiredPackages = await ResolveRequiredPackageGraphAsync(requiredPackages, scopedRegistries);
-            foreach (var dependency in RequiredMcpDependencyFloor)
-            {
-                if (!resolvedRequiredPackages.ContainsKey(dependency.Key))
-                {
-                    resolvedRequiredPackages[dependency.Key] = dependency.Value;
-                }
-            }
-            var seedPackageIds = new HashSet<string>(requiredPackages.Keys, StringComparer.Ordinal);
-            var hasTransitiveDependencies = resolvedRequiredPackages.Keys.Any(packageId => !seedPackageIds.Contains(packageId));
-            if (!hasTransitiveDependencies)
-            {
-                var mcpProbe = await ProbeRequiredMcpTransitiveDependenciesAsync(scopedRegistries);
-                if (!mcpProbe.Ok)
-                {
-                    return OperationResult.Fail(mcpProbe.Error);
-                }
-
-                foreach (var dependency in mcpProbe.Dependencies)
-                {
-                    if (!resolvedRequiredPackages.ContainsKey(dependency.Key))
-                    {
-                        resolvedRequiredPackages[dependency.Key] = dependency.Value;
-                    }
-                }
-            }
 
             var changed = false;
-            var mcpTransitiveDependencies = resolvedRequiredPackages
-                .Where(entry => !entry.Key.Equals(RequiredMcpPackageId, StringComparison.Ordinal)
-                                && IsLikelyRegistryVersionSpec(entry.Value))
-                .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
 
             foreach (var required in resolvedRequiredPackages)
             {
-                if (required.Key.Equals(RequiredMcpPackageId, StringComparison.Ordinal))
-                {
-                    if (dependencies.TryGetValue(required.Key, out var existingTarget)
-                        && existingTarget.Equals(required.Value, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    dependencies[required.Key] = required.Value;
-                    changed = true;
-                    continue;
-                }
-
                 if (dependencies.ContainsKey(required.Key))
                 {
                     continue;
@@ -3695,12 +3675,6 @@ internal sealed class ProjectLifecycleService
 
                 dependencies[required.Key] = required.Value;
                 changed = true;
-            }
-
-            var localPackageSyncResult = SyncInstalledMcpPackageJsonDependencies(projectPath, mcpTransitiveDependencies);
-            if (!localPackageSyncResult.Ok)
-            {
-                return localPackageSyncResult;
             }
 
             if (!changed)

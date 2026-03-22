@@ -34,6 +34,16 @@ This note captures the current, post-fix behavior for `unifocl` one-shot agentic
    - `CanvasScaler.matchWidthOrHeight = 1`
 5. For start screen layout, set anchored positions/sizes explicitly for title and buttons instead of relying on defaults.
 
+## Concrete Transport Use Cases
+
+1. Native unifocl mutation workflow (recommended default):
+   - Path: `Agent -> unifocl CLI -> daemon HTTP -> Unity`
+   - Use durable lifecycle: `submit -> get_status -> get_result`.
+2. Built-in MCP server workflow (for automation context/lookup):
+   - Start `unifocl --mcp-server` (stdio transport).
+   - Use MCP tools to query command signatures/descriptions without parsing README/help in prompts.
+   - Keep actual Unity mutations routed through the daemon durable HTTP mutation contract.
+
 ## Best Practices For Future Agents
 
 1. If build/type issues appear around shared contracts, run:
@@ -45,6 +55,25 @@ This note captures the current, post-fix behavior for `unifocl` one-shot agentic
    - create/parent in hierarchy mode
    - mutate component fields in inspector mode
 5. When running via `dotnet run`, parse the JSON envelope from first `{` because build logs may precede it.
+
+## Token-Efficient, Robust Profile (Recommended)
+
+1. Keep one stable chain:
+   - same `--session-seed`
+   - same daemon attach target/port
+   - same project path
+2. Use the built-in MCP server for lookup/context and native daemon HTTP for mutation execution.
+3. For mutations, always use durable request lifecycle:
+   - `submit -> get_status -> get_result`
+   - this remains queryable through Unity compile/reload interruptions
+4. Minimize token usage by batching related operations:
+   - group hierarchy create/parent operations
+   - group inspector field mutations
+   - run verification dumps per batch instead of per single command
+5. For multi-agent reliability:
+   - one mutating agent per worktree
+   - one daemon port per worktree
+   - never share mutable worktree state across parallel agents
 
 ## Residual Risks / Caveats
 

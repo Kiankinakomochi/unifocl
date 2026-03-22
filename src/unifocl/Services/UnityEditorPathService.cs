@@ -108,12 +108,30 @@ internal static class UnityEditorPathService
         if (TryReadProjectEditorVersion(projectPath, out version, out error))
         {
             var requiredVersion = version;
-            if (TryGetProjectEditorPath(projectPath, out var persistedPath))
+            if (TryGetProjectEditorPath(projectPath, out var persistedProjectPath)
+                && TryInferVersionFromUnityPath(persistedProjectPath)?.Equals(requiredVersion, StringComparison.OrdinalIgnoreCase) == true)
             {
-                var persistedVersion = TryInferVersionFromUnityPath(persistedPath);
-                if (string.Equals(persistedVersion, requiredVersion, StringComparison.OrdinalIgnoreCase))
+                editorPath = persistedProjectPath;
+                return true;
+            }
+
+            if (TryGetDefaultEditorPath(out var defaultEditorPath)
+                && TryInferVersionFromUnityPath(defaultEditorPath)?.Equals(requiredVersion, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                editorPath = defaultEditorPath;
+                TrySaveProjectEditorPath(projectPath, editorPath, out _);
+                return true;
+            }
+
+            var unityPathFromEnv = Environment.GetEnvironmentVariable("UNITY_PATH");
+            if (!string.IsNullOrWhiteSpace(unityPathFromEnv))
+            {
+                var normalizedEnvPath = Path.GetFullPath(unityPathFromEnv);
+                if (File.Exists(normalizedEnvPath)
+                    && TryInferVersionFromUnityPath(normalizedEnvPath)?.Equals(requiredVersion, StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    editorPath = persistedPath;
+                    editorPath = normalizedEnvPath;
+                    TrySaveProjectEditorPath(projectPath, editorPath, out _);
                     return true;
                 }
             }

@@ -66,6 +66,12 @@ static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationT
 try
 {
     var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+    if (UnifoclMcpServerMode.IsRequested(launchArgs))
+    {
+        await UnifoclMcpServerMode.RunAsync(launchArgs, appCancellation.Token);
+        return;
+    }
+
     if (BuildLogTailService.TryRunFromArgs(launchArgs))
     {
         return;

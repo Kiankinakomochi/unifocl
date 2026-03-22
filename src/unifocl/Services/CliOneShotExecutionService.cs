@@ -73,8 +73,32 @@ internal static class CliOneShotExecutionService
             else if (input.StartsWith("/dump", StringComparison.OrdinalIgnoreCase))
             {
                 var dump = await CliDumpService.ExecuteDumpCommandAsync(input, session).WaitAsync(cancellationToken);
+                var autoOpenAttempted = false;
+                if (!dump.Ok
+                    && ShouldAutoOpenForDump(input, session, dump.Error))
+                {
+                    autoOpenAttempted = true;
+                    await TryAutoOpenProjectForEndpointAsync(
+                        session,
+                        streamLog,
+                        daemonControlService,
+                        daemonRuntime,
+                        projectLifecycleService,
+                        cancellationToken).WaitAsync(cancellationToken);
+                    dump = await CliDumpService.ExecuteDumpCommandAsync(input, session).WaitAsync(cancellationToken);
+                }
+
                 if (!dump.Ok)
                 {
+                    if (autoOpenAttempted)
+                    {
+                        var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
+                        if (parsed.Errors.Count > 0)
+                        {
+                            errors.AddRange(parsed.Errors);
+                        }
+                    }
+
                     errors.Add(dump.Error!);
                 }
                 else
@@ -174,6 +198,46 @@ internal static class CliOneShotExecutionService
                 DateTime.UtcNow.ToString("O"),
                 extraMeta),
             diff);
+    }
+
+    private static bool ShouldAutoOpenForDump(
+        string input,
+        CliSessionState session,
+        AgenticError? error)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return false;
+        }
+
+        if (error is null || !error.Code.Equals("E_MODE_INVALID", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return input.StartsWith("/dump hierarchy", StringComparison.OrdinalIgnoreCase)
+               || input.StartsWith("/dump inspector", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task TryAutoOpenProjectForEndpointAsync(
+        CliSessionState session,
+        List<string> streamLog,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        ProjectLifecycleService projectLifecycleService,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+        {
+            return;
+        }
+
+        await projectLifecycleService.EnsureProjectOpenForAgenticEndpointAsync(
+            session.CurrentProjectPath,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
     }
 
     private static string BuildEscalatedRerunCommand(ExecLaunchOptions options)

@@ -9,7 +9,6 @@ Usage:
   agent-worktree.sh setup-smoke-project --worktree-path <path> --project-path <path> [--unity-version <version>] [--force]
   agent-worktree.sh init-smoke-agentic --worktree-path <path> [--project-path <path>] [--format json|yaml] [--global-payload-root <path>] [--config-root <path>]
   agent-worktree.sh seed --source-project <path> --worktree-path <path>
-  agent-worktree.sh start-daemon --worktree-path <path> --project-path <path> [--port-start <n>] [--port-end <n>]
   agent-worktree.sh teardown --repo-root <path> --worktree-path <path>
 
 Commands:
@@ -18,7 +17,6 @@ Commands:
   setup-smoke-project  Scaffold a minimal Unity project for agentic smoke testing.
   init-smoke-agentic   Run `/init` through `exec --agentic` against the smoke project with sandbox-safe config/payload roots.
   seed          Copy source project's Library cache into provisioned worktree.
-  start-daemon  Find an open localhost port and run: /daemon start --project <path> --port <port> --headless.
   teardown      Remove provisioned worktree via git worktree remove --force.
 USAGE
 }
@@ -533,79 +531,7 @@ run_init_smoke_agentic() {
 }
 
 run_start_daemon() {
-    local worktree_path=""
-    local project_path=""
-    local port_start=18080
-    local port_end=21999
-
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --worktree-path)
-                worktree_path="$2"
-                shift 2
-                ;;
-            --project-path)
-                project_path="$2"
-                shift 2
-                ;;
-            --port-start)
-                port_start="$2"
-                shift 2
-                ;;
-            --port-end)
-                port_end="$2"
-                shift 2
-                ;;
-            *)
-                die "unknown start-daemon option: $1"
-                ;;
-        esac
-    done
-
-    [ -n "$worktree_path" ] || die "missing --worktree-path"
-    [ -n "$project_path" ] || die "missing --project-path"
-
-    worktree_path="$(abs_path "$worktree_path")"
-    local project_abs
-    if [[ "$project_path" = /* ]]; then
-        project_abs="$(abs_path "$project_path")"
-    else
-        project_abs="$(abs_path "$worktree_path/$project_path")"
-    fi
-
-    local selected_port
-    selected_port="$(find_open_port "$port_start" "$port_end")" || die "failed to find open port in range $port_start-$port_end"
-
-    local daemon_cmd
-    daemon_cmd="/daemon start --project \"$project_abs\" --port $selected_port --headless"
-
-    local startup_log
-    startup_log="$(mktemp -t unifocl-daemon-start.XXXXXX.log)"
-
-    (
-        cd "$worktree_path"
-        printf '%s\n/quit\n' "$daemon_cmd" | dotnet run --project src/unifocl/unifocl.csproj --disable-build-servers -v minimal >"$startup_log" 2>&1
-    )
-
-    require_command curl
-
-    local ready=false
-    for _ in $(seq 1 40); do
-        if curl -fsS "http://127.0.0.1:$selected_port/ping" >/dev/null 2>&1; then
-            ready=true
-            break
-        fi
-
-        sleep 0.25
-    done
-
-    if [ "$ready" != true ]; then
-        echo "daemon startup log: $startup_log" >&2
-        die "daemon did not become ready on port $selected_port"
-    fi
-
-    echo "daemon-ready-port: $selected_port"
-    echo "daemon-start-command: $daemon_cmd"
+    die "start-daemon is removed. use one-shot /open instead: unifocl exec \"/open <project-path>\" --agentic --project <project-path> --mode project --format json"
 }
 
 run_teardown() {

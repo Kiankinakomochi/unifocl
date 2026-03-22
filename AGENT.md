@@ -18,7 +18,11 @@ Before any edits or worktree actions, run this one-shot bootstrap command from t
    - Runs compatcheck with resolved Unity paths
 3. For smoke `/init` prep in agentic workflows, use the non-interactive helper command (not the interactive TUI shell):
    - `src/unifocl/scripts/agent-worktree.sh init-smoke-agentic --worktree-path . --project-path .local/compatcheck-benchmark --format json`
-4. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
+4. Configure MCP clients early so command-lookup tools (`ListCommands`, `LookupCommand`) are available in Codex/Claude/Cursor:
+   - `scripts/setup-mcp-agents.sh --workspace . --codex`
+   - `scripts/setup-mcp-agents.sh --workspace . --cursor-config ~/.cursor/mcp.json --claude-config ~/.claude/mcp.json`
+   - Use `--dry-run` first when validating paths.
+5. For each development build, increment `CliVersion.DevCycle` (`a1`, `a2`, `a3`, ...). Auto-increment on Debug build is expected and must remain enabled.
 
 ## Goal
 

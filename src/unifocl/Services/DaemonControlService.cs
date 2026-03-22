@@ -11,7 +11,8 @@ internal sealed class DaemonControlService
 {
     private const int DefaultInactivityTimeoutSeconds = 600;
     private const int ProcessOutputTailMaxLines = 40;
-    private static readonly TimeSpan ProjectCommandReadyTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MinimumDaemonStartupTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan ProjectCommandReadyTimeout = MinimumDaemonStartupTimeout;
     private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
     private static readonly HttpClient Http = new();
     private DaemonStartupFailure? _lastStartupFailure;
@@ -24,16 +25,29 @@ internal sealed class DaemonControlService
         Action<string> log,
         List<string> streamLog)
     {
+        var normalizedInput = input.Trim();
+        if (normalizedInput.StartsWith("/daemon start", StringComparison.OrdinalIgnoreCase)
+            || normalizedInput.StartsWith("/d start", StringComparison.OrdinalIgnoreCase)
+            || normalizedInput.Equals("/daemon restart", StringComparison.OrdinalIgnoreCase)
+            || normalizedInput.Equals("/d restart", StringComparison.OrdinalIgnoreCase))
+        {
+            log("[yellow]daemon[/]: explicit daemon startup/restart is removed");
+            log("[grey]daemon[/]: use [white]/open <project>[/] to provision and attach daemon context");
+            return;
+        }
+
         switch (trigger)
         {
             case "/daemon start":
-                await HandleDaemonStartAsync(input, runtime, session, log);
+                log("[yellow]daemon[/]: explicit daemon startup is removed");
+                log("[grey]daemon[/]: use [white]/open <project>[/] to provision and attach daemon context");
                 break;
             case "/daemon stop":
                 await HandleDaemonStopAsync(runtime, session, log);
                 break;
             case "/daemon restart":
-                await HandleDaemonRestartAsync(runtime, session, log);
+                log("[yellow]daemon[/]: explicit daemon restart is removed");
+                log("[grey]daemon[/]: use [white]/open <project>[/] to provision and attach daemon context");
                 break;
             case "/daemon ps":
                 await HandleDaemonPsAsync(runtime, session, streamLog, log);
@@ -45,7 +59,7 @@ internal sealed class DaemonControlService
                 HandleDaemonDetach(session, log);
                 break;
             default:
-                log("[yellow]daemon[/]: usage /daemon <start|stop|restart|ps|attach|detach>");
+                log("[yellow]daemon[/]: usage /daemon <stop|ps|attach|detach>");
                 await HandleDaemonPsAsync(runtime, session, streamLog, log);
                 break;
         }
@@ -599,10 +613,10 @@ internal sealed class DaemonControlService
             runtime.Remove(port);
         }
 
-        var unityPath = ResolveDefaultUnityPath(projectPath);
+        var unityPath = ResolveDefaultUnityPath(projectPath, log);
         if (requireBridgeMode && string.IsNullOrWhiteSpace(unityPath))
         {
-            log("[red]daemon[/]: hierarchy asset load requires Bridge mode, but no Unity editor path is configured");
+            log("[red]daemon[/]: hierarchy asset load requires Bridge mode, but no matching Unity editor path is configured");
             return false;
         }
 
@@ -621,7 +635,7 @@ internal sealed class DaemonControlService
 
         session.AttachedPort = port;
         await TrySendControlAsync(port, "TOUCH", "OK");
-        var projectCommandReadyTimeout = startupTimeout ?? ProjectCommandReadyTimeout;
+        var projectCommandReadyTimeout = ResolveStartupTimeout(startupTimeout);
         var projectCommandReadyAfterStart = await WaitForProjectCommandReadyAsync(
             port,
             projectCommandReadyTimeout,
@@ -1056,7 +1070,7 @@ internal sealed class DaemonControlService
                 outputLines.Enqueue(line);
             });
 
-        var resolvedStartupTimeout = startupTimeout ?? TimeSpan.FromSeconds(25);
+        var resolvedStartupTimeout = ResolveStartupTimeout(startupTimeout);
         var ready = startOptions.Headless
             ? await WaitForHostModeDaemonReadyAsync(
                 startOptions.Port,
@@ -1208,7 +1222,7 @@ internal sealed class DaemonControlService
         var unityPath = options.UnityPath;
         if (string.IsNullOrWhiteSpace(unityPath))
         {
-            unityPath = ResolveDefaultUnityPath(projectPath);
+            unityPath = ResolveDefaultUnityPath(projectPath, log);
         }
 
         if (string.IsNullOrWhiteSpace(unityPath))
@@ -1853,6 +1867,12 @@ internal sealed class DaemonControlService
         return false;
     }
 
+    private static TimeSpan ResolveStartupTimeout(TimeSpan? requestedTimeout)
+    {
+        var resolved = requestedTimeout ?? MinimumDaemonStartupTimeout;
+        return resolved < MinimumDaemonStartupTimeout ? MinimumDaemonStartupTimeout : resolved;
+    }
+
     private readonly record struct ProjectCommandProbeResult(bool Ok, string Detail);
 
     private static async Task<int?> ResolveAttachedOnlyPortAsync(CliSessionState session)
@@ -1865,8 +1885,26 @@ internal sealed class DaemonControlService
         return await TrySendControlAsync(attachedPort, "PING", "PONG") ? attachedPort : null;
     }
 
-    private static string? ResolveDefaultUnityPath(string projectPath)
+    private static string? ResolveDefaultUnityPath(string projectPath, Action<string>? log = null)
     {
+        if (UnityEditorPathService.TryReadProjectEditorVersion(projectPath, out var requiredVersion, out _))
+        {
+            if (UnityEditorPathService.TryResolveEditorForProject(projectPath, out var resolvedEditorPath, out _, out var resolveError))
+            {
+                var resolvedVersion = UnityEditorPathService.TryInferVersionFromUnityPath(resolvedEditorPath) ?? "unknown";
+                log?.Invoke($"[grey]unity[/]: project requires [white]{Markup.Escape(requiredVersion)}[/]; using editor [white]{Markup.Escape(resolvedVersion)}[/]");
+                return resolvedEditorPath;
+            }
+
+            log?.Invoke($"[red]unity[/]: project requires Unity [white]{Markup.Escape(requiredVersion)}[/], but a matching editor was not found");
+            if (!string.IsNullOrWhiteSpace(resolveError))
+            {
+                log?.Invoke($"[yellow]unity[/]: {Markup.Escape(resolveError)}");
+            }
+
+            return null;
+        }
+
         if (UnityEditorPathService.TryGetProjectEditorPath(projectPath, out var projectEditorPath))
         {
             return projectEditorPath;

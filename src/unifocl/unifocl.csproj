@@ -11,10 +11,7 @@
     <AutoIncrementDevCycle Condition="'$(AutoIncrementDevCycle)' == ''">true</AutoIncrementDevCycle>
   </PropertyGroup>
 
-  <UsingTask
-      TaskName="IncrementDevCycleTask"
-      TaskFactory="RoslynCodeTaskFactory"
-      AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+  <UsingTask TaskName="IncrementDevCycleTask" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
       <FilePath ParameterType="System.String" Required="true" />
     </ParameterGroup>
@@ -56,14 +53,13 @@
     </Task>
   </UsingTask>
 
-  <Target
-      Name="AutoIncrementDevCycle"
-      BeforeTargets="CoreCompile"
-      Condition="'$(Configuration)' == 'Debug' and '$(DesignTimeBuild)' != 'true' and '$(AutoIncrementDevCycle)' == 'true'">
+  <Target Name="AutoIncrementDevCycle" BeforeTargets="CoreCompile" Condition="'$(Configuration)' == 'Debug' and '$(DesignTimeBuild)' != 'true' and '$(AutoIncrementDevCycle)' == 'true'">
     <IncrementDevCycleTask FilePath="$(MSBuildProjectDirectory)/Services/CliVersion.cs" />
   </Target>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+    <PackageReference Include="ModelContextProtocol" Version="1.1.0" />
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 

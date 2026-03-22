@@ -23,7 +23,7 @@ internal sealed class HierarchyTui
         new("..", "Alias for up", ".."),
         new(":i", "Alias for up", ":i"),
         new("make --type <type> [--count <count>]", "Create typed objects under current object", "make"),
-        new("mk <type> [count] [--name <name>|-n <name>]", "Create typed object(s) under current object", "mk"),
+        new("mk <type> [count] [--name <name>|-n <name>] [--parent <path|id>|-p <path|id>]", "Create typed object(s) under current object", "mk"),
         new("remove <idx>", "Remove object by visible index", "remove"),
         new("rm <idx>", "Alias for remove", "rm"),
         new("toggle <idx>", "Toggle active state by index", "toggle"),
@@ -452,7 +452,7 @@ internal sealed class HierarchyTui
 
         if (tokens.Count >= 2 && tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase))
         {
-            if (!TryParseMkArguments(tokens, out var mkType, out var mkCount, out var mkName, out var mkError))
+            if (!TryParseMkArguments(tokens, out var mkType, out var mkCount, out var mkName, out var mkParentSelector, out var mkError))
             {
                 commandLog.Add($"[!] {mkError}");
                 return true;
@@ -464,16 +464,13 @@ internal sealed class HierarchyTui
                 return true;
             }
 
-            var targetId = normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? cwdId : (int?)null;
-            if (normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) && cwdId == snapshot.Root.Id)
+            if (!TryResolveMkParentId(snapshot, cwdId, normalizedMkType, mkParentSelector, out var parentId, out mkError))
             {
-                commandLog.Add("[!] EmptyParent requires a non-root current object");
+                commandLog.Add($"[!] {mkError}");
                 return true;
             }
 
-            var parentId = normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase)
-                ? (FindParentId(snapshot.Root, cwdId) ?? snapshot.Root.Id)
-                : cwdId;
+            var targetId = normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? cwdId : (int?)null;
 
             var response = await _daemonClient.ExecuteAsync(
                 port,
@@ -1113,8 +1110,10 @@ internal sealed class HierarchyTui
         }
 
         var current = root;
-        foreach (var segment in segments)
+        var startIndex = segments[0].Equals(root.Name, StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        for (var i = startIndex; i < segments.Length; i++)
         {
+            var segment = segments[i];
             var next = current.Children.FirstOrDefault(child =>
                 child.Name.Equals(segment, StringComparison.OrdinalIgnoreCase));
             if (next is null)
@@ -1126,6 +1125,66 @@ internal sealed class HierarchyTui
         }
 
         node = current;
+        return true;
+    }
+
+    private static bool TryResolveMkParentId(
+        HierarchySnapshotDto snapshot,
+        int cwdId,
+        string normalizedMkType,
+        string? parentSelector,
+        out int parentId,
+        out string error)
+    {
+        parentId = cwdId;
+        error = string.Empty;
+        var isEmptyParent = normalizedMkType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase);
+        if (isEmptyParent)
+        {
+            if (!string.IsNullOrWhiteSpace(parentSelector))
+            {
+                error = "mk EmptyParent does not support --parent; select the target object first";
+                return false;
+            }
+
+            if (cwdId == snapshot.Root.Id)
+            {
+                error = "EmptyParent requires a non-root current object";
+                return false;
+            }
+
+            parentId = FindParentId(snapshot.Root, cwdId) ?? snapshot.Root.Id;
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(parentSelector))
+        {
+            return true;
+        }
+
+        if (int.TryParse(parentSelector, out var parentNodeId))
+        {
+            if (!ContainsNode(snapshot.Root, parentNodeId))
+            {
+                error = $"parent id not found: {parentSelector}";
+                return false;
+            }
+
+            parentId = parentNodeId;
+            return true;
+        }
+
+        var cwdPath = BuildPath(snapshot.Root, cwdId);
+        var normalizedAbsolute = parentSelector.StartsWith("/", StringComparison.Ordinal)
+            ? parentSelector
+            : $"{cwdPath.TrimEnd('/')}/{parentSelector.TrimStart('/')}";
+        if (!TryFindNodeByPath(snapshot.Root, normalizedAbsolute, out var parentNode))
+        {
+            error = $"parent path not found: {parentSelector}";
+            return false;
+        }
+
+        parentId = parentNode.Id;
         return true;
     }
 
@@ -1804,12 +1863,14 @@ internal sealed class HierarchyTui
         out string type,
         out int count,
         out string? name,
+        out string? parentSelector,
         out string error)
     {
         type = string.Empty;
         count = 1;
         name = null;
-        error = "usage: mk <type> [count] [--name <name>|-n <name>]";
+        parentSelector = null;
+        error = "usage: mk <type> [count] [--name <name>|-n <name>] [--parent <path|id>|-p <path|id>]";
         if (tokens.Count < 2)
         {
             return false;
@@ -1873,7 +1934,7 @@ internal sealed class HierarchyTui
             {
                 if (i + 1 >= tokens.Count)
                 {
-                    error = "usage: mk <type> [count] [--name <name>|-n <name>]";
+                    error = "usage: mk <type> [count] [--name <name>|-n <name>] [--parent <path|id>|-p <path|id>]";
                     return false;
                 }
 
@@ -1881,6 +1942,48 @@ internal sealed class HierarchyTui
                 if (string.IsNullOrWhiteSpace(name))
                 {
                     error = "name must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.StartsWith("--parent=", StringComparison.OrdinalIgnoreCase))
+            {
+                parentSelector = token["--parent=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(parentSelector))
+                {
+                    error = "parent target must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.StartsWith("-p=", StringComparison.OrdinalIgnoreCase))
+            {
+                parentSelector = token["-p=".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(parentSelector))
+                {
+                    error = "parent target must not be empty";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (token.Equals("--parent", StringComparison.OrdinalIgnoreCase) || token.Equals("-p", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= tokens.Count)
+                {
+                    error = "usage: mk <type> [count] [--name <name>|-n <name>] [--parent <path|id>|-p <path|id>]";
+                    return false;
+                }
+
+                parentSelector = tokens[++i].Trim();
+                if (string.IsNullOrWhiteSpace(parentSelector))
+                {
+                    error = "parent target must not be empty";
                     return false;
                 }
 

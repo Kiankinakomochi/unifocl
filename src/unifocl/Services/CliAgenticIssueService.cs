@@ -20,6 +20,12 @@ internal static class CliAgenticIssueService
                 continue;
             }
 
+            if (IsRecoverableUnityCompileBootstrapLine(lower))
+            {
+                warnings.Add(new AgenticWarning("W_UNITY_COMPILE_RECOVERABLE", line));
+                continue;
+            }
+
             if (LooksLikeEscalationRequired(lower) && string.IsNullOrWhiteSpace(escalationEvidence))
             {
                 escalationEvidence = line;
@@ -53,6 +59,12 @@ internal static class CliAgenticIssueService
     {
         return normalizedLine.Contains("licensingclient has failed validation; ignoring")
                || normalizedLine.Contains("access token is unavailable; failed to update");
+    }
+
+    private static bool IsRecoverableUnityCompileBootstrapLine(string normalizedLine)
+    {
+        return normalizedLine.Contains("unity:")
+               && normalizedLine.Contains("tundra build failed");
     }
 
     public static int ResolveExitCode(List<AgenticError> errors)
