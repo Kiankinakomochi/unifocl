@@ -491,7 +491,8 @@ internal sealed class DaemonControlService
         Action<string> log,
         bool requireBridgeMode = false,
         bool preferHostMode = false,
-        bool allowUnsafe = false)
+        bool allowUnsafe = false,
+        TimeSpan? startupTimeout = null)
     {
         var port = ResolveProjectDaemonPort(projectPath);
         var existing = runtime.GetByPort(port);
@@ -612,7 +613,7 @@ internal sealed class DaemonControlService
             Headless: true,
             AllowUnsafe: allowUnsafe);
 
-        var started = await StartDaemonAsync(startOptions, runtime, log);
+        var started = await StartDaemonAsync(startOptions, runtime, log, startupTimeout);
         if (!started)
         {
             return false;
@@ -620,9 +621,10 @@ internal sealed class DaemonControlService
 
         session.AttachedPort = port;
         await TrySendControlAsync(port, "TOUCH", "OK");
+        var projectCommandReadyTimeout = startupTimeout ?? ProjectCommandReadyTimeout;
         var projectCommandReadyAfterStart = await WaitForProjectCommandReadyAsync(
             port,
-            ProjectCommandReadyTimeout,
+            projectCommandReadyTimeout,
             elapsed => log($"[grey]daemon[/]: waiting for project command endpoint... {elapsed.TotalSeconds:0}s elapsed"));
         if (!projectCommandReadyAfterStart)
         {
@@ -806,6 +808,105 @@ internal sealed class DaemonControlService
         return true;
     }
 
+    public int StopUnityLicensingClients(Action<string> log)
+    {
+        List<Process> processes;
+        try
+        {
+            processes = Process.GetProcesses()
+                .Where(IsUnityLicensingClientProcess)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]daemon[/]: unable to enumerate Unity licensing client processes ({Markup.Escape(ex.Message)})");
+            return 0;
+        }
+
+        var attempted = 0;
+        var stopped = 0;
+        foreach (var process in processes)
+        {
+            try
+            {
+                attempted++;
+                if (TryTerminateUnityLicensingClient(process, log))
+                {
+                    stopped++;
+                }
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        if (attempted > 0)
+        {
+            log($"[grey]daemon[/]: licensing-client cleanup closed {stopped}/{attempted} process(es)");
+        }
+
+        return stopped;
+    }
+
+    private static bool IsUnityLicensingClientProcess(Process process)
+    {
+        if (process.Id == Environment.ProcessId)
+        {
+            return false;
+        }
+
+        string processName;
+        try
+        {
+            processName = process.ProcessName;
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(processName))
+        {
+            return false;
+        }
+
+        if (processName.Contains("Unity.Licensing.Client", StringComparison.OrdinalIgnoreCase)
+            || processName.Contains("UnityLicensingClient", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return processName.Contains("unity", StringComparison.OrdinalIgnoreCase)
+               && processName.Contains("licens", StringComparison.OrdinalIgnoreCase)
+               && processName.Contains("client", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryTerminateUnityLicensingClient(Process process, Action<string> log)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return true;
+            }
+
+            process.Kill(entireProcessTree: true);
+            if (!process.WaitForExit(3000))
+            {
+                log($"[yellow]daemon[/]: licensing client pid={process.Id} did not exit within 3s");
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]daemon[/]: unable to terminate licensing client pid={process.Id} ({Markup.Escape(ex.Message)})");
+            return false;
+        }
+    }
+
     public static bool IsUnityClientActiveForProject(string projectPath)
     {
         var lockFile = Path.Combine(projectPath, "Temp", "UnityLockfile");
@@ -909,7 +1010,11 @@ internal sealed class DaemonControlService
         await StartDaemonAsync(startOptions, runtime, log);
     }
 
-    private async Task<bool> StartDaemonAsync(DaemonStartOptions startOptions, DaemonRuntime runtime, Action<string> log)
+    private async Task<bool> StartDaemonAsync(
+        DaemonStartOptions startOptions,
+        DaemonRuntime runtime,
+        Action<string> log,
+        TimeSpan? startupTimeout = null)
     {
         var existing = runtime.GetByPort(startOptions.Port);
         if (existing is not null && ProcessUtil.IsAlive(existing.Pid) && await TrySendControlAsync(existing.Port, "PING", "PONG"))
@@ -951,15 +1056,16 @@ internal sealed class DaemonControlService
                 outputLines.Enqueue(line);
             });
 
-        var startupTimeout = TimeSpan.FromSeconds(25);
+        var resolvedStartupTimeout = startupTimeout ?? TimeSpan.FromSeconds(25);
         var ready = startOptions.Headless
             ? await WaitForHostModeDaemonReadyAsync(
                 startOptions.Port,
                 process,
                 outputLines,
+                resolvedStartupTimeout,
                 elapsed => log($"[grey]daemon[/]: startup in progress... {elapsed.TotalSeconds:0}s elapsed"),
                 line => log($"[grey]unity[/]: {Markup.Escape(line)}"))
-            : await WaitForDaemonReadyAsync(startOptions.Port, startupTimeout);
+            : await WaitForDaemonReadyAsync(startOptions.Port, resolvedStartupTimeout);
         if (!ready)
         {
             while (outputLines.TryDequeue(out var line))
@@ -985,9 +1091,9 @@ internal sealed class DaemonControlService
             {
                 _lastStartupFailure = new DaemonStartupFailure(
                     IsCompileError: false,
-                    Summary: $"daemon did not respond on port {startOptions.Port} within {startupTimeout.TotalSeconds:0}s",
+                    Summary: $"daemon did not respond on port {startOptions.Port} within {resolvedStartupTimeout.TotalSeconds:0}s",
                     Lines: outputTail.ToList());
-                log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port} within {startupTimeout.TotalSeconds:0}s");
+                log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port} within {resolvedStartupTimeout.TotalSeconds:0}s");
                 TryTerminateSpawnedProcess(process, log);
             }
 
@@ -1599,13 +1705,15 @@ internal sealed class DaemonControlService
         int port,
         Process process,
         ConcurrentQueue<string> outputLines,
+        TimeSpan timeout,
         Action<TimeSpan>? onProgress = null,
         Action<string>? onOutput = null)
     {
         var startedAt = DateTime.UtcNow;
+        var deadline = startedAt.Add(timeout);
         var nextProgressAt = startedAt.AddSeconds(5);
 
-        while (true)
+        while (DateTime.UtcNow < deadline)
         {
             while (outputLines.TryDequeue(out var line))
             {
@@ -1631,6 +1739,13 @@ internal sealed class DaemonControlService
 
             await Task.Delay(180);
         }
+
+        while (outputLines.TryDequeue(out var line))
+        {
+            onOutput?.Invoke(line);
+        }
+
+        return false;
     }
 
     private static async Task<bool> TrySendControlAsync(int port, string request, string expectedResponse)

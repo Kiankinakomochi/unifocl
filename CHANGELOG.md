@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 - 2026-03-22
+
+### Changed
+- Officialized `1.1.0` by closing the development cycle suffix.
+- Hardened agentic lifecycle behavior to prevent `/new` and `/open` hang scenarios:
+  - `/new` now requires explicit Unity version in agentic mode and returns immediately after scaffold/init (no auto-`/open`).
+  - `/open` now supports `--timeout <seconds>` with default daemon startup timeout set to 120 seconds.
+  - Host-mode daemon startup readiness now uses bounded timeout windows instead of unbounded waits.
+- Added agentic sandbox `/open` preflight guard with explicit elevated-rerun guidance and resolved absolute command hints.
+- Improved agentic result classification so non-fatal Unity licensing messages are emitted as warnings instead of hard errors.
+- Added best-effort Unity licensing client cleanup during `/close`, `/quit`, agentic `/quit`, and cancellation/exit teardown flows.
+
 ## 1.0.0 - 2026-03-22
 
 ### Changed

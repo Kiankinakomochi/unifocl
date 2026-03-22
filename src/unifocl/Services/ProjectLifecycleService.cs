@@ -15,6 +15,7 @@ internal sealed class ProjectLifecycleService
     private static readonly TimeSpan GitVersionProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan CompileRecoveryRetryDelay = TimeSpan.FromSeconds(4);
+    private static readonly TimeSpan DefaultOpenDaemonStartupTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ExternalDependencyProbeTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ExternalDependencyInstallTimeout = TimeSpan.FromMinutes(5);
     private const int DefaultRecentPruneStaleDays = 14;
@@ -125,6 +126,8 @@ internal sealed class ProjectLifecycleService
         {
             log($"[yellow]exit[/]: teardown partial; stopped {stoppedCount}/{remainingPorts.Count} daemon(s)");
         }
+
+        daemonControlService.StopUnityLicensingClients(log);
     }
 
     private async Task<bool> HandleOpenAsync(
@@ -136,13 +139,25 @@ internal sealed class ProjectLifecycleService
         Action<string> log)
     {
         var args = ParseCommandArgs(input, matched.Trigger);
-        if (!TryParseOpenArgs(args, out var openPath, out var allowUnsafe, out var openParseError))
+        if (!TryParseOpenArgs(args, out var openPath, out var allowUnsafe, out var daemonStartupTimeout, out var openParseError))
         {
             log($"[red]error[/]: {Markup.Escape(openParseError)}");
             return true;
         }
 
         var projectPath = ResolveAbsolutePath(openPath, Directory.GetCurrentDirectory());
+        if (IsAgenticCodexSandboxOpenFlow())
+        {
+            log("[red]error[/]: /open in agentic sandbox mode requires elevated permissions (operation not permitted in restricted sandbox)");
+            var escapedProjectPath = projectPath.Replace("\"", "\\\"", StringComparison.Ordinal);
+            var escapedOpenInput = $"/open \\\"{escapedProjectPath}\\\"" + (allowUnsafe ? " --allow-unsafe" : string.Empty);
+            var rerunCommand =
+                $"unifocl exec \"{escapedOpenInput}\" --agentic --project \"{escapedProjectPath}\" --mode project --format json";
+            log("[yellow]hint[/]: rerun with sandbox_permissions=require_escalated");
+            log($"[grey]hint[/]: {Markup.Escape(rerunCommand)}");
+            return true;
+        }
+
         await TryOpenProjectAsync(
             projectPath,
             session,
@@ -152,6 +167,7 @@ internal sealed class ProjectLifecycleService
             promptForInitialization: true,
             ensureMcpHostDependencyCheck: true,
             allowUnsafe: allowUnsafe,
+            daemonStartupTimeout: daemonStartupTimeout,
             log: log);
         return true;
     }
@@ -168,6 +184,13 @@ internal sealed class ProjectLifecycleService
         if (!TryParseNewArgs(args, out var projectName, out var requestedVersion, out var allowUnsafe, out var parseError))
         {
             log($"[red]error[/]: {Markup.Escape(parseError)}");
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(requestedVersion) && CliRuntimeState.SuppressConsoleOutput)
+        {
+            log("[red]error[/]: /new in agentic mode requires an explicit Unity version");
+            log("[red]error[/]: usage /new <project-name> <unity-version> [--allow-unsafe]");
             return true;
         }
 
@@ -268,6 +291,13 @@ internal sealed class ProjectLifecycleService
             return true;
         }
 
+        if (CliRuntimeState.SuppressConsoleOutput)
+        {
+            log("[green]new[/]: Unity project scaffold ready");
+            log($"[grey]new[/]: agentic mode skips auto-open; run [white]/open {Markup.Escape(projectPath)}[/] when ready");
+            return true;
+        }
+
         log("[grey]new[/]: step 6/6 open initialized project");
         if (await TryOpenProjectAsync(
                 projectPath,
@@ -278,6 +308,7 @@ internal sealed class ProjectLifecycleService
                 promptForInitialization: false,
                 ensureMcpHostDependencyCheck: false,
                 allowUnsafe: allowUnsafe,
+                daemonStartupTimeout: DefaultOpenDaemonStartupTimeout,
                 log: log))
         {
             log("[green]new[/]: Unity project scaffold ready");
@@ -352,6 +383,7 @@ internal sealed class ProjectLifecycleService
                 promptForInitialization: true,
                 ensureMcpHostDependencyCheck: true,
                 allowUnsafe: allowUnsafe,
+                daemonStartupTimeout: DefaultOpenDaemonStartupTimeout,
                 log: log))
         {
             log("[green]clone[/]: repository cloned and prepared");
@@ -1328,7 +1360,8 @@ internal sealed class ProjectLifecycleService
         Action<string> log,
         bool requireBridgeMode,
         bool preferHostMode,
-        bool allowUnsafe)
+        bool allowUnsafe,
+        TimeSpan daemonStartupTimeout)
     {
         var started = await daemonControlService.EnsureProjectDaemonAsync(
             projectPath,
@@ -1337,7 +1370,8 @@ internal sealed class ProjectLifecycleService
             log,
             requireBridgeMode: requireBridgeMode,
             preferHostMode: preferHostMode,
-            allowUnsafe: allowUnsafe);
+            allowUnsafe: allowUnsafe,
+            startupTimeout: daemonStartupTimeout);
         if (started || allowUnsafe)
         {
             return started;
@@ -1368,7 +1402,8 @@ internal sealed class ProjectLifecycleService
                 log,
                 requireBridgeMode: requireBridgeMode,
                 preferHostMode: preferHostMode,
-                allowUnsafe: allowUnsafe);
+                allowUnsafe: allowUnsafe,
+                startupTimeout: daemonStartupTimeout);
             if (started)
             {
                 log("[green]daemon[/]: daemon startup recovered after package/compile warmup retry");
@@ -1553,6 +1588,7 @@ internal sealed class ProjectLifecycleService
             promptForInitialization: true,
             ensureMcpHostDependencyCheck: true,
             allowUnsafe: allowUnsafe,
+            daemonStartupTimeout: DefaultOpenDaemonStartupTimeout,
             log: log);
     }
 
@@ -2513,6 +2549,8 @@ internal sealed class ProjectLifecycleService
             }
         }
 
+        daemonControlService.StopUnityLicensingClients(log);
+
         session.ResetToBoot();
         if (stopFailed)
         {
@@ -2539,6 +2577,7 @@ internal sealed class ProjectLifecycleService
         bool promptForInitialization,
         bool ensureMcpHostDependencyCheck,
         bool allowUnsafe,
+        TimeSpan daemonStartupTimeout,
         Action<string> log)
     {
         log($"[grey]open[/]: step 1/5 resolve project path -> [white]{Markup.Escape(projectPath)}[/]");
@@ -2646,7 +2685,8 @@ internal sealed class ProjectLifecycleService
             requireBridgeMode: true,
             // Prefer attaching to live editor Bridge mode when available; Host mode remains fallback.
             preferHostMode: false,
-            allowUnsafe: allowUnsafe);
+            allowUnsafe: allowUnsafe,
+            daemonStartupTimeout: daemonStartupTimeout);
         if (!started)
         {
             HandleDaemonStartupFailure(projectPath, session, daemonControlService, log);
@@ -2781,33 +2821,71 @@ internal sealed class ProjectLifecycleService
         return tokens;
     }
 
+    private static bool IsAgenticCodexSandboxOpenFlow()
+    {
+        if (!CliRuntimeState.SuppressConsoleOutput)
+        {
+            return false;
+        }
+
+        var sandboxMode = Environment.GetEnvironmentVariable("CODEX_SANDBOX");
+        if (string.IsNullOrWhiteSpace(sandboxMode))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     private static bool TryParseOpenArgs(
         IReadOnlyList<string> args,
         out string projectPath,
         out bool allowUnsafe,
+        out TimeSpan daemonStartupTimeout,
         out string error)
     {
         projectPath = string.Empty;
         allowUnsafe = false;
+        daemonStartupTimeout = DefaultOpenDaemonStartupTimeout;
         error = string.Empty;
 
-        foreach (var arg in args)
+        for (var i = 0; i < args.Count; i++)
         {
+            var arg = args[i];
             if (arg.Equals("--allow-unsafe", StringComparison.Ordinal))
             {
                 allowUnsafe = true;
                 continue;
             }
 
+            if (arg.Equals("--timeout", StringComparison.Ordinal))
+            {
+                if (i + 1 >= args.Count)
+                {
+                    error = "missing timeout value; usage /open <path> [--allow-unsafe] [--timeout <seconds>]";
+                    return false;
+                }
+
+                var timeoutRaw = args[++i];
+                if (!int.TryParse(timeoutRaw, out var timeoutSeconds) || timeoutSeconds < 1)
+                {
+                    error = $"invalid timeout value '{timeoutRaw}'; usage /open <path> [--allow-unsafe] [--timeout <seconds>]";
+                    return false;
+                }
+
+                daemonStartupTimeout = TimeSpan.FromSeconds(timeoutSeconds);
+                continue;
+            }
+
             if (arg.StartsWith("--", StringComparison.Ordinal))
             {
-                error = $"unrecognized option {arg}; usage /open <path> [--allow-unsafe]";
+                error = $"unrecognized option {arg}; usage /open <path> [--allow-unsafe] [--timeout <seconds>]";
                 return false;
             }
 
             if (!string.IsNullOrWhiteSpace(projectPath))
             {
-                error = "too many positional arguments; usage /open <path> [--allow-unsafe]";
+                error = "too many positional arguments; usage /open <path> [--allow-unsafe] [--timeout <seconds>]";
                 return false;
             }
 
@@ -2816,7 +2894,7 @@ internal sealed class ProjectLifecycleService
 
         if (string.IsNullOrWhiteSpace(projectPath))
         {
-            error = "usage /open <path> [--allow-unsafe]";
+            error = "usage /open <path> [--allow-unsafe] [--timeout <seconds>]";
             return false;
         }
 

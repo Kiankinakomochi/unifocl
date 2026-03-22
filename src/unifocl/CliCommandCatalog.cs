@@ -5,7 +5,7 @@ internal static class CliCommandCatalog
         return
         [
             // System & lifecycle
-            new("/open <path> [--allow-unsafe]", "Open project (starts/attaches daemon, loads project)", "/open"),
+            new("/open <path> [--allow-unsafe] [--timeout <seconds>]", "Open project (starts/attaches daemon, loads project)", "/open"),
             new("/o <path>", "Alias for /open", "/o"),
             new("/close", "Detach from current project and stop attached daemon", "/close"),
             new("/c", "Alias for /close", "/c"),
