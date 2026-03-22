@@ -52,7 +52,7 @@ internal static class CliCommandCatalog
             new("/examples", "Show common next-step flows", "/examples"),
             new("/keybinds", "Show modal keybinds/shortcuts", "/keybinds"),
             new("/shortcuts", "Alias for keybinds", "/shortcuts"),
-            new("/update", "Check for CLI updates", "/update"),
+            new("/update", "Download/install latest CLI binary for current platform", "/update"),
             new("/version", "Show CLI and protocol version", "/version"),
             new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
             new("/dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]", "Dump deterministic mode state for agentic workflows", "/dump"),
