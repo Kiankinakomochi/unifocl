@@ -1174,18 +1174,134 @@ internal sealed class HierarchyTui
             return true;
         }
 
+        var selector = parentSelector.Trim();
         var cwdPath = BuildPath(snapshot.Root, cwdId);
-        var normalizedAbsolute = parentSelector.StartsWith("/", StringComparison.Ordinal)
-            ? parentSelector
-            : $"{cwdPath.TrimEnd('/')}/{parentSelector.TrimStart('/')}";
-        if (!TryFindNodeByPath(snapshot.Root, normalizedAbsolute, out var parentNode))
+        var candidatePaths = new List<string>();
+        if (selector.StartsWith("/", StringComparison.Ordinal))
         {
-            error = $"parent path not found: {parentSelector}";
+            candidatePaths.Add(selector);
+        }
+        else
+        {
+            candidatePaths.Add($"{cwdPath.TrimEnd('/')}/{selector.TrimStart('/')}");
+            candidatePaths.Add("/" + selector.TrimStart('/'));
+        }
+
+        // 1) Exact path match.
+        foreach (var candidatePath in candidatePaths)
+        {
+            if (TryFindNodeByPath(snapshot.Root, candidatePath, out var exactNode))
+            {
+                parentId = exactNode.Id;
+                return true;
+            }
+        }
+
+        // 2) Normalized path-key match (suffix-insensitive: "Name (1)" => "Name").
+        var nodesWithPaths = CollectHierarchyNodesWithPaths(snapshot.Root);
+        var keyed = nodesWithPaths
+            .GroupBy(item => NormalizeHierarchyPathKey(item.Path), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        foreach (var candidatePath in candidatePaths)
+        {
+            var key = NormalizeHierarchyPathKey(candidatePath);
+            if (!keyed.TryGetValue(key, out var matches))
+            {
+                continue;
+            }
+
+            if (matches.Count == 1)
+            {
+                parentId = matches[0].Node.Id;
+                return true;
+            }
+
+            error = $"ambiguous parent path: {parentSelector}";
             return false;
         }
 
-        parentId = parentNode.Id;
-        return true;
+        // 3) Bare-name global fallback for unique object names.
+        if (!selector.Contains('/', StringComparison.Ordinal))
+        {
+            var normalizedName = NormalizeHierarchyNameKey(selector);
+            var nameMatches = nodesWithPaths
+                .Where(item => NormalizeHierarchyNameKey(item.Node.Name).Equals(normalizedName, StringComparison.OrdinalIgnoreCase))
+                .Select(item => item.Node)
+                .ToList();
+            if (nameMatches.Count == 1)
+            {
+                parentId = nameMatches[0].Id;
+                return true;
+            }
+
+            if (nameMatches.Count > 1)
+            {
+                error = $"ambiguous parent name: {parentSelector}";
+                return false;
+            }
+        }
+
+        error = $"parent path not found: {parentSelector}";
+        return false;
+    }
+
+    private static List<(HierarchyNodeDto Node, string Path)> CollectHierarchyNodesWithPaths(HierarchyNodeDto root)
+    {
+        var result = new List<(HierarchyNodeDto Node, string Path)>();
+        void Visit(HierarchyNodeDto node, string path)
+        {
+            result.Add((node, path));
+            foreach (var child in node.Children)
+            {
+                Visit(child, $"{path.TrimEnd('/')}/{child.Name}");
+            }
+        }
+
+        Visit(root, "/" + root.Name);
+        return result;
+    }
+
+    private static string NormalizeHierarchyPathKey(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "/";
+        }
+
+        var normalized = path.Trim();
+        if (!normalized.StartsWith("/", StringComparison.Ordinal))
+        {
+            normalized = "/" + normalized;
+        }
+
+        var segments = normalized
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeHierarchyNameKey)
+            .ToList();
+        return "/" + string.Join("/", segments);
+    }
+
+    private static string NormalizeHierarchyNameKey(string name)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        // Unity auto-suffixes duplicate names as "Name (1)", "Name (2)", etc.
+        // Normalize these so parent targeting remains deterministic across reruns.
+        var suffixOpen = trimmed.LastIndexOf(" (", StringComparison.Ordinal);
+        if (suffixOpen > 0 && trimmed.EndsWith(')'))
+        {
+            var numberSlice = trimmed[(suffixOpen + 2)..^1];
+            if (int.TryParse(numberSlice, out _))
+            {
+                trimmed = trimmed[..suffixOpen];
+            }
+        }
+
+        return trimmed.ToLowerInvariant();
     }
 
     private static bool TryResolveInspectTargetPath(
