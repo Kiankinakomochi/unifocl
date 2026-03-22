@@ -171,3 +171,46 @@ jobs:
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-win-x64.zip
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}.tar.gz
+
+      - name: Update Homebrew Formula Tap
+        if: steps.version.outputs.skip == 'false'
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping homebrew formula update."
+            exit 0
+          fi
+
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          release_asset_url="https://github.com/Kiankinakomochi/unifocl/releases/download/${tag}/unifocl-${version}-macos-arm64.tar.gz"
+          archive_path="/tmp/unifocl-${version}-macos-arm64.tar.gz"
+          formula_repo_dir="$(mktemp -d)"
+          formula_path="${formula_repo_dir}/Formula/unifocl.rb"
+
+          curl -fsSL "${release_asset_url}" -o "${archive_path}"
+          asset_sha256="$(sha256sum "${archive_path}" | awk '{print $1}')"
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Kiankinakomochi/homebrew-unifocl.git" "${formula_repo_dir}"
+
+          if [[ ! -f "${formula_path}" ]]; then
+            echo "Formula file not found at ${formula_path}"
+            exit 1
+          fi
+
+          sed -i -E "s|^  url \".*\"$|  url \"${release_asset_url}\"|" "${formula_path}"
+          sed -i -E "s|^  sha256 \".*\"$|  sha256 \"${asset_sha256}\"|" "${formula_path}"
+
+          if git -C "${formula_repo_dir}" diff --quiet -- Formula/unifocl.rb; then
+            echo "No formula changes detected; skipping commit."
+            exit 0
+          fi
+
+          git -C "${formula_repo_dir}" config user.name "github-actions[bot]"
+          git -C "${formula_repo_dir}" config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C "${formula_repo_dir}" add Formula/unifocl.rb
+          git -C "${formula_repo_dir}" commit -m "unifocl ${version}"
+          git -C "${formula_repo_dir}" push origin HEAD:main
