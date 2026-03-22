@@ -2206,6 +2206,20 @@ internal sealed class ProjectLifecycleService
         {
             log($"[grey]info[/]: unity-version={Markup.Escape(editorVersion)}");
         }
+        else
+        {
+            log("[grey]info[/]: unity-version=unknown");
+        }
+
+        if (UnityEditorPathService.TryResolveEditorForProject(targetPath, out var resolvedEditorPath, out var resolvedEditorVersion, out _))
+        {
+            log($"[grey]info[/]: unity-editor-match={Markup.Escape(resolvedEditorVersion)}");
+            log($"[grey]info[/]: unity-editor-path={Markup.Escape(resolvedEditorPath)}");
+        }
+        else
+        {
+            log("[yellow]info[/]: unity-editor-match=not found");
+        }
 
         var daemonPort = DaemonControlService.ResolveProjectDaemonPort(targetPath);
         log($"[grey]info[/]: default-daemon-port={daemonPort}");
