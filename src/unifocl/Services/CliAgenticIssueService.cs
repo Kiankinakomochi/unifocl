@@ -14,6 +14,12 @@ internal static class CliAgenticIssueService
             }
 
             var lower = line.ToLowerInvariant();
+            if (IsBenignUnityLicensingLine(lower))
+            {
+                warnings.Add(new AgenticWarning("W_UNITY_LICENSING", line));
+                continue;
+            }
+
             if (LooksLikeEscalationRequired(lower) && string.IsNullOrWhiteSpace(escalationEvidence))
             {
                 escalationEvidence = line;
@@ -41,6 +47,12 @@ internal static class CliAgenticIssueService
         }
 
         return (errors, warnings, requiresEscalation, escalationEvidence);
+    }
+
+    private static bool IsBenignUnityLicensingLine(string normalizedLine)
+    {
+        return normalizedLine.Contains("licensingclient has failed validation; ignoring")
+               || normalizedLine.Contains("access token is unavailable; failed to update");
     }
 
     public static int ResolveExitCode(List<AgenticError> errors)

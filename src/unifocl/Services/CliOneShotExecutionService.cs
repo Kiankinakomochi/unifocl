@@ -339,6 +339,11 @@ internal static class CliOneShotExecutionService
 
         if (matched.Trigger == "/quit")
         {
+            await projectLifecycleService.PerformSafeExitCleanupAsync(
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line));
             CliLogService.AppendLog(streamLog, "[grey]Session closed.[/]");
             return;
         }

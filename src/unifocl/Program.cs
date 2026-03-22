@@ -131,6 +131,18 @@ try
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
         {
+            try
+            {
+                await projectLifecycleService.PerformSafeExitCleanupAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    _ => { });
+            }
+            catch
+            {
+            }
+
             var canceled = new AgenticResponseEnvelope(
                 "error",
                 string.IsNullOrWhiteSpace(execOptions!.RequestId) ? Guid.NewGuid().ToString("N") : execOptions.RequestId!,
@@ -308,6 +320,19 @@ try
 
         if (matched.Trigger == "/quit")
         {
+            try
+            {
+                await projectLifecycleService.PerformSafeExitCleanupAsync(
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line));
+            }
+            catch (Exception ex)
+            {
+                CliLogService.LogUnhandledException(streamLog, ex, "shutdown");
+            }
+
             CliTheme.MarkupLine("[grey]Session closed.[/]");
             return;
         }
