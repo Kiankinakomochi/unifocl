@@ -34,6 +34,20 @@ This note captures the current, post-fix behavior for `unifocl` one-shot agentic
    - `CanvasScaler.matchWidthOrHeight = 1`
 5. For start screen layout, set anchored positions/sizes explicitly for title and buttons instead of relying on defaults.
 
+## Concrete Transport Use Cases
+
+1. Native unifocl agent workflow (recommended default):
+   - `UNIFOCL_PROJECT_MUTATION_TRANSPORT=http`
+   - Path: `Agent -> unifocl CLI -> daemon HTTP -> Unity`
+   - Behavior: skips Unity MCP package and Python/uv host dependency enforcement during `/init` and `/open`.
+2. External MCP ecosystem workflow:
+   - `UNIFOCL_PROJECT_MUTATION_TRANSPORT=mcp`
+   - Path: `Agent/tooling -> MCP-shaped project command endpoint -> daemon -> Unity`
+   - Behavior: enables Unity MCP package enforcement and host dependency checks (`python`, `uv`) during `/init` and `/open`.
+3. Compatibility migration workflow:
+   - `UNIFOCL_PROJECT_MUTATION_TRANSPORT=auto`
+   - Behavior: tries MCP transport first, falls back to durable HTTP transport automatically.
+
 ## Best Practices For Future Agents
 
 1. If build/type issues appear around shared contracts, run:

@@ -15,6 +15,7 @@ internal sealed class HierarchyDaemonClient
     private static readonly TimeSpan MutationPollInterval = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan MutationPollBackoff = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan MutationPollMaxInterval = TimeSpan.FromMilliseconds(800);
+    private const string ProjectMutationTransportEnv = "UNIFOCL_PROJECT_MUTATION_TRANSPORT";
     private const int SceneLoadRetryCount = 1;
     private static readonly IProjectMutationTransport McpMutationTransport = new McpProjectMutationTransport();
     private static readonly IProjectMutationTransport HttpMutationTransport = new HttpProjectMutationTransport();
@@ -126,17 +127,25 @@ internal sealed class HierarchyDaemonClient
                 ? UpmMutationTimeout
                 : TimeSpan.FromSeconds(90);
 
-            var response = await McpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
-            if (response is not null)
+            var transportPreference = ResolveMutationTransportMode();
+            if (transportPreference is ProjectMutationTransportMode.Mcp or ProjectMutationTransportMode.Auto)
             {
-                return response;
+                var response = await McpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
+                if (response is not null)
+                {
+                    return response;
+                }
+
+                onStatus?.Invoke("MCP mutation transport unavailable; falling back to daemon HTTP");
             }
 
-            onStatus?.Invoke("MCP mutation transport unavailable; falling back to daemon HTTP");
-            var fallback = await HttpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
-            if (fallback is not null)
+            if (transportPreference is ProjectMutationTransportMode.Http or ProjectMutationTransportMode.Mcp or ProjectMutationTransportMode.Auto)
             {
-                return fallback;
+                var fallback = await HttpMutationTransport.ExecuteAsync(port, requestWithId, mutationTimeout, onStatus);
+                if (fallback is not null)
+                {
+                    return fallback;
+                }
             }
 
             onStatus?.Invoke("durable mutation endpoints unavailable; falling back to legacy project command transport");
@@ -258,6 +267,31 @@ internal sealed class HierarchyDaemonClient
         {
             return null;
         }
+    }
+
+    public static bool IsMcpTransportEnabledByPolicy()
+    {
+        var mode = ResolveMutationTransportMode();
+        return mode is ProjectMutationTransportMode.Mcp or ProjectMutationTransportMode.Auto;
+    }
+
+    private static ProjectMutationTransportMode ResolveMutationTransportMode()
+    {
+        var configured = Environment.GetEnvironmentVariable(ProjectMutationTransportEnv);
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            // Native unifocl clients default to direct daemon HTTP transport.
+            return ProjectMutationTransportMode.Http;
+        }
+
+        var normalized = configured.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "http" => ProjectMutationTransportMode.Http,
+            "mcp" => ProjectMutationTransportMode.Mcp,
+            "auto" => ProjectMutationTransportMode.Auto,
+            _ => ProjectMutationTransportMode.Http
+        };
     }
 
     public async Task<BuildLogChunkDto?> GetBuildLogChunkAsync(int port, long offset, int limit, bool errorsOnly)
@@ -825,4 +859,11 @@ internal sealed class HierarchyDaemonClient
         string? Payload,
         string? Error,
         bool TimedOut);
+
+    private enum ProjectMutationTransportMode
+    {
+        Http,
+        Mcp,
+        Auto
+    }
 }

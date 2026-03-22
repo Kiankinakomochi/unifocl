@@ -12,6 +12,12 @@
   - normalized scene-root-prefixed hierarchy paths
   - added lenient resolution for Unity-suffixed object names (for example `Name (1)`)
   - enabled root-level `set <field> <value>` when field mapping is uniquely resolvable
+- Clarified mutation transport separation with explicit policy via `UNIFOCL_PROJECT_MUTATION_TRANSPORT`:
+  - default `http` for native unifocl workflows
+  - optional `mcp` / `auto` for MCP-oriented workflows
+- Updated `/init` and `/open` MCP setup behavior to be policy-driven:
+  - native `http` policy skips Unity MCP package and host dependency enforcement
+  - `mcp`/`auto` policies enforce Unity MCP package and host dependencies
 - Updated the one-shot agentic playbook with current-state guidance, validated flow for steps 4-6, and residual caveats.
 - Bumped bridge protocol to `v9`; projects should re-run `/init` to refresh embedded bridge payloads.
 
