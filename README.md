@@ -105,6 +105,7 @@ These commands manage your session, project loading, and CLI configuration. They
     - `LookupCommand(command, scope)`
 - MCP server architecture + agent JSON configuration guide:
     - `docs/mcp-server-architecture.md`
+    - Quick multi-client setup helper: `scripts/setup-mcp-agents.sh`
 - **Durable HTTP fallback endpoints:** `POST /project/mutation/submit`, `GET /project/mutation/status?requestId=<id>`, `GET /project/mutation/result?requestId=<id>`, `POST /project/mutation/cancel?requestId=<id>`
 
 ### 2. Daemon Management
@@ -441,10 +442,10 @@ src/unifocl/scripts/agent-worktree.sh init-smoke-agentic \
   --project-path .local/agentic-smoke-project \
   --format json
 
-# 4) Start daemon on dynamically selected open port for that worktree/project
-src/unifocl/scripts/agent-worktree.sh start-daemon \
-  --worktree-path ../unifocl-agent-a \
-  --project-path .local/agentic-smoke-project
+# 4) Open project (provisions/attaches daemon via /open)
+dotnet run --project src/unifocl/unifocl.csproj -- \
+  exec "/open $(pwd)/../unifocl-agent-a/.local/agentic-smoke-project" \
+  --agentic --project "$(pwd)/../unifocl-agent-a/.local/agentic-smoke-project" --mode project
 
 # 5) Execute deterministic machine command in that isolated workspace
 cd ../unifocl-agent-a

@@ -24,16 +24,29 @@ internal sealed class DaemonControlService
         Action<string> log,
         List<string> streamLog)
     {
+        var normalizedInput = input.Trim();
+        if (normalizedInput.StartsWith("/daemon start", StringComparison.OrdinalIgnoreCase)
+            || normalizedInput.StartsWith("/d start", StringComparison.OrdinalIgnoreCase)
+            || normalizedInput.Equals("/daemon restart", StringComparison.OrdinalIgnoreCase)
+            || normalizedInput.Equals("/d restart", StringComparison.OrdinalIgnoreCase))
+        {
+            log("[yellow]daemon[/]: explicit daemon startup/restart is removed");
+            log("[grey]daemon[/]: use [white]/open <project>[/] to provision and attach daemon context");
+            return;
+        }
+
         switch (trigger)
         {
             case "/daemon start":
-                await HandleDaemonStartAsync(input, runtime, session, log);
+                log("[yellow]daemon[/]: explicit daemon startup is removed");
+                log("[grey]daemon[/]: use [white]/open <project>[/] to provision and attach daemon context");
                 break;
             case "/daemon stop":
                 await HandleDaemonStopAsync(runtime, session, log);
                 break;
             case "/daemon restart":
-                await HandleDaemonRestartAsync(runtime, session, log);
+                log("[yellow]daemon[/]: explicit daemon restart is removed");
+                log("[grey]daemon[/]: use [white]/open <project>[/] to provision and attach daemon context");
                 break;
             case "/daemon ps":
                 await HandleDaemonPsAsync(runtime, session, streamLog, log);
@@ -45,7 +58,7 @@ internal sealed class DaemonControlService
                 HandleDaemonDetach(session, log);
                 break;
             default:
-                log("[yellow]daemon[/]: usage /daemon <start|stop|restart|ps|attach|detach>");
+                log("[yellow]daemon[/]: usage /daemon <stop|ps|attach|detach>");
                 await HandleDaemonPsAsync(runtime, session, streamLog, log);
                 break;
         }

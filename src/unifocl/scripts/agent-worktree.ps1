@@ -100,47 +100,7 @@ switch ($Command) {
         Seed-LibraryCache -SourceProjectPath $sourceProjectAbs -WorktreeRoot $worktreePathAbs
     }
     'start-daemon' {
-        if (-not $WorktreePath) { throw 'missing -WorktreePath' }
-        if (-not $ProjectPath) { throw 'missing -ProjectPath' }
-
-        $worktreePathAbs = Resolve-AbsolutePath $WorktreePath
-        if ([System.IO.Path]::IsPathRooted($ProjectPath)) {
-            $projectPathAbs = Resolve-AbsolutePath $ProjectPath
-        }
-        else {
-            $projectPathAbs = Resolve-AbsolutePath (Join-Path $worktreePathAbs $ProjectPath)
-        }
-        $selectedPort = Find-OpenPort -StartPort $PortStart -EndPort $PortEnd
-
-        $daemonCommand = "/daemon start --project `"$projectPathAbs`" --port $selectedPort --headless"
-        $startupLog = Join-Path ([System.IO.Path]::GetTempPath()) ("unifocl-daemon-start-{0}.log" -f [Guid]::NewGuid().ToString('N'))
-
-        Push-Location $worktreePathAbs
-        try {
-            "$daemonCommand`n/quit`n" | dotnet run --project src/unifocl/unifocl.csproj --disable-build-servers -v minimal *> $startupLog
-        }
-        finally {
-            Pop-Location
-        }
-
-        $ready = $false
-        for ($i = 0; $i -lt 40; $i++) {
-            try {
-                Invoke-WebRequest -Uri "http://127.0.0.1:$selectedPort/ping" -UseBasicParsing | Out-Null
-                $ready = $true
-                break
-            }
-            catch {
-                Start-Sleep -Milliseconds 250
-            }
-        }
-
-        if (-not $ready) {
-            throw "daemon did not become ready on port $selectedPort. startup log: $startupLog"
-        }
-
-        Write-Output "daemon-ready-port: $selectedPort"
-        Write-Output "daemon-start-command: $daemonCommand"
+        throw 'start-daemon is removed. use one-shot /open instead: unifocl exec "/open <project-path>" --agentic --project <project-path> --mode project --format json'
     }
     'teardown' {
         if (-not $RepoRoot) { throw 'missing -RepoRoot' }

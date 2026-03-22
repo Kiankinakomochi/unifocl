@@ -89,6 +89,36 @@ If `unifocl` is not on PATH, use an absolute binary path:
 }
 ```
 
+## Automation Script
+
+To speed up setup across multiple agent clients, use:
+
+`scripts/setup-mcp-agents.sh`
+
+Examples:
+
+```bash
+# 1) Configure Codex only
+scripts/setup-mcp-agents.sh --workspace . --codex
+
+# 2) Configure Cursor + Claude Code JSON configs in one run
+scripts/setup-mcp-agents.sh \
+  --workspace . \
+  --cursor-config ~/.cursor/mcp.json \
+  --claude-config ~/.claude/mcp.json
+
+# 3) Preview changes without writing
+scripts/setup-mcp-agents.sh --workspace . --codex --cursor-config ~/.cursor/mcp.json --dry-run
+```
+
+Script behavior:
+
+1. Creates workspace-local `UNIFOCL_CONFIG_ROOT` (default: `<workspace>/.local/unifocl-config`).
+2. Registers or updates `mcpServers.unifocl` idempotently.
+3. Uses `unifocl --mcp-server` if `unifocl` is on PATH; otherwise falls back to:
+   - `dotnet run --project <workspace>/src/unifocl/unifocl.csproj -- --mcp-server`
+4. For JSON targets, writes a `.bak` backup before updating.
+
 ## Per-Agent Notes
 
 Different agent apps store config in different JSON files and may add extra fields (for example, per-server enable flags, startup timeouts, or tool allowlists). The critical part is always the same:
