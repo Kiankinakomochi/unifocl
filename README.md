@@ -80,7 +80,7 @@ These commands manage your session, project loading, and CLI configuration. They
 | `/upm install <target>` | `/upm add`, `/upm i` | Install a package by package ID, Git URL, or `file:` target. |
 | `/upm remove <id>` | `/upm rm`, `/upm uninstall` | Remove a package by package ID. |
 | `/upm update <id> [version]` | `/upm u` | Update a package to latest or a specified version. |
-| `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies; Unity MCP package setup is applied when MCP mutation transport is enabled. |
+| `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
 | `/version` |  | Show CLI and protocol version. |
 | `/protocol` |  | Show supported JSON schema capabilities. |
@@ -98,12 +98,13 @@ These commands manage your session, project loading, and CLI configuration. They
     - `HIERARCHY_CMD` supports `mk`, `rm`, `rename`, `mv`, `toggle` with guardrails.
     - *Host-mode fallback safety constraints:* All mutations are constrained within `Assets`; move/rename path-escape is rejected; moving a directory into itself/descendants is rejected; `mk` validates names and supports typed placeholders (`Empty`, `EmptyChild`, `EmptyParent`, `Text/TMP`, `Sprite`, default prefab).
 - Durable project mutations are supported (`submit -> status -> result`) so mutation outcomes remain queryable even if Unity refresh/compile/domain reload interrupts an in-flight HTTP response.
-- **Project mutation transport policy:** set `UNIFOCL_PROJECT_MUTATION_TRANSPORT` to choose transport for durable project mutations:
-    - `http` (default): native unifocl path (`CLI -> daemon HTTP -> Unity`)
-    - `mcp`: prioritize MCP adapter path (`CLI -> /mcp/unifocl_project_command -> Unity`)
-    - `auto`: try MCP first, then HTTP fallback
-- **Unity MCP package (optional by policy):** unifocl can utilize the [unity-mcp](https://github.com/CoplayDev/unity-mcp) package for MCP-oriented workflows. When mutation transport policy is `mcp` or `auto`, `/init` and `/open` enforce MCP package/dependency setup. This tool has a dependency on **Python 3.10+** and [**uv**](https://github.com/astral-sh/uv). unifocl will make the best effort to resolve and install these dependencies using Homebrew (macOS) or Winget (Windows). For direct installation, use the [MCPForUnity Git target](https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main) (OpenUPM package id: `com.coplaydev.unity-mcp`).
-- **MCP bridge endpoint:** `POST /mcp/unifocl_project_command` with operations `submit`, `get_status`, `get_result`, `cancel`
+- Durable mutations use native daemon HTTP endpoints by default (`submit -> status -> result`) and no longer require the external Unity-MCP package/runtime dependencies.
+- Built-in MCP server mode is available for automation tooling: start with `unifocl --mcp-server` (stdio transport, .NET MCP SDK).
+- MCP command lookup tools are exposed by the built-in server so agents can discover usage without reading full docs:
+    - `ListCommands(scope, query, limit)`
+    - `LookupCommand(command, scope)`
+- MCP server architecture + agent JSON configuration guide:
+    - `docs/mcp-server-architecture.md`
 - **Durable HTTP fallback endpoints:** `POST /project/mutation/submit`, `GET /project/mutation/status?requestId=<id>`, `GET /project/mutation/result?requestId=<id>`, `POST /project/mutation/cancel?requestId=<id>`
 
 ### 2. Daemon Management
@@ -273,6 +274,15 @@ Notes:
 - `-agentic` enables machine output (single response payload).
 - `-format` controls payload encoding (`json` or `yaml`).
 - `-project`, `-mode`, and `-attach-port` seed runtime context so commands can execute without interactive setup.
+
+Agentic best-practice profile (native bridge + built-in MCP server):
+
+- Use native durable daemon HTTP mutation lifecycle for writes (`submit -> status -> result`).
+- Use `unifocl --mcp-server` when automation needs compact command lookup/context tools over stdio.
+- For project mutations, prefer durable lifecycle calls (`submit -> status -> result`) instead of relying on a single long HTTP response.
+- Reuse one `--session-seed` and one daemon attach target per workflow chain to avoid context rehydration churn.
+- For deterministic edits, prefer path-based targeting and perform grouped verification (`/dump hierarchy` + `/dump inspector`) after each mutation batch.
+- For concurrent agents, use one worktree and one daemon port per agent; do not run multiple mutating agents in the same worktree.
 
 ### 2. Unified Agentic Envelope
 
