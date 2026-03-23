@@ -144,6 +144,9 @@ internal sealed class DaemonControlService
         using var assetIndexBridge = new AssetIndexDaemonBridge(options.ProjectPath);
         var inspectorBridge = new InspectorDaemonBridge();
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
+        var execRegistry = new ExecCommandRegistry();
+        var execApproval = new ExecApprovalService();
+        var execRouter = new ExecOperationRouter(execRegistry, execApproval);
 
         runtime.Upsert(state);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -194,6 +197,7 @@ internal sealed class DaemonControlService
                     assetIndexBridge,
                     inspectorBridge,
                     projectBridge,
+                    execRouter,
                     options,
                     cts.Token,
                     () => lastActivityUtc = DateTime.UtcNow,
@@ -241,6 +245,7 @@ internal sealed class DaemonControlService
         AssetIndexDaemonBridge assetIndexBridge,
         InspectorDaemonBridge inspectorBridge,
         ProjectDaemonBridge projectBridge,
+        ExecOperationRouter execRouter,
         DaemonServiceOptions options,
         CancellationToken cancellationToken,
         Action touchActivity,
@@ -379,6 +384,46 @@ internal sealed class DaemonControlService
             if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
             {
                 var payload = await ReadRequestBodyAsync(request, cancellationToken);
+
+                // Detect ExecV2 by presence of "operation" field in the JSON body
+                ExecV2Request? v2Request = null;
+                try
+                {
+                    using var doc = JsonDocument.Parse(payload);
+                    if (doc.RootElement.TryGetProperty("operation", out _))
+                    {
+                        v2Request = JsonSerializer.Deserialize<ExecV2Request>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    }
+                }
+                catch
+                {
+                    // leave v2Request null; fall through to legacy path
+                }
+
+                if (v2Request is not null && !string.IsNullOrWhiteSpace(v2Request.Operation))
+                {
+                    var v2Response = execRouter.Route(v2Request, projectBridge);
+                    touchActivity();
+                    await WriteJsonResponseAsync(
+                        context.Response,
+                        JsonSerializer.Serialize(v2Response, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                // Legacy path: free-form CommandText spawn — requires UNIFOCL_LEGACY_EXEC=1
+                if (!string.Equals(Environment.GetEnvironmentVariable("UNIFOCL_LEGACY_EXEC"), "1", StringComparison.Ordinal))
+                {
+                    touchActivity();
+                    await WriteJsonResponseAsync(
+                        context.Response,
+                        BuildAgenticValidationError(
+                            "free-form exec is disabled; use structured ExecV2 with an 'operation' field. " +
+                            "Set UNIFOCL_LEGACY_EXEC=1 to re-enable legacy CommandText mode."),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
                 AgenticExecutionRequest? parsed;
                 try
                 {
