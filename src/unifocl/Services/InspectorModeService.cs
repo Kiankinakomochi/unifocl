@@ -1081,7 +1081,7 @@ internal sealed class InspectorModeService
         }
 
         var response = await _hierarchyDaemonClient.ExecuteAsync(
-            session.AttachedPort!.Value,
+            DaemonControlService.GetPort(session)!.Value,
             new HierarchyCommandRequestDto(
                 "mk",
                 type.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? null : targetNode.Id,
@@ -1281,7 +1281,7 @@ internal sealed class InspectorModeService
         }
 
         var response = await _hierarchyDaemonClient.ExecuteAsync(
-            session.AttachedPort!.Value,
+            DaemonControlService.GetPort(session)!.Value,
             new HierarchyCommandRequestDto("rm", null, targetNode.Id, null, false));
 
         AddStream(context, $"{context.PromptLabel} > {input}");
@@ -1344,7 +1344,7 @@ internal sealed class InspectorModeService
         }
 
         var response = await _hierarchyDaemonClient.ExecuteAsync(
-            session.AttachedPort!.Value,
+            DaemonControlService.GetPort(session)!.Value,
             new HierarchyCommandRequestDto("rename", null, targetNode.Id, newName, false));
 
         AddStream(context, $"{context.PromptLabel} > {input}");
@@ -1425,7 +1425,7 @@ internal sealed class InspectorModeService
         }
 
         var response = await _hierarchyDaemonClient.ExecuteAsync(
-            session.AttachedPort!.Value,
+            DaemonControlService.GetPort(session)!.Value,
             new HierarchyCommandRequestDto("mv", parentId, targetNode.Id, null, false));
 
         AddStream(context, $"{context.PromptLabel} > {input}");
@@ -1605,7 +1605,7 @@ internal sealed class InspectorModeService
 
     private async Task WaitForHierarchySnapshotReadyAsync(CliSessionState session)
     {
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int waitPort)
         {
             return;
         }
@@ -1613,7 +1613,7 @@ internal sealed class InspectorModeService
         var deadline = DateTime.UtcNow.AddSeconds(12);
         while (DateTime.UtcNow < deadline)
         {
-            var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+            var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(waitPort);
             if (snapshot is not null)
             {
                 return;
@@ -2485,7 +2485,7 @@ internal sealed class InspectorModeService
 
     private async Task<InspectorComponentFetchResult> TryFetchComponentsFromBridgeAsync(CliSessionState session, string targetPath)
     {
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is null)
         {
             return new InspectorComponentFetchResult(
                 false,
@@ -2568,7 +2568,7 @@ internal sealed class InspectorModeService
     {
         var lines = new List<string>
         {
-            $"[x] inspector diagnostics: targetPath='{targetPath}', attachedPort={(session.AttachedPort?.ToString() ?? "none")}"
+            $"[x] inspector diagnostics: targetPath='{targetPath}', attachedPort={(DaemonControlService.GetPort(session)?.ToString() ?? "none")}"
         };
 
         if (!fetchResult.Success)
@@ -2581,12 +2581,12 @@ internal sealed class InspectorModeService
             lines.Add($"[x] inspector diagnostics: bridge payload: {Markup.Escape(fetchResult.RawPayload)}");
         }
 
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int diagPort)
         {
             return lines;
         }
 
-        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(diagPort);
         if (snapshot is null)
         {
             lines.Add("[x] inspector diagnostics: hierarchy snapshot fetch failed on attached daemon");
@@ -2664,12 +2664,12 @@ internal sealed class InspectorModeService
     private async Task<string> NormalizeInspectorTargetPathAsync(CliSessionState session, string rawTargetPath)
     {
         var normalized = NormalizeInspectorPath(rawTargetPath);
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int normalizePort)
         {
             return normalized;
         }
 
-        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(normalizePort);
         if (snapshot is null)
         {
             return normalized;
@@ -2880,7 +2880,7 @@ internal sealed class InspectorModeService
 
     private async Task<string?> SendBridgeRequestAsync(InspectorBridgeRequest request, CliSessionState? session = null)
     {
-        var port = session?.AttachedPort;
+        var port = session is not null ? DaemonControlService.GetPort(session) : null;
         if (port is null)
         {
             return null;
@@ -3125,12 +3125,12 @@ internal sealed class InspectorModeService
         string targetPath,
         bool includeRoot)
     {
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int snapshotPort)
         {
             return null;
         }
 
-        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(session.AttachedPort.Value);
+        var snapshot = await _hierarchyDaemonClient.GetSnapshotAsync(snapshotPort);
         if (snapshot is null)
         {
             return null;

@@ -1,12 +1,10 @@
-// Sprint 4: AttachedPort is deprecated — this file is the active migration site.
-// Suppress CS0618 here; other callers should NOT use AttachedPort directly.
-#pragma warning disable CS0618
 using Spectre.Console;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -19,7 +17,7 @@ internal sealed class DaemonControlService
     private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
     private static readonly HttpClient Http = new();
     private DaemonStartupFailure? _lastStartupFailure;
-    private readonly ExecSessionService _sessionService = new();
+    private static readonly ExecSessionService _sessionService = new();
 
     public async Task HandleDaemonCommandAsync(
         string input,
@@ -153,7 +151,8 @@ internal sealed class DaemonControlService
         var inspectorBridge = new InspectorDaemonBridge();
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
         var execRegistry = new ExecCommandRegistry();
-        var execApproval = new ExecApprovalService();
+        var approvalStorePath = ResolveApprovalStorePath(options.Port);
+        var execApproval = new ExecApprovalService(approvalStorePath);
         var execRouter = new ExecOperationRouter(execRegistry, execApproval, _sessionService);
 
         runtime.Upsert(state);
@@ -181,8 +180,39 @@ internal sealed class DaemonControlService
         UdsExecTransportServer? udsServer = !string.IsNullOrWhiteSpace(udsSocketPath)
             ? new UdsExecTransportServer(udsSocketPath)
             : null;
+
+        // When HTTP is enabled, generate a per-session secret and write it to disk.
+        // Clients must send X-Unifocl-Token: <secret> with every request.
+        string? httpToken = null;
+        if (options.UnsafeHttp)
+        {
+            httpToken = Guid.NewGuid().ToString("N");
+            var tokenPath = ResolveHttpTokenPath(options.Port);
+            if (tokenPath is not null)
+            {
+                try
+                {
+                    var dir = Path.GetDirectoryName(tokenPath);
+                    if (!string.IsNullOrWhiteSpace(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    File.WriteAllText(tokenPath, httpToken);
+                    if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    {
+                        File.SetUnixFileMode(tokenPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    }
+                }
+                catch
+                {
+                    // Couldn't persist the token — still apply it in-memory for the session.
+                }
+            }
+        }
+
         HttpExecTransportServer? httpServer = options.UnsafeHttp
-            ? new HttpExecTransportServer(options.Port)
+            ? new HttpExecTransportServer(options.Port, httpToken)
             : null;
 
         Task DispatchCtx(IExecRequestContext ctx) => HandleDaemonRequestAsync(
@@ -213,6 +243,24 @@ internal sealed class DaemonControlService
             cts.Cancel();
             udsServer?.Dispose();
             httpServer?.Dispose();
+            execApproval.Dispose();
+
+            // Delete the HTTP token file so stale tokens cannot be reused after shutdown.
+            if (httpToken is not null)
+            {
+                try
+                {
+                    var tokenPath = ResolveHttpTokenPath(options.Port);
+                    if (tokenPath is not null)
+                    {
+                        File.Delete(tokenPath);
+                    }
+                }
+                catch
+                {
+                    // best-effort cleanup
+                }
+            }
 
             try
             {
@@ -261,6 +309,36 @@ internal sealed class DaemonControlService
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".unifocl-runtime");
             return Path.Combine(runtimeDir, $"daemon-{port}.sock");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveHttpTokenPath(int port)
+    {
+        try
+        {
+            var runtimeDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".unifocl-runtime");
+            return Path.Combine(runtimeDir, $"http-token-{port}.txt");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveApprovalStorePath(int port)
+    {
+        try
+        {
+            var runtimeDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".unifocl-runtime");
+            return Path.Combine(runtimeDir, $"approvals-{port}.json");
         }
         catch
         {
@@ -461,6 +539,16 @@ internal sealed class DaemonControlService
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (RequestTooLargeException)
+        {
+            try
+            {
+                await ctx.WriteTextAsync("Request body too large (limit: 1 MB)", statusCode: 413, ct: cancellationToken);
+            }
+            catch
+            {
+            }
         }
         catch
         {
@@ -786,7 +874,7 @@ internal sealed class DaemonControlService
         bool requireManagedRuntime = false)
     {
         var port = ResolveProjectDaemonPort(projectPath);
-        if (session.AttachedPort != port)
+        if (GetPort(session) != port)
         {
             return false;
         }
@@ -856,12 +944,12 @@ internal sealed class DaemonControlService
 
     public async Task<bool> TouchAttachedDaemonAsync(CliSessionState session)
     {
-        if (session.AttachedPort is null)
+        if (GetPort(session) is not int touchPort)
         {
             return false;
         }
 
-        return await TrySendControlAsync(session.AttachedPort.Value, "TOUCH", "OK");
+        return await TrySendControlAsync(touchPort, "TOUCH", "OK");
     }
 
     public async Task<bool> StopDaemonByPortAsync(
@@ -886,7 +974,7 @@ internal sealed class DaemonControlService
             }
 
             runtime.Remove(port);
-            if (session.AttachedPort == port)
+            if (GetPort(session) == port)
             {
                 ClearAttachedPort(session);
             }
@@ -926,7 +1014,7 @@ internal sealed class DaemonControlService
         }
 
         runtime.Remove(target.Port);
-        if (session.AttachedPort == target.Port)
+        if (GetPort(session) == target.Port)
         {
             ClearAttachedPort(session);
         }
@@ -1298,7 +1386,7 @@ internal sealed class DaemonControlService
                 return;
             }
 
-            if (session.AttachedPort == attachedPort)
+            if (GetPort(session) == attachedPort)
             {
                 ClearAttachedPort(session);
             }
@@ -1363,7 +1451,7 @@ internal sealed class DaemonControlService
         runtime.CleanStaleEntries();
         var instances = runtime.GetAll().OrderBy(i => i.Port).ToList();
         var hasLiveAttachedOnly = false;
-        if (instances.Count == 0 && session.AttachedPort is int attachedPortProbe)
+        if (instances.Count == 0 && GetPort(session) is int attachedPortProbe)
         {
             hasLiveAttachedOnly = await TrySendControlAsync(attachedPortProbe, "PING", "PONG");
             if (!hasLiveAttachedOnly)
@@ -1407,10 +1495,10 @@ internal sealed class DaemonControlService
                 uptime,
                 instance.UnityPath ?? "-",
                 instance.Headless ? "host" : "bridge",
-                session.AttachedPort == instance.Port ? "yes" : "no");
+                GetPort(session) == instance.Port ? "yes" : "no");
         }
 
-        if (session.AttachedPort is int attachedPort && instances.All(i => i.Port != attachedPort))
+        if (GetPort(session) is int attachedPort && instances.All(i => i.Port != attachedPort))
         {
             if (await TrySendControlAsync(attachedPort, "PING", "PONG"))
             {
@@ -1437,7 +1525,7 @@ internal sealed class DaemonControlService
                 "-",
                 "-",
                 IsUnityClientActiveForProject(session.CurrentProjectPath!) ? "editor-bridge" : "unknown",
-                session.AttachedPort == projectBridgePort ? "yes" : "no");
+                GetPort(session) == projectBridgePort ? "yes" : "no");
         }
 
         AnsiConsole.Write(table);
@@ -1473,45 +1561,46 @@ internal sealed class DaemonControlService
 
     private static void HandleDaemonDetach(CliSessionState session, Action<string> log)
     {
-        if (session.AttachedPort is null)
+        if (GetPort(session) is not int detachedPort)
         {
             log("[yellow]daemon[/]: no daemon attached");
             return;
         }
 
-        var detachedPort = session.AttachedPort.Value;
         ClearAttachedPort(session);
         log($"[green]daemon[/]: detached from port {detachedPort}; daemon kept running");
     }
 
-    // ── Session / AttachedPort sync helpers ──────────────────────────────────
-    // Sprint 4: keep SessionId in sync with AttachedPort transitions.
-    // Sprint 5 will remove AttachedPort entirely.
+    // ── Session port helpers (Sprint 7: AttachedPort removed from CliSessionState) ─────────
+    // Port is the single source of truth via ExecSessionService keyed on SessionId.
 
     /// <summary>
-    /// Sets <see cref="CliSessionState.AttachedPort"/> and opens (or replaces) the
-    /// corresponding <see cref="ExecSession"/> so <see cref="CliSessionState.SessionId"/>
-    /// stays up-to-date.
+    /// Returns the daemon port the session is attached to, or null if not attached.
+    /// Resolves via ExecSessionService using session.SessionId.
     /// </summary>
-    private void SetAttachedPort(CliSessionState session, int port, string projectPath)
+    internal static int? GetPort(CliSessionState session)
+        => _sessionService.Get(session.SessionId)?.Port;
+
+    /// <summary>
+    /// Opens (or replaces) an ExecSession for <paramref name="port"/> and writes the
+    /// resulting SessionId back to <paramref name="session"/>.
+    /// </summary>
+    internal static void SetAttachedPort(CliSessionState session, int port, string projectPath)
     {
-        session.AttachedPort = port;
         var s = _sessionService.OpenForPort(port, projectPath);
         session.SessionId = s.SessionId;
     }
 
     /// <summary>
-    /// Clears <see cref="CliSessionState.AttachedPort"/> and closes the associated
-    /// <see cref="ExecSession"/> so <see cref="CliSessionState.SessionId"/> is cleared too.
+    /// Closes the ExecSession bound to this session and clears SessionId.
     /// </summary>
-    private void ClearAttachedPort(CliSessionState session)
+    internal static void ClearAttachedPort(CliSessionState session)
     {
-        if (session.AttachedPort is int port)
+        if (_sessionService.Get(session.SessionId)?.Port is int port)
         {
             _sessionService.CloseByPort(port);
         }
 
-        session.AttachedPort = null;
         session.SessionId = null;
     }
 
@@ -1524,7 +1613,7 @@ internal sealed class DaemonControlService
             return null;
         }
 
-        if (session.AttachedPort is int attachedPort)
+        if (GetPort(session) is int attachedPort)
         {
             return instances.FirstOrDefault(i => i.Port == attachedPort);
         }
@@ -2021,7 +2110,7 @@ internal sealed class DaemonControlService
 
     private static async Task<int?> ResolveAttachedOnlyPortAsync(CliSessionState session)
     {
-        if (session.AttachedPort is not int attachedPort)
+        if (GetPort(session) is not int attachedPort)
         {
             return null;
         }

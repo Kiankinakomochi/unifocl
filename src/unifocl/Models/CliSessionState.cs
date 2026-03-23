@@ -17,12 +17,9 @@ internal sealed class CliSessionState
     public CliMode Mode { get; set; } = CliMode.Boot;
     public CliContextMode ContextMode { get; set; } = CliContextMode.None;
     /// <summary>
-    /// Legacy attachment point (port number of the connected daemon).
-    /// Use <see cref="SessionId"/> as the primary session key going forward.
+    /// ExecV2 session identifier. Use <see cref="DaemonControlService.GetPort"/> to resolve
+    /// the daemon port for this session.
     /// </summary>
-    [Obsolete("Use SessionId. AttachedPort will be removed in Sprint 5.")]
-    public int? AttachedPort { get; set; }
-    /// <summary>ExecV2 session identifier. Primary session key as of Sprint 4.</summary>
     public string? SessionId { get; set; }
     public string? CurrentProjectPath { get; set; }
     public DateTimeOffset? LastOpenedUtc { get; set; }
@@ -42,7 +39,6 @@ internal sealed class CliSessionState
     {
         Mode = CliMode.Boot;
         ContextMode = CliContextMode.None;
-        AttachedPort = null;
         SessionId = null;
         CurrentProjectPath = null;
         LastOpenedUtc = null;

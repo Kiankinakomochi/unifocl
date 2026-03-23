@@ -2,6 +2,12 @@ using System.Collections.Specialized;
 using System.Net;
 using System.Text;
 
+/// <summary>Thrown when an HTTP request body exceeds the configured size limit.</summary>
+internal sealed class RequestTooLargeException : Exception
+{
+    public RequestTooLargeException() : base("Request body exceeds 1 MB limit.") { }
+}
+
 /// <summary>IExecRequestContext backed by HttpListenerContext.</summary>
 internal sealed class HttpExecRequestContext : IExecRequestContext
 {
@@ -22,12 +28,29 @@ internal sealed class HttpExecRequestContext : IExecRequestContext
     public NameValueCollection Query => _ctx.Request.QueryString;
     public bool IsInternal => false;
 
+    private const long MaxBodyBytes = 1 * 1024 * 1024; // 1 MB
+
     public async Task<string> ReadBodyAsync(CancellationToken ct = default)
     {
-        using var reader = new StreamReader(
-            _ctx.Request.InputStream,
-            _ctx.Request.ContentEncoding ?? Encoding.UTF8);
-        return await reader.ReadToEndAsync(ct);
+        if (_ctx.Request.ContentLength64 > MaxBodyBytes)
+        {
+            throw new RequestTooLargeException();
+        }
+
+        var encoding = _ctx.Request.ContentEncoding ?? Encoding.UTF8;
+        var buffer = new byte[MaxBodyBytes + 1];
+        var totalRead = 0;
+        int bytesRead;
+        while ((bytesRead = await _ctx.Request.InputStream.ReadAsync(buffer.AsMemory(totalRead), ct)) > 0)
+        {
+            totalRead += bytesRead;
+            if (totalRead > MaxBodyBytes)
+            {
+                throw new RequestTooLargeException();
+            }
+        }
+
+        return encoding.GetString(buffer, 0, totalRead);
     }
 
     public async Task WriteJsonAsync(string json, int statusCode = 200, CancellationToken ct = default)

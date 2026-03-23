@@ -56,7 +56,7 @@ internal static class AgenticStatePersistenceService
                 _ => "none"
             },
             session.CurrentProjectPath,
-            session.AttachedPort,
+            DaemonControlService.GetPort(session),
             session.FocusPath,
             session.Inspector?.TargetPath,
             session.SafeModeEnabled,

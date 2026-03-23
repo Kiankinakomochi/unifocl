@@ -683,6 +683,15 @@ namespace UniFocl.EditorBridge
                     return;
                 }
 
+                // ExecV2 structured command adapter
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                    var response = await HandleExecV2Async(payload, cancellationToken);
+                    await WriteJsonResponseAsync(context.Response, response, cancellationToken: cancellationToken);
+                    return;
+                }
+
                 MarkActivity();
                 await WriteTextResponseAsync(context.Response, "ERR", 404, cancellationToken: cancellationToken);
             }
@@ -829,6 +838,172 @@ namespace UniFocl.EditorBridge
                     kind = "mcp"
                 })
             };
+        }
+
+        private static async Task<string> HandleExecV2Async(string payload, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return ExecV2ErrorJson("request body is required", string.Empty);
+            }
+
+            ExecV2AdapterRequest? req;
+            try
+            {
+                req = JsonUtility.FromJson<ExecV2AdapterRequest>(payload);
+            }
+            catch
+            {
+                req = null;
+            }
+
+            if (req is null || string.IsNullOrWhiteSpace(req.operation))
+            {
+                return ExecV2ErrorJson("operation is required", string.Empty);
+            }
+
+            var requestId = req.requestId ?? string.Empty;
+            var op = req.operation.Trim().ToLowerInvariant();
+
+            string projectPayload;
+            switch (op)
+            {
+                case "asset.rename":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.assetPath) || string.IsNullOrWhiteSpace(req.args.newAssetPath))
+                    {
+                        return ExecV2ErrorJson("asset.rename requires args.assetPath and args.newAssetPath", requestId);
+                    }
+
+                    projectPayload = BuildExecV2ProjectPayload("rename-asset", req.args.assetPath, req.args.newAssetPath, null, requestId);
+                    break;
+                }
+
+                case "asset.remove":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.assetPath))
+                    {
+                        return ExecV2ErrorJson("asset.remove requires args.assetPath", requestId);
+                    }
+
+                    projectPayload = BuildExecV2ProjectPayload("remove-asset", req.args.assetPath, null, null, requestId);
+                    break;
+                }
+
+                case "asset.create_script":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.assetPath))
+                    {
+                        return ExecV2ErrorJson("asset.create_script requires args.assetPath", requestId);
+                    }
+
+                    projectPayload = BuildExecV2ProjectPayload("mk-script", req.args.assetPath, null, req.args.content, requestId);
+                    break;
+                }
+
+                case "asset.create":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.assetPath))
+                    {
+                        return ExecV2ErrorJson("asset.create requires args.assetPath", requestId);
+                    }
+
+                    projectPayload = BuildExecV2ProjectPayload("mk-asset", req.args.assetPath, null, req.args.content, requestId);
+                    break;
+                }
+
+                case "build.run":
+                {
+                    projectPayload = BuildExecV2ProjectPayload("build-run", null, null, null, requestId);
+                    break;
+                }
+
+                case "build.exec":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.method))
+                    {
+                        return ExecV2ErrorJson("build.exec requires args.method", requestId);
+                    }
+
+                    var methodContent = $"{{\"method\":\"{EscapeJsonString(req.args.method)}\"}}";
+                    projectPayload = BuildExecV2ProjectPayload("build-exec", null, null, methodContent, requestId);
+                    break;
+                }
+
+                case "build.scenes.set":
+                {
+                    if (req.args.scenes == null || req.args.scenes.Length == 0)
+                    {
+                        return ExecV2ErrorJson("build.scenes.set requires args.scenes (array of scene paths)", requestId);
+                    }
+
+                    var sceneParts = new string[req.args.scenes.Length];
+                    for (var i = 0; i < req.args.scenes.Length; i++)
+                    {
+                        sceneParts[i] = $"\"{EscapeJsonString(req.args.scenes[i])}\"";
+                    }
+
+                    var scenesContent = $"{{\"scenes\":[{string.Join(",", sceneParts)}]}}";
+                    projectPayload = BuildExecV2ProjectPayload("build-scenes-set", null, null, scenesContent, requestId);
+                    break;
+                }
+
+                case "upm.remove":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.packageId))
+                    {
+                        return ExecV2ErrorJson("upm.remove requires args.packageId", requestId);
+                    }
+
+                    var upmContent = $"{{\"packageId\":\"{EscapeJsonString(req.args.packageId)}\"}}";
+                    projectPayload = BuildExecV2ProjectPayload("upm-remove", null, null, upmContent, requestId);
+                    break;
+                }
+
+                default:
+                    return ExecV2ErrorJson($"unknown operation: {req.operation}", requestId);
+            }
+
+            MarkActivity();
+            Debug.Log($"[unifocl] /agent/exec: operation={op} requestId={requestId}");
+            var resultJson = await ExecuteOnMainThreadAsync(() => DaemonProjectService.ExecuteAsync(projectPayload));
+            return $"{{\"status\":\"Completed\",\"requestId\":\"{EscapeJsonString(requestId)}\",\"result\":{resultJson}}}";
+        }
+
+        private static string BuildExecV2ProjectPayload(
+            string action,
+            string? assetPath,
+            string? newAssetPath,
+            string? content,
+            string requestId)
+        {
+            var r = new ProjectCommandRequest
+            {
+                action = action,
+                assetPath = assetPath ?? string.Empty,
+                newAssetPath = newAssetPath ?? string.Empty,
+                content = content ?? string.Empty,
+                requestId = requestId,
+            };
+            return JsonUtility.ToJson(r);
+        }
+
+        private static string ExecV2ErrorJson(string error, string requestId)
+            => $"{{\"status\":\"Failed\",\"requestId\":\"{EscapeJsonString(requestId)}\",\"error\":\"{EscapeJsonString(error)}\"}}";
+
+        private static string EscapeJsonString(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            return value
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r")
+                .Replace("\t", "\\t");
         }
 
         private static string? TryExtractProjectRequestId(string payload)

@@ -114,7 +114,7 @@ The daemon acts as the persistent backend coordinator for both human operators a
 
 | **Subcommand** | **Description** |
 | --- | --- |
-| `start` | Start a daemon. Accepts flags: `--port`, `--unity <path>`, `--project <path>`, `--headless` (Host mode), `--allow-unsafe`. |
+| `start` | Start a daemon. Accepts flags: `--port`, `--unity <path>`, `--project <path>`, `--headless` (Host mode), `--allow-unsafe`, `--unsafe-http` (enable HTTP listener in addition to UDS). |
 | `stop` | Stop the daemon instance controlled by this CLI. |
 | `restart` | Restart the currently attached daemon. |
 | `ps` | List running daemon instances, ports, uptimes, and associated projects. |
@@ -127,7 +127,7 @@ The daemon acts as the persistent backend coordinator for both human operators a
 - PowerShell workflow: `src/unifocl/scripts/agent-worktree.ps1`
 - Provision a dedicated branch worktree from `origin/main`; do not share mutable worktrees across agents.
 - Copy warmed Unity `Library` cache before daemon boot when needed.
-- Allocate daemon ports dynamically and validate readiness via your configured `http://127.0.0.1:<dynamic-port>/ping` health endpoint.
+- Allocate daemon ports dynamically. The unifocl daemon communicates over UDS by default; pass `--unsafe-http` at daemon start to also expose a localhost HTTP listener. Validate Unity Editor bridge readiness via the CLIDaemon `/ping` endpoint (`http://127.0.0.1:<dynamic-port>/ping`).
 - Keep all mutations scoped to each provisioned worktree.
 - Teardown after completion: stop daemon, then `git worktree remove --force <path>` and `git worktree prune`.
 - Operating boundaries: no cross-worktree edits, no shared mutable daemon state, no daemon port reuse assumptions.
@@ -353,30 +353,73 @@ Context handling:
 - If required runtime state is missing (for example no attached daemon for `hierarchy`), response returns `E_MODE_INVALID` with a corrective hint.
 - Unsupported category returns `E_VALIDATION`.
 
-### 5. Daemon Agentic HTTP Endpoints
+### 5. Daemon ExecV2 Endpoints
 
-Daemon service mode exposes agent endpoints natively on localhost:
+Daemon service mode exposes structured agent endpoints over **UDS** by default (socket at `~/.unifocl-runtime/daemon-{port}.sock`). HTTP access requires `--unsafe-http` at daemon start and the `X-Unifocl-Token` request header.
 
-- `POST /agent/exec`
-- `GET /agent/capabilities`
-- `GET /agent/status?requestId=...`
-- `GET /agent/dump/{hierarchy|project|inspector}?format=json|yaml`
+Endpoint list:
 
-Example:
+- `POST /agent/exec` — structured ExecV2 command dispatch (see schema below)
+- `GET /agent/capabilities` — returns supported operations and risk levels
+- `GET /agent/status?requestId=<id>` — poll approval or execution status by request ID
+- `GET /agent/dump/{hierarchy|project|inspector}?format=json|yaml` — deterministic state dump
 
+**ExecV2 request schema** (`POST /agent/exec`):
+
+```json
+{
+  "operation": "asset.rename",
+  "requestId": "req-001",
+  "args": {
+    "assetPath": "Assets/Scripts/OldName.cs",
+    "newAssetPath": "Assets/Scripts/NewName.cs"
+  }
+}
 ```
-curl -X POST "http://127.0.0.1:8080/agent/exec" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "commandText": "/version",
-    "contextMode": "project",
-    "sessionSeed": "",
-    "outputMode": "json",
-    "requestId": "req-001"
-  }'
+
+**ExecV2 response schema:**
+
+```json
+{
+  "status": "Completed | Failed | Rejected | ApprovalRequired",
+  "requestId": "req-001",
+  "result": {},
+  "error": "string (on failure)",
+  "pendingApprovalToken": "string (when ApprovalRequired)"
+}
 ```
 
-The daemon-side agent endpoint delegates to the same `exec --agentic` pathway so CLI and HTTP machine outputs remain contract-consistent.
+**Supported operations:**
+
+| Operation | Risk | Required args |
+| --- | --- | --- |
+| `asset.rename` | DestructiveWrite | `assetPath`, `newAssetPath` |
+| `asset.remove` | DestructiveWrite | `assetPath` |
+| `asset.create` | SafeWrite | `assetPath`, `content?` |
+| `asset.create_script` | SafeWrite | `assetPath`, `content?` |
+| `build.run` | PrivilegedExec | _(none)_ |
+| `build.exec` | PrivilegedExec | `method` |
+| `build.scenes.set` | SafeWrite | `scenes` (array of paths) |
+| `upm.remove` | DestructiveWrite | `packageId` |
+| `hierarchy.snapshot` | SafeRead | _(none)_ |
+| `session.open` | SafeRead | _(none)_ |
+| `session.close` | SafeRead | _(none)_ |
+| `session.status` | SafeRead | _(none)_ |
+
+`DestructiveWrite` and `PrivilegedExec` operations return `ApprovalRequired` on first call. Re-send the same request with `"intent": {"approvalToken": "<token>"}` to confirm execution.
+
+**Approval confirmation example:**
+
+```json
+{
+  "operation": "asset.rename",
+  "requestId": "req-001",
+  "args": { "assetPath": "Assets/Old.cs", "newAssetPath": "Assets/New.cs" },
+  "intent": { "approvalToken": "<token-from-ApprovalRequired-response>" }
+}
+```
+
+The daemon-side agent endpoint routes through the typed ExecV2 operation router — free-form `commandText` execution has been removed.
 
 ### 6. Error Taxonomy
 
@@ -398,7 +441,9 @@ Runtime capability discovery:
 
 ```
 unifocl exec "/protocol" --agentic --format json
-curl "http://127.0.0.1:8080/agent/capabilities"
+# HTTP (requires --unsafe-http daemon flag and token header):
+curl -H "X-Unifocl-Token: $(cat ~/.unifocl-runtime/http-token-8080.txt)" \
+  "http://127.0.0.1:8080/agent/capabilities"
 ```
 
 Static OpenAPI contract:
@@ -470,12 +515,13 @@ The daemon is a localhost control process, not a kernel/OS-level file mutation s
 
 Current implementation summary:
 
-- The CLI and HTTP-based agents talk to a daemon endpoint over local HTTP (`127.0.0.1:<port>`) for lifecycle and project commands.
+- **External transport (CLI ↔ unifocl daemon):** The CLI and agents communicate with the unifocl daemon over a **Unix Domain Socket** (`~/.unifocl-runtime/daemon-{port}.sock`, chmod 0600) by default. An HTTP listener on `127.0.0.1:<port>` is only started when the daemon is launched with `--unsafe-http`, and requires the `X-Unifocl-Token` header (token written to `~/.unifocl-runtime/http-token-{port}.txt` at startup, chmod 0600). Request body size is capped at 1 MB on the HTTP path.
+- **Internal transport (unifocl daemon ↔ Unity Editor):** The unifocl daemon communicates internally with the Unity Editor-side bridge (`CLIDaemon`) over a separate localhost HTTP channel — this is always local-only and not exposed to agents.
 - The daemon keeps a project-scoped session warm so commands do not need to cold-start Unity every time.
 - Mode selection is runtime-based:
     - **Host mode:** If no suitable GUI editor bridge is attached, unifocl starts Unity in batch/no-graphics mode (`headless`) and serves commands through that Unity process.
     - **Bridge mode:** If a GUI Unity editor for the same project is already active and attachable, unifocl routes commands to that live editor bridge endpoint.
-- Project operations are executed by Unity-side services/contracts, then reported back to the CLI/Agent as typed responses.
+- Project operations are executed by Unity-side services/contracts (`CLIDaemon`/`DaemonProjectService`), then reported back to the CLI/Agent as typed ExecV2 responses.
 - If an endpoint is reachable but unhealthy (for example ping works but project commands do not), unifocl restarts and re-attaches the managed daemon path.
 - Daemon state is tracked per project (deterministic port + local `.unifocl` config/session metadata).
 
