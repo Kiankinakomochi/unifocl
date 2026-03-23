@@ -20,8 +20,10 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonProjectServiceResource = "Payload/EditorScripts/Services/DaemonProjectService.cs";
     private const string DaemonSceneManagerResource = "Payload/EditorScripts/Services/DaemonSceneManager.cs";
     private const string DaemonScenePersistenceServiceResource = "Payload/EditorScripts/Services/DaemonScenePersistenceService.cs";
+    private const string UnifoclCommandAttributeResource = "Payload/EditorScripts/UnifoclCommandAttribute.cs";
     private const string UnifoclManifestGeneratorResource = "Payload/EditorScripts/UnifoclManifestGenerator.cs";
     private const string UnifoclEditorConfigResource = "Payload/EditorScripts/Models/UnifoclEditorConfig.cs";
+    private const string DaemonCustomToolServiceResource = "Payload/EditorScripts/Services/DaemonCustomToolService.cs";
     private const string UnifoclCompilationServiceResource = "Payload/EditorScripts/Services/UnifoclCompilationService.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
 
@@ -128,8 +130,10 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonSceneManager.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonScenePersistenceService.cs"),
+            Path.Combine(packagePath, "Editor", "UnifoclCommandAttribute.cs"),
             Path.Combine(packagePath, "Editor", "UnifoclManifestGenerator.cs"),
             Path.Combine(packagePath, "Editor", "Models", "UnifoclEditorConfig.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonCustomToolService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "UnifoclCompilationService.cs")
         };
         foreach (var requiredFile in requiredFiles)
@@ -240,8 +244,10 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonProjectServiceResource, Path.Combine("Editor", "Services", "DaemonProjectService.cs")),
                 (DaemonSceneManagerResource, Path.Combine("Editor", "Services", "DaemonSceneManager.cs")),
                 (DaemonScenePersistenceServiceResource, Path.Combine("Editor", "Services", "DaemonScenePersistenceService.cs")),
+                (UnifoclCommandAttributeResource,        Path.Combine("Editor", "UnifoclCommandAttribute.cs")),
                 (UnifoclManifestGeneratorResource,      Path.Combine("Editor", "UnifoclManifestGenerator.cs")),
                 (UnifoclEditorConfigResource,           Path.Combine("Editor", "Models", "UnifoclEditorConfig.cs")),
+                (DaemonCustomToolServiceResource,       Path.Combine("Editor", "Services", "DaemonCustomToolService.cs")),
                 (UnifoclCompilationServiceResource,     Path.Combine("Editor", "Services", "UnifoclCompilationService.cs"))
             };
 

@@ -171,6 +171,8 @@ jobs:
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-win-x64.zip
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}.tar.gz
+            scripts/install.sh
+            scripts/install.ps1
 
       - name: Update Homebrew Formula Tap
         if: steps.version.outputs.skip == 'false'
