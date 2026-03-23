@@ -33,6 +33,7 @@ internal sealed class UdsExecRequestContext : IExecRequestContext
     public string Method { get; }
     public string Path { get; }
     public System.Collections.Specialized.NameValueCollection Query { get; }
+    public bool IsInternal => true;
 
     public Task<string> ReadBodyAsync(CancellationToken ct = default)
         => Task.FromResult(_envelope.Body ?? string.Empty);
