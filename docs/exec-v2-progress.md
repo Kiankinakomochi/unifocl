@@ -155,10 +155,33 @@
 
 ---
 
-### 🔲 Sprint 5: HTTP Opt-in 化
-- `--unsafe-http` フラグ以外では HttpListener 起動しない
-- `UNIFOCL_LEGACY_EXEC=1` フラグ削除 (CommandText 実行コード除去)
-- `/touch`, `/stop` を internal-only に縮退
+### ✅ Sprint 5: HTTP Opt-in 化
+**ブランチ**: `feature/exec-v2-sprint5-http-optout`
+
+**完了タスク**:
+1. UDS を Windows でも有効化
+   - `!OperatingSystem.IsWindows()` ガードを削除 (Windows 10 1803+ / .NET 5+ で UDS 動作確認済み)
+   - Named Pipe 実装は不要と判断 (UDS が全プラットフォームで機能するため)
+2. HTTP を `--unsafe-http` フラグ時のみ起動
+   - `DaemonServiceOptions` に `bool UnsafeHttp = false` 追加
+   - `TryParseDaemonServiceArgs` に `--unsafe-http` ケース追加
+   - `RunDaemonServiceAsync`: `httpServer` を `options.UnsafeHttp` 時のみ生成・起動
+   - UDS を起動の第一優先に変更 (ループ順序も UDS → HTTP)
+3. `UNIFOCL_LEGACY_EXEC=1` フラグと CommandText 実行コードを削除
+   - `/agent/exec` の legacy 分岐を完全除去
+   - `operation` フィールドなしのリクエストは即 rejection
+4. `/touch`, `/stop` を internal-only に縮退
+   - `IExecRequestContext` に `bool IsInternal` プロパティ追加
+   - `HttpExecRequestContext.IsInternal = false`
+   - `UdsExecRequestContext.IsInternal = true`
+   - `/touch`, `/stop` は `IsInternal = false` のリクエストに 403 を返す
+
+**変更ファイル**:
+- `src/unifocl/Models/CommandModels.cs` (`DaemonServiceOptions` に `UnsafeHttp`)
+- `src/unifocl/Services/Transport/IExecRequestContext.cs` (`IsInternal` 追加)
+- `src/unifocl/Services/Transport/HttpExecRequestContext.cs` (`IsInternal = false`)
+- `src/unifocl/Services/Transport/Uds/UdsExecRequestContext.cs` (`IsInternal = true`)
+- `src/unifocl/Services/DaemonControlService.cs` (全変更の適用先)
 
 ---
 

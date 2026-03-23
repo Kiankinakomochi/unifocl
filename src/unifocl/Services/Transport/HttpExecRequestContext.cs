@@ -20,6 +20,7 @@ internal sealed class HttpExecRequestContext : IExecRequestContext
     public string Method => _ctx.Request.HttpMethod;
     public string Path { get; }
     public NameValueCollection Query => _ctx.Request.QueryString;
+    public bool IsInternal => false;
 
     public async Task<string> ReadBodyAsync(CancellationToken ct = default)
     {

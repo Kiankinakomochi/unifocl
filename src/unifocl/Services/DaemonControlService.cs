@@ -84,6 +84,7 @@ internal sealed class DaemonControlService
         string? projectPath = null;
         var headless = false;
         var ttlSeconds = DefaultInactivityTimeoutSeconds;
+        var unsafeHttp = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -130,10 +131,13 @@ internal sealed class DaemonControlService
                 case "--headless":
                     headless = true;
                     break;
+                case "--unsafe-http":
+                    unsafeHttp = true;
+                    break;
             }
         }
 
-        options = new DaemonServiceOptions(port, unityPath, projectPath, headless, ttlSeconds);
+        options = new DaemonServiceOptions(port, unityPath, projectPath, headless, ttlSeconds, unsafeHttp);
         return true;
     }
 
@@ -172,11 +176,13 @@ internal sealed class DaemonControlService
             }
         }, cts.Token);
 
-        // Build transport servers: always HTTP (for backward compat) + UDS on non-Windows
-        var httpServer = new HttpExecTransportServer(options.Port);
+        // Build transport servers: UDS always (Windows 10 1803+ supported), HTTP only when --unsafe-http.
         var udsSocketPath = ResolveUdsSocketPath(options.Port);
-        UdsExecTransportServer? udsServer = !OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(udsSocketPath)
+        UdsExecTransportServer? udsServer = !string.IsNullOrWhiteSpace(udsSocketPath)
             ? new UdsExecTransportServer(udsSocketPath)
+            : null;
+        HttpExecTransportServer? httpServer = options.UnsafeHttp
+            ? new HttpExecTransportServer(options.Port)
             : null;
 
         Task DispatchCtx(IExecRequestContext ctx) => HandleDaemonRequestAsync(
@@ -187,15 +193,17 @@ internal sealed class DaemonControlService
 
         try
         {
-            httpServer.Start();
             udsServer?.Start();
+            httpServer?.Start();
 
-            var httpLoop = RunAcceptLoopAsync(httpServer, requestTasks, DispatchCtx, cts.Token);
             var udsLoop = udsServer is not null
                 ? RunAcceptLoopAsync(udsServer, requestTasks, DispatchCtx, cts.Token)
                 : Task.CompletedTask;
+            var httpLoop = httpServer is not null
+                ? RunAcceptLoopAsync(httpServer, requestTasks, DispatchCtx, cts.Token)
+                : Task.CompletedTask;
 
-            await Task.WhenAll(httpLoop, udsLoop);
+            await Task.WhenAll(udsLoop, httpLoop);
         }
         catch (OperationCanceledException)
         {
@@ -203,8 +211,8 @@ internal sealed class DaemonControlService
         finally
         {
             cts.Cancel();
-            httpServer.Dispose();
             udsServer?.Dispose();
+            httpServer?.Dispose();
 
             try
             {
@@ -284,14 +292,26 @@ internal sealed class DaemonControlService
 
             if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
             {
+                if (!ctx.IsInternal)
+                {
+                    await ctx.WriteTextAsync("ERR", statusCode: 403, ct: cancellationToken);
+                    return;
+                }
+
                 touchActivity();
-                await ctx.WriteTextAsync( "OK", ct: cancellationToken);
+                await ctx.WriteTextAsync("OK", ct: cancellationToken);
                 return;
             }
 
             if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
             {
-                await ctx.WriteTextAsync( "STOPPING", ct: cancellationToken);
+                if (!ctx.IsInternal)
+                {
+                    await ctx.WriteTextAsync("ERR", statusCode: 403, ct: cancellationToken);
+                    return;
+                }
+
+                await ctx.WriteTextAsync("STOPPING", ct: cancellationToken);
                 requestShutdown();
                 return;
             }
@@ -413,7 +433,7 @@ internal sealed class DaemonControlService
                 }
                 catch
                 {
-                    // leave v2Request null; fall through to legacy path
+                    // leave v2Request null — will be rejected below
                 }
 
                 if (v2Request is not null && !string.IsNullOrWhiteSpace(v2Request.Operation))
@@ -426,44 +446,13 @@ internal sealed class DaemonControlService
                     return;
                 }
 
-                // Legacy path: free-form CommandText spawn — requires UNIFOCL_LEGACY_EXEC=1
-                if (!string.Equals(Environment.GetEnvironmentVariable("UNIFOCL_LEGACY_EXEC"), "1", StringComparison.Ordinal))
-                {
-                    touchActivity();
-                    await ctx.WriteJsonAsync(
-                        BuildAgenticValidationError(
-                            "free-form exec is disabled; use structured ExecV2 with an 'operation' field. " +
-                            "Set UNIFOCL_LEGACY_EXEC=1 to re-enable legacy CommandText mode."),
-                        ct: cancellationToken);
-                    return;
-                }
-
-                AgenticExecutionRequest? parsed;
-                try
-                {
-                    parsed = JsonSerializer.Deserialize<AgenticExecutionRequest>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                }
-                catch
-                {
-                    parsed = null;
-                }
-
-                if (parsed is null || string.IsNullOrWhiteSpace(parsed.CommandText))
-                {
-                    touchActivity();
-                    await ctx.WriteJsonAsync(
-                        BuildAgenticValidationError("invalid /agent/exec payload"),
-                        ct: cancellationToken);
-                    return;
-                }
-
-                var normalizedRequest = parsed with
-                {
-                    SessionSeed = AgenticStatePersistenceService.NormalizeSessionSeed(parsed.SessionSeed)
-                };
-                var responsePayload = await ExecuteAgenticExecAsync(normalizedRequest, options, cancellationToken);
+                // Free-form CommandText exec is removed. All callers must use structured ExecV2.
                 touchActivity();
-                await ctx.WriteJsonAsync( responsePayload, ct: cancellationToken);
+                await ctx.WriteJsonAsync(
+                    BuildAgenticValidationError(
+                        "invalid /agent/exec payload: 'operation' field is required. " +
+                        "Use structured ExecV2 (e.g. {\"operation\":\"asset.rename\", ...})."),
+                    ct: cancellationToken);
                 return;
             }
 
