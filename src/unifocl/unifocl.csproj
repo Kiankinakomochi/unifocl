@@ -80,8 +80,10 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonSceneManager.cs" LogicalName="Payload/EditorScripts/Services/DaemonSceneManager.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonScenePersistenceService.cs" LogicalName="Payload/EditorScripts/Services/DaemonScenePersistenceService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/UnifoclCommandAttribute.cs" LogicalName="Payload/EditorScripts/UnifoclCommandAttribute.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/UnifoclManifestGenerator.cs" LogicalName="Payload/EditorScripts/UnifoclManifestGenerator.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Models/UnifoclEditorConfig.cs" LogicalName="Payload/EditorScripts/Models/UnifoclEditorConfig.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonCustomToolService.cs" LogicalName="Payload/EditorScripts/Services/DaemonCustomToolService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/UnifoclCompilationService.cs" LogicalName="Payload/EditorScripts/Services/UnifoclCompilationService.cs" />
     <EmbeddedResource Include="../unifocl.unity/SharedModels/BridgeModels.cs" LogicalName="Payload/SharedModels/BridgeModels.cs" />
   </ItemGroup>
