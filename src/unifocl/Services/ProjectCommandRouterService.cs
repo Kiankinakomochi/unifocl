@@ -5,6 +5,7 @@ internal sealed class ProjectCommandRouterService
 {
     private readonly InspectorModeService _inspectorModeService = new();
     private readonly ProjectViewService _projectViewService = new();
+    private readonly MutateBatchService _mutateBatchService = new();
 
     public async Task<bool> TryHandleProjectCommandAsync(
         string input,
@@ -48,6 +49,14 @@ internal sealed class ProjectCommandRouterService
 
             await _inspectorModeService.RunKeyboardFocusModeAsync(session, log);
             _inspectorModeService.RenderCurrentFrame(session);
+            return true;
+        }
+
+        // /mutate is context-free: infers hierarchy vs inspector per-op from the op type.
+        // Intercept before mode checks to avoid the hierarchy-TUI guard.
+        if (IsMutateCommand(input))
+        {
+            await _mutateBatchService.HandleCommandAsync(input, session, log);
             return true;
         }
 
@@ -126,6 +135,13 @@ internal sealed class ProjectCommandRouterService
         }
 
         return false;
+    }
+
+    private static bool IsMutateCommand(string input)
+    {
+        var trimmed = input.TrimStart().TrimStart('/');
+        return trimmed.StartsWith("mutate ", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("mutate", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsDaemonCommand(IReadOnlyList<string> tokens)

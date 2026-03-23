@@ -610,6 +610,27 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger == "/mutate")
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            // Strip leading /mutate and route through project router — IsMutateCommand handles the rest.
+            var mutatePayload = input.Length > "/mutate".Length
+                ? $"mutate {input["/mutate".Length..].Trim()}"
+                : "mutate";
+            await projectCommandRouterService.TryHandleProjectCommandAsync(
+                mutatePayload,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+            return;
+        }
+
         if (matched.Trigger.StartsWith("/build", StringComparison.Ordinal))
         {
             await AwaitWithCancellationAsync(

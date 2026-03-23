@@ -54,6 +54,7 @@ internal static class CliCommandCatalog
             new("/version", "Show CLI and protocol version", "/version"),
             new("/protocol", "Show supported JSON schema capabilities", "/protocol"),
             new("/dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]", "Dump deterministic mode state for agentic workflows", "/dump"),
+            new("/mutate (--dry-run) (--continue-on-error) <json-array>", "Batch scene mutations from a JSON op array. Context (hierarchy/inspector) is inferred per-op — no mode switching needed. Ops: create|rename|remove|move|toggle_active|add_component|remove_component|set_field|toggle_field|toggle_component", "/mutate"),
             new("/upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "/upm list"),
             new("/upm ls [--outdated] [--builtin] [--git]", "Alias for /upm list", "/upm ls"),
             new("/upm install <target>", "Install Unity package by registry ID, Git URL, or file: path", "/upm install"),
