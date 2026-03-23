@@ -22,28 +22,40 @@ Built to provide a unified operational model for both humans and machines, unifo
 
 ## Installation
 
-Install via GitHub Releases, Homebrew, or Winget.
+### macOS (Apple Silicon) — shell installer
 
-### GitHub Release
-
-Download release artifacts from the [latest GitHub release](https://github.com/Kiankinakomochi/unifocl/releases/latest).
-
-### Homebrew (macOS)
-
+```sh
+curl -fsSL https://raw.githubusercontent.com/Kiankinakomochi/unifocl/main/scripts/install.sh | sh
 ```
+
+Installs the binary to `/usr/local/bin/unifocl`. Prompts for `sudo` only if that directory is not writable.
+
+### macOS — Homebrew (Intel & Apple Silicon)
+
+```sh
 brew tap Kiankinakomochi/unifocl
 brew install unifocl
 ```
 
-### Winget (Windows)
+### Windows (x64) — PowerShell installer
 
-Winget submission is currently planned for submission.
+```powershell
+iwr -useb https://raw.githubusercontent.com/Kiankinakomochi/unifocl/main/scripts/install.ps1 | iex
+```
 
-After approval, install with:
+Installs to `%LOCALAPPDATA%\unifocl\bin` and adds it to your user `PATH` automatically.
+
+### Windows — Winget
+
+Winget submission is in progress. After approval:
 
 ```
 winget install Kiankinakomochi.unifocl
 ```
+
+### Manual download
+
+Download pre-built archives from the [latest GitHub release](https://github.com/Kiankinakomochi/unifocl/releases/latest) and place the binary anywhere in your `PATH`.
 
 ## Command & Feature Guide
 
