@@ -169,63 +169,39 @@ internal sealed class DaemonControlService
             }
         }, cts.Token);
 
-        HttpListener? listener = null;
+        // Build transport servers: always HTTP (for backward compat) + UDS on non-Windows
+        var httpServer = new HttpExecTransportServer(options.Port);
+        var udsSocketPath = ResolveUdsSocketPath(options.Port);
+        UdsExecTransportServer? udsServer = !OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(udsSocketPath)
+            ? new UdsExecTransportServer(udsSocketPath)
+            : null;
+
+        Task DispatchCtx(IExecRequestContext ctx) => HandleDaemonRequestAsync(
+            ctx, hierarchyBridge, assetIndexBridge, inspectorBridge, projectBridge,
+            execRouter, options, cts.Token,
+            () => lastActivityUtc = DateTime.UtcNow,
+            () => cts.Cancel());
+
         try
         {
-            listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{options.Port}/");
-            listener.Start();
+            httpServer.Start();
+            udsServer?.Start();
 
-            while (!cts.Token.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try
-                {
-                    context = await listener.GetContextAsync().WaitAsync(cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (HttpListenerException)
-                {
-                    break;
-                }
+            var httpLoop = RunAcceptLoopAsync(httpServer, requestTasks, DispatchCtx, cts.Token);
+            var udsLoop = udsServer is not null
+                ? RunAcceptLoopAsync(udsServer, requestTasks, DispatchCtx, cts.Token)
+                : Task.CompletedTask;
 
-                var requestTask = HandleDaemonRequestAsync(
-                    context,
-                    hierarchyBridge,
-                    assetIndexBridge,
-                    inspectorBridge,
-                    projectBridge,
-                    execRouter,
-                    options,
-                    cts.Token,
-                    () => lastActivityUtc = DateTime.UtcNow,
-                    () => cts.Cancel());
-                requestTasks.Add(requestTask);
-            }
+            await Task.WhenAll(httpLoop, udsLoop);
         }
         catch (OperationCanceledException)
-        {
-        }
-        catch (HttpListenerException)
         {
         }
         finally
         {
             cts.Cancel();
-
-            if (listener is not null)
-            {
-                try
-                {
-                    listener.Stop();
-                }
-                catch (ObjectDisposedException)
-                {
-                }
-            }
+            httpServer.Dispose();
+            udsServer?.Dispose();
 
             try
             {
@@ -240,8 +216,49 @@ internal sealed class DaemonControlService
         }
     }
 
+    private static async Task RunAcceptLoopAsync(
+        IExecTransportServer server,
+        ConcurrentBag<Task> requestTasks,
+        Func<IExecRequestContext, Task> dispatch,
+        CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            IExecRequestContext ctx;
+            try
+            {
+                ctx = await server.AcceptAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch
+            {
+                break;
+            }
+
+            requestTasks.Add(dispatch(ctx));
+        }
+    }
+
+    private static string? ResolveUdsSocketPath(int port)
+    {
+        try
+        {
+            var runtimeDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".unifocl-runtime");
+            return Path.Combine(runtimeDir, $"daemon-{port}.sock");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static async Task HandleDaemonRequestAsync(
-        HttpListenerContext context,
+        IExecRequestContext ctx,
         HierarchyDaemonBridge hierarchyBridge,
         AssetIndexDaemonBridge assetIndexBridge,
         InspectorDaemonBridge inspectorBridge,
@@ -252,122 +269,117 @@ internal sealed class DaemonControlService
         Action touchActivity,
         Action requestShutdown)
     {
-        var request = context.Request;
-        var path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
-        if (path.Length == 0)
-        {
-            path = "/";
-        }
+        var path = ctx.Path;
 
         try
         {
-            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/ping", StringComparison.OrdinalIgnoreCase))
             {
-                await WriteTextResponseAsync(context.Response, "PONG", cancellationToken: cancellationToken);
+                await ctx.WriteTextAsync( "PONG", ct: cancellationToken);
                 return;
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/touch", StringComparison.OrdinalIgnoreCase))
             {
                 touchActivity();
-                await WriteTextResponseAsync(context.Response, "OK", cancellationToken: cancellationToken);
+                await ctx.WriteTextAsync( "OK", ct: cancellationToken);
                 return;
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/stop", StringComparison.OrdinalIgnoreCase))
             {
-                await WriteTextResponseAsync(context.Response, "STOPPING", cancellationToken: cancellationToken);
+                await ctx.WriteTextAsync( "STOPPING", ct: cancellationToken);
                 requestShutdown();
                 return;
             }
 
-            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/asset-index", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/asset-index", StringComparison.OrdinalIgnoreCase))
             {
-                var revisionRaw = request.QueryString["revision"];
+                var revisionRaw = ctx.Query["revision"];
                 var command = int.TryParse(revisionRaw, out var revision) && revision > 0
                     ? $"ASSET_INDEX_SYNC {revision}"
                     : "ASSET_INDEX_GET";
                 if (assetIndexBridge.TryHandle(command, out var assetResponse))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(context.Response, assetResponse, cancellationToken: cancellationToken);
+                    await ctx.WriteJsonAsync( assetResponse, ct: cancellationToken);
                     return;
                 }
             }
 
-            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/snapshot", StringComparison.OrdinalIgnoreCase))
             {
                 if (hierarchyBridge.TryHandle("HIERARCHY_GET", out var hierarchySnapshot))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(context.Response, hierarchySnapshot, cancellationToken: cancellationToken);
+                    await ctx.WriteJsonAsync( hierarchySnapshot, ct: cancellationToken);
                     return;
                 }
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/command", StringComparison.OrdinalIgnoreCase))
             {
-                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                var payload = await ctx.ReadBodyAsync(cancellationToken);
                 if (hierarchyBridge.TryHandle($"HIERARCHY_CMD {payload}", out var hierarchyResponse))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(context.Response, hierarchyResponse, cancellationToken: cancellationToken);
+                    await ctx.WriteJsonAsync( hierarchyResponse, ct: cancellationToken);
                     return;
                 }
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/hierarchy/find", StringComparison.OrdinalIgnoreCase))
             {
-                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                var payload = await ctx.ReadBodyAsync(cancellationToken);
                 if (hierarchyBridge.TryHandle($"HIERARCHY_FIND {payload}", out var hierarchySearch))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(context.Response, hierarchySearch, cancellationToken: cancellationToken);
+                    await ctx.WriteJsonAsync( hierarchySearch, ct: cancellationToken);
                     return;
                 }
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
             {
-                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                var payload = await ctx.ReadBodyAsync(cancellationToken);
                 if (inspectorBridge.TryHandle($"INSPECT {payload}", out var inspectorResponse))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(context.Response, inspectorResponse, cancellationToken: cancellationToken);
+                    await ctx.WriteJsonAsync( inspectorResponse, ct: cancellationToken);
                     return;
                 }
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command", StringComparison.OrdinalIgnoreCase))
             {
-                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                var payload = await ctx.ReadBodyAsync(cancellationToken);
                 if (projectBridge.TryHandle($"PROJECT_CMD {payload}", out var projectResponse))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(context.Response, projectResponse, cancellationToken: cancellationToken);
+                    await ctx.WriteJsonAsync( projectResponse, ct: cancellationToken);
                     return;
                 }
             }
 
-            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/capabilities", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/capabilities", StringComparison.OrdinalIgnoreCase))
             {
                 touchActivity();
-                await WriteJsonResponseAsync(context.Response, BuildAgenticCapabilitiesPayload(), cancellationToken: cancellationToken);
+                await ctx.WriteJsonAsync( BuildAgenticCapabilitiesPayload(), ct: cancellationToken);
                 return;
             }
 
-            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/status", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/status", StringComparison.OrdinalIgnoreCase))
             {
                 touchActivity();
-                var requestId = request.QueryString["requestId"] ?? string.Empty;
-                await WriteJsonResponseAsync(context.Response, BuildAgenticStatusPayload(requestId), cancellationToken: cancellationToken);
+                var requestId = ctx.Query["requestId"] ?? string.Empty;
+                await ctx.WriteJsonAsync( BuildAgenticStatusPayload(requestId), ct: cancellationToken);
                 return;
             }
 
-            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.StartsWith("/agent/dump/", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.StartsWith("/agent/dump/", StringComparison.OrdinalIgnoreCase))
             {
                 var category = path["/agent/dump/".Length..].Trim();
-                var format = request.QueryString["format"];
+                var format = ctx.Query["format"];
                 var dumpCommand = string.IsNullOrWhiteSpace(format)
                     ? $"/dump {category}"
                     : $"/dump {category} --format {format}";
@@ -378,13 +390,13 @@ internal sealed class DaemonControlService
                     string.IsNullOrWhiteSpace(format) ? "json" : format!,
                     Guid.NewGuid().ToString("N")), options, cancellationToken);
                 touchActivity();
-                await WriteJsonResponseAsync(context.Response, payload, cancellationToken: cancellationToken);
+                await ctx.WriteJsonAsync( payload, ct: cancellationToken);
                 return;
             }
 
-            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
+            if (ctx.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
             {
-                var payload = await ReadRequestBodyAsync(request, cancellationToken);
+                var payload = await ctx.ReadBodyAsync(cancellationToken);
 
                 // Detect ExecV2 by presence of "operation" field in the JSON body
                 ExecV2Request? v2Request = null;
@@ -405,10 +417,9 @@ internal sealed class DaemonControlService
                 {
                     var v2Response = execRouter.Route(v2Request, projectBridge);
                     touchActivity();
-                    await WriteJsonResponseAsync(
-                        context.Response,
+                    await ctx.WriteJsonAsync(
                         JsonSerializer.Serialize(v2Response, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                        cancellationToken: cancellationToken);
+                        ct: cancellationToken);
                     return;
                 }
 
@@ -416,12 +427,11 @@ internal sealed class DaemonControlService
                 if (!string.Equals(Environment.GetEnvironmentVariable("UNIFOCL_LEGACY_EXEC"), "1", StringComparison.Ordinal))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(
-                        context.Response,
+                    await ctx.WriteJsonAsync(
                         BuildAgenticValidationError(
                             "free-form exec is disabled; use structured ExecV2 with an 'operation' field. " +
                             "Set UNIFOCL_LEGACY_EXEC=1 to re-enable legacy CommandText mode."),
-                        cancellationToken: cancellationToken);
+                        ct: cancellationToken);
                     return;
                 }
 
@@ -438,10 +448,9 @@ internal sealed class DaemonControlService
                 if (parsed is null || string.IsNullOrWhiteSpace(parsed.CommandText))
                 {
                     touchActivity();
-                    await WriteJsonResponseAsync(
-                        context.Response,
+                    await ctx.WriteJsonAsync(
                         BuildAgenticValidationError("invalid /agent/exec payload"),
-                        cancellationToken: cancellationToken);
+                        ct: cancellationToken);
                     return;
                 }
 
@@ -451,23 +460,23 @@ internal sealed class DaemonControlService
                 };
                 var responsePayload = await ExecuteAgenticExecAsync(normalizedRequest, options, cancellationToken);
                 touchActivity();
-                await WriteJsonResponseAsync(context.Response, responsePayload, cancellationToken: cancellationToken);
+                await ctx.WriteJsonAsync( responsePayload, ct: cancellationToken);
                 return;
             }
 
             touchActivity();
-            await WriteTextResponseAsync(context.Response, "ERR", statusCode: 404, cancellationToken: cancellationToken);
+            await ctx.WriteTextAsync( "ERR", statusCode: 404, ct: cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
         catch
         {
-            if (!cancellationToken.IsCancellationRequested && context.Response.OutputStream.CanWrite)
+            if (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    await WriteTextResponseAsync(context.Response, "ERR", statusCode: 500, cancellationToken: cancellationToken);
+                    await ctx.WriteTextAsync("ERR", statusCode: 500, ct: cancellationToken);
                 }
                 catch
                 {
