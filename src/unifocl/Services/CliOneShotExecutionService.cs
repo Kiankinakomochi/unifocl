@@ -43,7 +43,7 @@ internal static class CliOneShotExecutionService
 
         if (options.AttachPort is not null)
         {
-            session.AttachedPort = options.AttachPort.Value;
+            DaemonControlService.SetAttachedPort(session, options.AttachPort.Value, session.CurrentProjectPath ?? string.Empty);
         }
 
         if (options.ContextMode is not null)
@@ -369,7 +369,11 @@ internal static class CliOneShotExecutionService
             _ => CliContextMode.None
         };
         session.CurrentProjectPath = snapshot.CurrentProjectPath;
-        session.AttachedPort = snapshot.AttachedPort;
+        if (snapshot.AttachedPort is int restoredPort)
+        {
+            DaemonControlService.SetAttachedPort(session, restoredPort, session.CurrentProjectPath ?? string.Empty);
+        }
+
         session.FocusPath = string.IsNullOrWhiteSpace(snapshot.InspectorTargetPath)
             ? snapshot.FocusPath
             : snapshot.InspectorTargetPath!;
