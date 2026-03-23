@@ -18,6 +18,13 @@
     <Compile Include="../unifocl.unity/EditorScripts/**/*.cs" />
   </ItemGroup>
 
+  <!-- Run the unifocl Roslyn analyzer during the compat-check build so UNIFOCL001
+       warnings surface in CI without requiring a live Unity Editor instance. -->
+  <ItemGroup>
+    <Analyzer Include="../unifocl.unity.analyzer/bin/Debug/netstandard2.0/UniFocl.Unity.Analyzer.dll"
+              Condition="Exists('../unifocl.unity.analyzer/bin/Debug/netstandard2.0/UniFocl.Unity.Analyzer.dll')" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(UnityEditorManagedDir)' != '' and Exists('$(UnityEditorManagedDir)')">
     <UnityManagedAssembly Include="$(UnityEditorManagedDir)/**/*.dll" />
     <Reference Include="@(UnityManagedAssembly)">

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Required: prevents analyzer projects from referencing non-analyzer APIs -->
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <!-- Suppress CS1701/CS1702 assembly version mismatch warnings from Roslyn refs -->
+    <!-- CS1701/CS1702: assembly version mismatch from Roslyn refs; RS2008: release tracking not needed for private analyzer -->
+    <NoWarn>$(NoWarn);CS1701;CS1702;RS2008</NoWarn>
+    <AssemblyName>UniFocl.Unity.Analyzer</AssemblyName>
+    <RootNamespace>UniFocl.Unity.Analyzer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pin to a version compatible with Unity 2022.2+ (Roslyn 4.x) -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.1" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
