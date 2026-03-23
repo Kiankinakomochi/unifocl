@@ -185,6 +185,59 @@
 
 ---
 
+### ✅ Sprint 6: セキュリティ強化
+**ブランチ**: `feature/exec-v2-sprint6-hardening`
+**PR**: #129
+**コミット**: `bfceb6c`
+
+**完了タスク**:
+1. UDS ソケットファイルの明示的 `chmod 0600`
+   - `UdsExecTransportServer.Start()` で `File.SetUnixFileMode(_socketPath, UserRead | UserWrite)` を呼ぶ
+   - Windows は RuntimeInformation でスキップ
+2. `--unsafe-http` 時のトークン認証
+   - 起動時に `Guid.NewGuid().ToString("N")` でトークン生成
+   - `~/.unifocl-runtime/http-token-{port}.txt` に書き出し (chmod 0600)
+   - `HttpExecTransportServer` に `requiredToken` を渡す
+   - `AcceptAsync`: `X-Unifocl-Token` ヘッダー不一致は 401 で拒否してループ継続
+   - シャットダウン時にトークンファイルを削除
+3. HTTP リクエストボディサイズ制限 (1 MB)
+   - `HttpExecRequestContext.ReadBodyAsync` に上限チェック追加
+   - 超過時は `RequestTooLargeException` をスロー → `HandleDaemonRequestAsync` で 413 を返す
+4. `ExecApprovalService` のディスク永続化
+   - コンストラクタに `storePath?` 追加
+   - `CreatePendingApproval` / `TryConsume` / `Reject` の都度 JSON フラッシュ
+   - 起動時ロード (24h 超のエントリは破棄)
+   - `Dispose()` でファイル削除
+5. ビルドエラー修正 (Sprint 5 未解決)
+   - `_sessionService` / `SetAttachedPort` / `ClearAttachedPort` を `static` に変更
+   - `static RunDaemonServiceAsync` からの呼び出しエラーを解消
+
+**変更ファイル**:
+- `src/unifocl/Services/Transport/Uds/UdsExecTransportServer.cs`
+- `src/unifocl/Services/Transport/HttpExecTransportServer.cs`
+- `src/unifocl/Services/Transport/HttpExecRequestContext.cs` (`RequestTooLargeException` 追加含む)
+- `src/unifocl/Services/ExecApprovalService.cs`
+- `src/unifocl/Services/DaemonControlService.cs`
+
+---
+
+## 次エージェントへの引き継ぎ
+
+**Sprint 1–6 完了済み。** 次の作業は以下の優先順で:
+
+1. `CliSessionState.AttachedPort` の完全削除 — BuildCommandService / InspectorModeService / ProjectLifecycleService 等に `ExecSessionService` を注入し、`session.SessionId` 経由でポート取得に切り替える
+2. CLIDaemon ExecV2 adapter — Unity 側 `/agent/exec` エンドポイント追加、`DaemonProjectService` へのローカルブリッジ経由で ExecV2 ルーティング
+
+worktree の作成方法:
+```
+git -C /Users/makinokinichianju/Documents/GitHub/unifocl worktree add \
+  /Users/makinokinichianju/Documents/GitHub/unifocl-exec-v2 \
+  -b feature/exec-v2-sprint7-<short> \
+  origin/feature/exec-v2-sprint6-hardening
+```
+
+---
+
 ## 重要な設計メモ
 
 ### ExecOperationRouter の dispatch 先
