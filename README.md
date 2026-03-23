@@ -1,19 +1,19 @@
 # unifocl
-![unifocl logo](https://github.com/user-attachments/assets/8e6d855c-f96f-4e4a-b90b-001a20dbe705)
+![unifocl logo](https://github.com/user-attachments/assets/1bae1b33-b120-4ba2-bb34-77aa1250e7f7)
 
-A terminal-first Unity development companion. **unifocl** provides a structured way to interact with and navigate your Unity projects directly from the command line.
+A dual-purpose operations layer for Unity development, engineered for both human developers and autonomous AI agents. **unifocl** provides a structured, deterministic way to interact with, navigate, and mutate your Unity projects without relying on the graphical Editor.
 
-It is not designed to replace the Unity Editor. Instead, it serves as a supplementary tool for developers who prefer managing project structure, assets, and hierarchies via a CLI or TUI (Terminal User Interface).
+It serves as a programmable bridge to Unity—offering a focused CLI/TUI (Terminal User Interface) for developers who prefer keyboard-driven workflows, alongside a robust, schema-driven execution path for LLMs, automations, and autonomous tooling.
 
 unifocl is an independent project and is not associated with, affiliated with, or endorsed by Unity Technologies.
 
 ## Features
 
-Instead of relying solely on the Unity Editor's graphical interface, unifocl offers:
+Built to provide a unified operational model for both humans and machines, unifocl offers:
 
-- **Mode-based navigation:** Context-aware environments for navigating the Hierarchy, Project, and Inspector.
-- **Deterministic manipulation:** Command-driven file and object operations.
-- **Focused interface:** A clean CLI/TUI experience built with Spectre.Console.
+- **Dual-Interface Navigation:** Context-aware environments (Hierarchy, Project, Inspector) accessible via a clean Spectre.Console TUI for humans, or as structured state dumps for agent context windows.
+- **Deterministic Manipulation:** Command-driven file and object operations guarded by transactional safety and dry-run capabilities, ensuring predictability for both manual inputs and machine execution.
+- **Native Agentic Tooling:** Built-in MCP (Model Context Protocol) server mode, strict JSON/YAML response envelopes, and concurrent worktree orchestration designed for multi-agent workflows.
 
 ## Installation
 
@@ -42,11 +42,11 @@ winget install Kiankinakomochi.unifocl
 
 ## Command & Feature Guide
 
-When you launch unifocl, you will be greeted by a boot screen. From here, the CLI operates as an interactive shell using **slash commands** (e.g., `/open`) for system and lifecycle operations, and **standard commands** (e.g., `ls`, `cd`) for contextual project operations.
+unifocl operates through a unified command set. Humans can launch the interactive shell (boot screen) to use **slash commands** (e.g., `/open`) for lifecycle operations and **standard commands** (e.g., `ls`, `cd`) for contextual actions. AI agents access these exact same commands via the stateless `exec` pathway or the built-in MCP server.
 
 ### 1. System & Lifecycle Commands
 
-These commands manage your session, project loading, and CLI configuration. They are prefixed with a slash (`/`).
+These commands manage your session, project loading, and configuration. In the interactive shell, they are prefixed with a slash (`/`).
 
 | **Command** | **Alias** | **Description** |
 | --- | --- | --- |
@@ -99,18 +99,18 @@ These commands manage your session, project loading, and CLI configuration. They
     - *Host-mode fallback safety constraints:* All mutations are constrained within `Assets`; move/rename path-escape is rejected; moving a directory into itself/descendants is rejected; `mk` validates names and supports typed placeholders (`Empty`, `EmptyChild`, `EmptyParent`, `Text/TMP`, `Sprite`, default prefab).
 - Durable project mutations are supported (`submit -> status -> result`) so mutation outcomes remain queryable even if Unity refresh/compile/domain reload interrupts an in-flight HTTP response.
 - Durable mutations use native daemon HTTP endpoints by default (`submit -> status -> result`) and no longer require the external Unity-MCP package/runtime dependencies.
-- Built-in MCP server mode is available for automation tooling: start with `unifocl --mcp-server` (stdio transport, .NET MCP SDK).
+- Built-in MCP server mode is available for automation tooling: start with `unifocl --mcp-server` (stdio transport, .NET MCP SDK).
 - MCP command lookup tools are exposed by the built-in server so agents can discover usage without reading full docs:
     - `ListCommands(scope, query, limit)`
     - `LookupCommand(command, scope)`
 - MCP server architecture + agent JSON configuration guide:
     - `docs/mcp-server-architecture.md`
-    - Quick multi-client setup helper: `scripts/setup-mcp-agents.sh`
+    - Quick multi-client setup helper: `scripts/setup-mcp-agents.sh`
 - **Durable HTTP fallback endpoints:** `POST /project/mutation/submit`, `GET /project/mutation/status?requestId=<id>`, `GET /project/mutation/result?requestId=<id>`, `POST /project/mutation/cancel?requestId=<id>`
 
 ### 2. Daemon Management
 
-The daemon maintains a persistent connection to the project. Manage it using the `/daemon` (or `/d`) command suite.
+The daemon acts as the persistent backend coordinator for both human operators and agentic workflows. Manage it using the `/daemon` (or `/d`) command suite.
 
 | **Subcommand** | **Description** |
 | --- | --- |
@@ -134,19 +134,19 @@ The daemon maintains a persistent connection to the project. Manage it using the
 - Milestone tracking stream: `Worktree Isolation and Multi-Agent Daemon Safety`.
 - Smoke project default: `setup-smoke-project` seeds `Packages/manifest.json` with `com.unity.modules.imageconversion`.
 
-### 3. Mode Switching
+### 3. Context & Mode Switching
 
-Once a project is opened, use these commands to switch your active context.
+Switch the active operational context for your session or agent execution.
 
 | **Command** | **Alias** | **Description** |
 | --- | --- | --- |
 | `/project` | `/p` | Switch to Project mode (asset structure navigation). |
-| `/hierarchy` | `/h` | Switch to Hierarchy mode (scene structure TUI). |
+| `/hierarchy` | `/h` | Switch to Hierarchy mode (scene structure TUI/tree). |
 | `/inspect <idx/path>` | `/i` | Switch to Inspector mode and focus a target. |
 
 ### 4. Contextual Operations (Non-Slash Commands)
 
-When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash to interact directly with the active environment. Mutating operations are safely routed through Bridge mode when available, or Host mode fallback when applicable.
+Interact directly with the active environment. Mutating operations are safely routed through Bridge mode when available, or Host mode fallback when applicable, ensuring deterministic behavior for both humans and AI.
 
 | **Command** | **Alias** | **Description** |
 | --- | --- | --- |
@@ -178,44 +178,10 @@ When inside a specific mode (Project, Hierarchy, or Inspector), omit the slash t
 | `build targets` |  | List Unity build support targets in project mode. |
 | `build logs` |  | Open restartable build log tail in project mode. |
 
-### 5. Fuzzy Search & Intellisense
+### 5. Safe Mutation: Dry-Run Previews
 
-unifocl features a composer with Intellisense.
+Both human operators and AI agents can validate mutations safely before execution. `-dry-run` is supported for mutation commands in all interactive and agentic modes:
 
-- Type `/` to open the slash-command suggestion palette.
-- Type any standard text to receive project-mode suggestions.
-
-**Fuzzy Finding:** Use the `f` or `ff` command to trigger fuzzy search across your project or inspector. In project mode, you can scope searches using `--type`/`-t` or `t:<type>`.
-
-- **Syntax:** `f [--type <type>|-t <type>|t:<type>] <query>`
-- **Supported Types:** `script`, `scene`, `prefab`, `material`, `animation`
-- **Example:** `f --type script PlayerController`
-
-### 6. Keybindings & Focus Modes
-
-The CLI provides keyboard-driven navigation for interacting with lists and structures without typing out indices.
-
-**Global Keybinds**
-
-- **`F7`**: Toggle focus for Hierarchy TUI, Project navigator, Recent projects list, and Inspector.
-- **`Esc`**: Dismiss Intellisense, or clear input if already dismissed.
-- **`↑` / `↓`**: Navigate fuzzy/Intellisense candidates.
-- **`Enter`**: Insert selected suggestion or commit input.
-
-**Context-Specific Focus Navigation** Once focused (`F7`), the arrow keys and tab behave contextually:
-
-| **Action** | **Hierarchy Focus** | **Project Focus** | **Inspector Focus** |
-| --- | --- | --- | --- |
-| **`↑` / `↓`** | Move highlighted GameObject | Move highlighted file/folder | Move highlighted component/field |
-| **`Tab`** | Expand selected node | Reveal/open selected entry | Inspect selected component |
-| **`Shift+Tab`** | Collapse selected node | Move to parent folder | Back to component list |
-| **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
-
-## Advanced Features
-
-### Dry-Run Preview
-
-- `-dry-run` is now supported for mutation commands in all interactive modes:
 - `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`)
 - `Inspector` mutations (`set`, `toggle`, `component add/remove`, `make`, `remove`, `rename`, `move`)
 - `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`)
@@ -224,7 +190,7 @@ Behavior:
 
 - **Hierarchy / Inspector (memory layer):** unifocl captures pre/post state snapshots, executes inside an Undo group, immediately reverts, and returns a structured diff preview.
 - **Project (filesystem layer):** unifocl returns proposed path/meta changes without performing file I/O.
-- **TUI rendering:** when `-dry-run` is appended, unified diff lines are appended to command transcript output.
+- **TUI/Agentic rendering:** When `dry-run` is appended, unified diff lines are shown in the transcript output for humans, or nested in the `diff` payload for agents.
 
 Examples:
 
@@ -242,9 +208,35 @@ rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
 
-### Agentic Mode (Machine-Oriented Workflows)
+## Human Interface: TUI & Keybindings
 
-unifocl supports an **agentic execution path** for LLMs, automations, and tool wrappers that need deterministic I/O instead of interactive TUI behavior.
+For developers using the interactive CLI, unifocl features a composer with Intellisense and keyboard-driven navigation.
+
+- Type `/` to open the slash-command suggestion palette.
+- Type any standard text to receive project-mode suggestions.
+- **Fuzzy Finding:** Use the `f` or `ff` command to trigger fuzzy search (e.g., `f --type script PlayerController`).
+
+**Global Keybinds**
+
+- **`F7`**: Toggle focus for Hierarchy TUI, Project navigator, Recent projects list, and Inspector.
+- **`Esc`**: Dismiss Intellisense, or clear input if already dismissed.
+- **`↑` / `↓`**: Navigate fuzzy/Intellisense candidates.
+- **`Enter`**: Insert selected suggestion or commit input.
+
+**Context-Specific Focus Navigation**
+
+Once focused (`F7`), the arrow keys and tab behave contextually:
+
+| **Action** | **Hierarchy Focus** | **Project Focus** | **Inspector Focus** |
+| --- | --- | --- | --- |
+| **`↑` / `↓`** | Move highlighted GameObject | Move highlighted file/folder | Move highlighted component/field |
+| **`Tab`** | Expand selected node | Reveal/open selected entry | Inspect selected component |
+| **`Shift+Tab`** | Collapse selected node | Move to parent folder | Back to component list |
+| **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
+
+## Agentic & Autonomous Workflows
+
+unifocl treats machine execution as a first-class citizen. It provides an **agentic execution path** specifically designed for LLMs, automations, and tool wrappers that require deterministic I/O instead of interactive TUI behavior.
 
 Core principles:
 
@@ -255,7 +247,7 @@ Core principles:
 
 ### 1. One-Shot CLI for Agents
 
-Use `exec` to run a single command and exit:
+Use `exec` to run a single command and exit, suppressing all human UI:
 
 ```
 unifocl exec "<command>" [--agentic] [--format json|yaml] [--project <path>] [--mode <project|hierarchy|inspector>] [--attach-port <port>] [--request-id <id>]
@@ -272,22 +264,22 @@ unifocl exec "upm list --outdated" --agentic --project /path/to/UnityProject --m
 
 Notes:
 
-- `-agentic` enables machine output (single response payload).
-- `-format` controls payload encoding (`json` or `yaml`).
-- `-project`, `-mode`, and `-attach-port` seed runtime context so commands can execute without interactive setup.
+- `agentic` enables machine output (single response payload).
+- `format` controls payload encoding (`json` or `yaml`).
+- `project`, `mode`, and `attach-port` seed runtime context so commands can execute without interactive setup.
 
 Agentic best-practice profile (native bridge + built-in MCP server):
 
 - Use native durable daemon HTTP mutation lifecycle for writes (`submit -> status -> result`).
-- Use `unifocl --mcp-server` when automation needs compact command lookup/context tools over stdio.
+- Use `unifocl --mcp-server` when automation needs compact command lookup/context tools over stdio.
 - For project mutations, prefer durable lifecycle calls (`submit -> status -> result`) instead of relying on a single long HTTP response.
-- Reuse one `--session-seed` and one daemon attach target per workflow chain to avoid context rehydration churn.
-- For deterministic edits, prefer path-based targeting and perform grouped verification (`/dump hierarchy` + `/dump inspector`) after each mutation batch.
+- Reuse one `-session-seed` and one daemon attach target per workflow chain to avoid context rehydration churn.
+- For deterministic edits, prefer path-based targeting and perform grouped verification (`/dump hierarchy` + `/dump inspector`) after each mutation batch.
 - For concurrent agents, use one worktree and one daemon port per agent; do not run multiple mutating agents in the same worktree.
 
 ### 2. Unified Agentic Envelope
 
-- `-agentic` responses use one schema:
+- `agentic` responses adhere to a strict machine-readable schema:
 
 ```
 {
@@ -322,7 +314,7 @@ Field semantics:
 - `data`: command payload (shape varies by action).
 - `errors`: deterministic machine errors (empty on success).
 - `warnings`: non-fatal issues.
-- `diff`: optional dry-run diff payload (present when `-dry-run` preview is returned).
+- `diff`: optional dry-run diff payload (present when `dry-run` preview is returned).
 - `meta`: schema/protocol/exit metadata plus optional command-specific extras.
 
 Agentic VCS setup guard:
@@ -344,7 +336,7 @@ Agentic VCS setup guard:
 
 ### 4. `/dump` State Serialization
 
-`/dump` is designed for context-window transfer and deterministic snapshots:
+`/dump` is uniquely designed for agent context-window transfer and deterministic snapshots:
 
 ```
 /dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]
@@ -363,7 +355,7 @@ Context handling:
 
 ### 5. Daemon Agentic HTTP Endpoints
 
-Daemon service mode exposes agent endpoints on localhost:
+Daemon service mode exposes agent endpoints natively on localhost:
 
 - `POST /agent/exec`
 - `GET /agent/capabilities`
@@ -465,11 +457,11 @@ Concurrency safeguards:
 
 ### Application Architecture
 
-unifocl is a .NET console application built for cross-platform compatibility (Windows, macOS, Linux). The application is divided into four primary layers:
+unifocl is a .NET console application built for cross-platform compatibility (Windows, macOS, Linux). The architecture seamlessly supports both the human CLI and the agentic machine interfaces. It is divided into four primary layers:
 
-1. **CLI Layer:** Handles commands and structured user interaction.
+1. **CLI Layer:** Handles commands, Spectre.Console human interactions, and stateless agentic routing.
 2. **Mode System:** Manages the context-aware environments (Hierarchy, Project, Inspector).
-3. **Daemon Layer:** A persistent background coordinator that tracks project state.
+3. **Daemon Layer:** A persistent background coordinator that tracks project state and serves as the backend API.
 4. **Bridge Mode Channel:** The communication interface between the daemon and an active Unity Editor/runtime.
 
 ### The unifocl Daemon
@@ -478,12 +470,12 @@ The daemon is a localhost control process, not a kernel/OS-level file mutation s
 
 Current implementation summary:
 
-- The CLI talks to a daemon endpoint over local HTTP (`127.0.0.1:<port>`) for lifecycle and project commands.
+- The CLI and HTTP-based agents talk to a daemon endpoint over local HTTP (`127.0.0.1:<port>`) for lifecycle and project commands.
 - The daemon keeps a project-scoped session warm so commands do not need to cold-start Unity every time.
 - Mode selection is runtime-based:
-    - **Host mode:** If no suitable GUI editor bridge is attached, unifocl starts Unity in batch/no-graphics mode (`-headless`) and serves commands through that Unity process.
+    - **Host mode:** If no suitable GUI editor bridge is attached, unifocl starts Unity in batch/no-graphics mode (`headless`) and serves commands through that Unity process.
     - **Bridge mode:** If a GUI Unity editor for the same project is already active and attachable, unifocl routes commands to that live editor bridge endpoint.
-- Project operations are executed by Unity-side services/contracts, then reported back to the CLI as typed responses.
+- Project operations are executed by Unity-side services/contracts, then reported back to the CLI/Agent as typed responses.
 - If an endpoint is reachable but unhealthy (for example ping works but project commands do not), unifocl restarts and re-attaches the managed daemon path.
 - Daemon state is tracked per project (deterministic port + local `.unifocl` config/session metadata).
 
@@ -494,7 +486,7 @@ What this means in practice:
 
 ### Persistence Safety Contract
 
-unifocl enforces a mutation safety contract across `hierarchy`, `inspector`, and `project` modes. The implementation is split into four layers.
+unifocl enforces a mutation safety contract across `hierarchy`, `inspector`, and `project` modes, crucial for safe autonomous agent execution and human user error prevention. The implementation is split into four layers.
 
 ### 1. Transactional Envelope (Daemon Core)
 
