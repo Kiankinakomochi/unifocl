@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 
 /// <summary>
 /// IExecTransportServer backed by a Unix Domain Socket.
@@ -36,6 +37,13 @@ internal sealed class UdsExecTransportServer : IExecTransportServer
         _server = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         _server.Bind(new UnixDomainSocketEndPoint(_socketPath));
         _server.Listen(backlog: 16);
+
+        // Restrict the socket file to owner-only access (rw-------).
+        // No-op on Windows where UDS permissions work differently.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            File.SetUnixFileMode(_socketPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     public async Task<IExecRequestContext> AcceptAsync(CancellationToken ct)

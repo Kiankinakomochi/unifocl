@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -19,7 +20,7 @@ internal sealed class DaemonControlService
     private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
     private static readonly HttpClient Http = new();
     private DaemonStartupFailure? _lastStartupFailure;
-    private readonly ExecSessionService _sessionService = new();
+    private static readonly ExecSessionService _sessionService = new();
 
     public async Task HandleDaemonCommandAsync(
         string input,
@@ -153,7 +154,8 @@ internal sealed class DaemonControlService
         var inspectorBridge = new InspectorDaemonBridge();
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
         var execRegistry = new ExecCommandRegistry();
-        var execApproval = new ExecApprovalService();
+        var approvalStorePath = ResolveApprovalStorePath(options.Port);
+        var execApproval = new ExecApprovalService(approvalStorePath);
         var execRouter = new ExecOperationRouter(execRegistry, execApproval, _sessionService);
 
         runtime.Upsert(state);
@@ -181,8 +183,39 @@ internal sealed class DaemonControlService
         UdsExecTransportServer? udsServer = !string.IsNullOrWhiteSpace(udsSocketPath)
             ? new UdsExecTransportServer(udsSocketPath)
             : null;
+
+        // When HTTP is enabled, generate a per-session secret and write it to disk.
+        // Clients must send X-Unifocl-Token: <secret> with every request.
+        string? httpToken = null;
+        if (options.UnsafeHttp)
+        {
+            httpToken = Guid.NewGuid().ToString("N");
+            var tokenPath = ResolveHttpTokenPath(options.Port);
+            if (tokenPath is not null)
+            {
+                try
+                {
+                    var dir = Path.GetDirectoryName(tokenPath);
+                    if (!string.IsNullOrWhiteSpace(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    File.WriteAllText(tokenPath, httpToken);
+                    if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    {
+                        File.SetUnixFileMode(tokenPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    }
+                }
+                catch
+                {
+                    // Couldn't persist the token — still apply it in-memory for the session.
+                }
+            }
+        }
+
         HttpExecTransportServer? httpServer = options.UnsafeHttp
-            ? new HttpExecTransportServer(options.Port)
+            ? new HttpExecTransportServer(options.Port, httpToken)
             : null;
 
         Task DispatchCtx(IExecRequestContext ctx) => HandleDaemonRequestAsync(
@@ -213,6 +246,24 @@ internal sealed class DaemonControlService
             cts.Cancel();
             udsServer?.Dispose();
             httpServer?.Dispose();
+            execApproval.Dispose();
+
+            // Delete the HTTP token file so stale tokens cannot be reused after shutdown.
+            if (httpToken is not null)
+            {
+                try
+                {
+                    var tokenPath = ResolveHttpTokenPath(options.Port);
+                    if (tokenPath is not null)
+                    {
+                        File.Delete(tokenPath);
+                    }
+                }
+                catch
+                {
+                    // best-effort cleanup
+                }
+            }
 
             try
             {
@@ -261,6 +312,36 @@ internal sealed class DaemonControlService
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".unifocl-runtime");
             return Path.Combine(runtimeDir, $"daemon-{port}.sock");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveHttpTokenPath(int port)
+    {
+        try
+        {
+            var runtimeDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".unifocl-runtime");
+            return Path.Combine(runtimeDir, $"http-token-{port}.txt");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveApprovalStorePath(int port)
+    {
+        try
+        {
+            var runtimeDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".unifocl-runtime");
+            return Path.Combine(runtimeDir, $"approvals-{port}.json");
         }
         catch
         {
@@ -461,6 +542,16 @@ internal sealed class DaemonControlService
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (RequestTooLargeException)
+        {
+            try
+            {
+                await ctx.WriteTextAsync("Request body too large (limit: 1 MB)", statusCode: 413, ct: cancellationToken);
+            }
+            catch
+            {
+            }
         }
         catch
         {
@@ -1493,7 +1584,7 @@ internal sealed class DaemonControlService
     /// corresponding <see cref="ExecSession"/> so <see cref="CliSessionState.SessionId"/>
     /// stays up-to-date.
     /// </summary>
-    private void SetAttachedPort(CliSessionState session, int port, string projectPath)
+    private static void SetAttachedPort(CliSessionState session, int port, string projectPath)
     {
         session.AttachedPort = port;
         var s = _sessionService.OpenForPort(port, projectPath);
@@ -1504,7 +1595,7 @@ internal sealed class DaemonControlService
     /// Clears <see cref="CliSessionState.AttachedPort"/> and closes the associated
     /// <see cref="ExecSession"/> so <see cref="CliSessionState.SessionId"/> is cleared too.
     /// </summary>
-    private void ClearAttachedPort(CliSessionState session)
+    private static void ClearAttachedPort(CliSessionState session)
     {
         if (session.AttachedPort is int port)
         {
