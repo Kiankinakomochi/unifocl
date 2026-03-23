@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.1 - 2026-03-24
+
+### Fixed
+- **`/init` payload missing `UnifoclCommandAttribute.cs` and `DaemonCustomToolService.cs`**: both files were absent from the embedded resource list in `unifocl.csproj` and from the copy/freshness-check tables in `EditorDependencyInitializerService`, causing a CS0246 compile error (`UnifoclCommandAttribute` not found) in the deployed editor package. `/init` now correctly installs all custom-command runtime files.
+
+### Added
+- **macOS shell installer** (`scripts/install.sh`): one-line install via `curl -fsSL … | sh`. Detects Apple Silicon; directs Intel Mac users to Homebrew. Installs to `/usr/local/bin`, prompts for `sudo` only when needed.
+- **Windows PowerShell installer** (`scripts/install.ps1`): one-line install via `iwr -useb … | iex`. Installs to `%LOCALAPPDATA%\unifocl\bin` and adds the directory to the user `PATH` automatically.
+- Both installer scripts are uploaded as release assets on every GitHub Release.
+
+### Migration
+- **Protocol bumped v10 → v11** (editor payload changed). Re-run `/init` on every project to deploy the updated package containing `UnifoclCommandAttribute.cs` and `DaemonCustomToolService.cs`.
+
 ## 2.3.0 - 2026-03-23
 
 ### Added
