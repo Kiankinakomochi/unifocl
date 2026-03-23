@@ -334,6 +334,23 @@ namespace UniFocl.EditorBridge
         public string targetType = string.Empty;
     }
 
+    // ── Custom tool bridge ───────────────────────────────────────────────────────
+
+    [Serializable]
+    internal sealed class CustomToolBridgeRequest
+    {
+        public string toolName = string.Empty;
+        public string argsJson = string.Empty;
+    }
+
+    [Serializable]
+    internal sealed class CustomToolBridgeResponse
+    {
+        public bool ok;
+        public string result = string.Empty;
+        public string message = string.Empty;
+    }
+
     // ── ExecV2 adapter ──────────────────────────────────────────────────────────
 
     /// <summary>Incoming ExecV2Request JSON as parsed by JsonUtility on the Unity side.</summary>
