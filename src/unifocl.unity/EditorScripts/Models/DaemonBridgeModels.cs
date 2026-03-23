@@ -333,5 +333,32 @@ namespace UniFocl.EditorBridge
         public string source = string.Empty;
         public string targetType = string.Empty;
     }
+
+    // ── ExecV2 adapter ──────────────────────────────────────────────────────────
+
+    /// <summary>Incoming ExecV2Request JSON as parsed by JsonUtility on the Unity side.</summary>
+    [Serializable]
+    internal sealed class ExecV2AdapterRequest
+    {
+        public string operation = string.Empty;
+        public string requestId = string.Empty;
+        public ExecV2AdapterArgs args = new();
+    }
+
+    /// <summary>Flat union of all per-operation arg fields for ExecV2 adapter dispatch.</summary>
+    [Serializable]
+    internal sealed class ExecV2AdapterArgs
+    {
+        // asset.rename / asset.remove / asset.create / asset.create_script
+        public string assetPath = string.Empty;
+        public string newAssetPath = string.Empty;
+        public string content = string.Empty;
+        // build.exec
+        public string method = string.Empty;
+        // upm.remove
+        public string packageId = string.Empty;
+        // build.scenes.set
+        public string[] scenes = Array.Empty<string>();
+    }
 }
 #endif

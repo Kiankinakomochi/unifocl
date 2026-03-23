@@ -100,13 +100,12 @@ internal sealed class HierarchyTui
             await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, log);
         }
 
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             log("[red]hierarchy[/]: daemon is not attached");
             return;
         }
 
-        var port = session.AttachedPort.Value;
         var snapshot = await _daemonClient.GetSnapshotAsync(port);
         if (snapshot is null)
         {
@@ -267,13 +266,12 @@ internal sealed class HierarchyTui
             await daemonControlService.EnsureProjectDaemonAsync(session.CurrentProjectPath, daemonRuntime, session, log);
         }
 
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             log("[red]hierarchy[/]: daemon is not attached");
             return true;
         }
 
-        var port = session.AttachedPort.Value;
         var snapshot = await _daemonClient.GetSnapshotAsync(port);
         if (snapshot is null)
         {

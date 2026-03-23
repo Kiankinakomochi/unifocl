@@ -1890,7 +1890,7 @@ internal sealed class ProjectLifecycleService
     {
         log("[grey]status[/]: session");
         log($"[grey]status[/]: mode={session.Mode}, context={session.ContextMode}");
-        log($"[grey]status[/]: attached-port={(session.AttachedPort is int port ? port : "none")}");
+        log($"[grey]status[/]: attached-port={(DaemonControlService.GetPort(session)?.ToString() ?? "none")}");
         log($"[grey]status[/]: project={(string.IsNullOrWhiteSpace(session.CurrentProjectPath) ? "none" : session.CurrentProjectPath)}");
         log($"[grey]status[/]: safe-mode={(session.SafeModeEnabled ? "on" : "off")}");
         if (session.LastOpenedUtc is DateTimeOffset openedAtUtc)
@@ -2660,7 +2660,7 @@ internal sealed class ProjectLifecycleService
         DaemonRuntime daemonRuntime,
         Action<string> log)
     {
-        if (session.AttachedPort is int attachedBuildPort)
+        if (DaemonControlService.GetPort(session) is int attachedBuildPort)
         {
             var status = await _daemonClient.GetBuildStatusAsync(attachedBuildPort);
             if (status?.Running == true)
@@ -2673,7 +2673,7 @@ internal sealed class ProjectLifecycleService
         }
 
         var candidatePorts = new HashSet<int>();
-        if (session.AttachedPort is int attachedPort)
+        if (DaemonControlService.GetPort(session) is int attachedPort)
         {
             candidatePorts.Add(attachedPort);
         }
@@ -2831,16 +2831,16 @@ internal sealed class ProjectLifecycleService
         var stableReservation = await daemonControlService.HasStableProjectDaemonAsync(projectPath, daemonRuntime, session);
         if (!stableReservation)
         {
-            session.AttachedPort = null;
+            DaemonControlService.ClearAttachedPort(session);
             log("[red]daemon[/]: daemon reservation check failed (missing attachment or project endpoint responsiveness)");
             log("[red]open[/]: open aborted before entering project UI");
             return false;
         }
 
-        var hierarchyReady = await WaitForHierarchySnapshotReadyAsync(session.AttachedPort!.Value, log);
+        var hierarchyReady = await WaitForHierarchySnapshotReadyAsync(DaemonControlService.GetPort(session)!.Value, log);
         if (!hierarchyReady)
         {
-            session.AttachedPort = null;
+            DaemonControlService.ClearAttachedPort(session);
             log("[red]daemon[/]: hierarchy snapshot endpoint is not ready after /open");
             log("[red]open[/]: open aborted (hierarchy mode would be unavailable)");
             return false;
@@ -2868,7 +2868,7 @@ internal sealed class ProjectLifecycleService
         log("[grey]open[/]: step 5/5 load project context");
         if (!await EnsureStartupSceneLoadedAsync(projectPath, session, log))
         {
-            session.AttachedPort = null;
+            DaemonControlService.ClearAttachedPort(session);
             log("[red]open[/]: open aborted (no startup scene could be loaded)");
             return false;
         }
@@ -2882,7 +2882,7 @@ internal sealed class ProjectLifecycleService
         CliSessionState session,
         Action<string> log)
     {
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int scenePort)
         {
             log("[red]open[/]: no daemon port attached for startup scene load");
             return false;
@@ -2900,7 +2900,7 @@ internal sealed class ProjectLifecycleService
                 name = "SampleScene"
             });
             var createSceneResponse = await _daemonClient.ExecuteProjectCommandAsync(
-                session.AttachedPort.Value,
+                scenePort,
                 new ProjectCommandRequestDto("mk-asset", "Assets", null, createScenePayload));
             if (!createSceneResponse.Ok)
             {
@@ -2918,7 +2918,7 @@ internal sealed class ProjectLifecycleService
         }
 
         var loadResponse = await _daemonClient.ExecuteProjectCommandAsync(
-            session.AttachedPort.Value,
+            scenePort,
             new ProjectCommandRequestDto("load-asset", startupScenePath, null, null));
         if (!loadResponse.Ok)
         {
@@ -3055,7 +3055,7 @@ internal sealed class ProjectLifecycleService
         {
             log($"[yellow]daemon[/]: {Markup.Escape(failure.Summary)}");
         }
-        session.AttachedPort = null;
+        DaemonControlService.ClearAttachedPort(session);
         log("[yellow]open[/]: compile errors blocked daemon startup; fix errors and retry /open");
         return false;
     }

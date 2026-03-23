@@ -171,7 +171,7 @@ internal sealed partial class ProjectViewService
         ProjectCommandRequestDto request,
         Action<string>? onStatus = null)
     {
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             return new ProjectCommandResponseDto(false, "daemon is not attached", null, null);
         }
@@ -346,7 +346,7 @@ internal sealed partial class ProjectViewService
 
     private async Task SyncAssetIndexAsync(CliSessionState session)
     {
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             return;
         }

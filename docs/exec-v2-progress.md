@@ -221,19 +221,54 @@
 
 ---
 
+### ✅ Sprint 7: AttachedPort 削除 + CLIDaemon ExecV2 Adapter
+**ブランチ**: `feature/exec-v2-sprint7-cleanup-adapter`
+**PR**: (作成待ち)
+
+**完了タスク**:
+1. `CliSessionState.AttachedPort` の完全削除
+   - `DaemonControlService` に `internal static int? GetPort(CliSessionState)` を追加 (`_sessionService` 経由)
+   - `SetAttachedPort` / `ClearAttachedPort` を `internal static` に昇格
+   - `CliSessionState.cs` から `AttachedPort` プロパティと `[Obsolete]` を削除
+   - 影響 9 ファイル (BuildCommandService, InspectorModeService, ProjectLifecycleService 等) で呼び出し箇所を全て `DaemonControlService.GetPort(session)` に置換
+2. CLIDaemon ExecV2 adapter
+   - `CLIDaemon.cs` に `POST /agent/exec` エンドポイント追加
+   - `ExecV2AdapterRequest` / `ExecV2AdapterArgs` を `DaemonBridgeModels.cs` に追加 (`[Serializable]`)
+   - `HandleExecV2Async` で operation を switch し、`ProjectCommandRequest` JSON を構築して `DaemonProjectService.ExecuteAsync` に渡す
+   - 対応 operation: `asset.rename/remove/create/create_script`, `build.run/exec/scenes.set`, `upm.remove`
+   - レスポンス形式: `{"status":"Completed","requestId":"...","result":{...}}` or `{"status":"Failed","error":"..."}`
+
+**変更ファイル**:
+- `src/unifocl/Models/CliSessionState.cs`
+- `src/unifocl/Services/DaemonControlService.cs`
+- `src/unifocl/Services/AgenticStatePersistenceService.cs`
+- `src/unifocl/Services/ProjectViewService.cs`
+- `src/unifocl/Services/CliDumpService.cs`
+- `src/unifocl/Services/CliOneShotExecutionService.cs`
+- `src/unifocl/Services/HierarchyTui.cs`
+- `src/unifocl/Services/BuildCommandService.cs`
+- `src/unifocl/Services/InspectorModeService.cs`
+- `src/unifocl/Services/ProjectLifecycleService.cs`
+- `src/unifocl.unity/EditorScripts/CLIDaemon.cs`
+- `src/unifocl.unity/EditorScripts/Models/DaemonBridgeModels.cs`
+
+---
+
 ## 次エージェントへの引き継ぎ
 
-**Sprint 1–6 完了済み。** 次の作業は以下の優先順で:
+**Sprint 1–7 完了済み。** ExecV2 のコア実装は全て完了。
 
-1. `CliSessionState.AttachedPort` の完全削除 — BuildCommandService / InspectorModeService / ProjectLifecycleService 等に `ExecSessionService` を注入し、`session.SessionId` 経由でポート取得に切り替える
-2. CLIDaemon ExecV2 adapter — Unity 側 `/agent/exec` エンドポイント追加、`DaemonProjectService` へのローカルブリッジ経由で ExecV2 ルーティング
+残る検討事項 (優先度低):
+- Unity 側 CLIDaemon が現在も HTTP のみ (CLIDaemon は Unity Editor に内蔵 → UDS は CLI 側との間)
+- `ExecV2AdapterArgs.scenes` の JsonUtility デシリアライズ: `string[]` はサポートされているが、JSON の `args.scenes` が素の配列ではなく ExecV2AdapterArgs のフィールドとして届くことを前提としている。ExecOperationRouter 側のシリアライズが合っていることを E2E テストで確認推奨
+- `build.scenes.set` のみ `args` がネストした配列を持つ — CLI 側の `ExecCommandRegistry` は `JsonElement` の raw text を使っているが CLIDaemon 側は `string[]` でデシリアライズするため、フォーマットが合っているか確認
 
-worktree の作成方法:
+worktree の作成方法 (次 Sprint がある場合):
 ```
 git -C /Users/makinokinichianju/Documents/GitHub/unifocl worktree add \
   /Users/makinokinichianju/Documents/GitHub/unifocl-exec-v2 \
-  -b feature/exec-v2-sprint7-<short> \
-  origin/feature/exec-v2-sprint6-hardening
+  -b feature/exec-v2-sprint8-<short> \
+  origin/feature/exec-v2-sprint7-cleanup-adapter
 ```
 
 ---

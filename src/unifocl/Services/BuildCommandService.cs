@@ -81,7 +81,7 @@ internal sealed class BuildCommandService
 
     public async Task NotifyAttachedBuildIfAnyAsync(CliSessionState session, Action<string> log)
     {
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             return;
         }
@@ -671,7 +671,7 @@ internal sealed class BuildCommandService
             return false;
         }
 
-        if (session.AttachedPort is int attachedPort)
+        if (DaemonControlService.GetPort(session) is int attachedPort)
         {
             await daemonControlService.StopDaemonByPortAsync(attachedPort, daemonRuntime, session, _ => { });
         }
@@ -855,7 +855,7 @@ internal sealed class BuildCommandService
             return;
         }
 
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             log("[x] build logs failed: daemon is not attached");
             return;
@@ -878,7 +878,7 @@ internal sealed class BuildCommandService
         Action<string> log,
         bool promptDeploy)
     {
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             return;
         }
@@ -1073,7 +1073,7 @@ internal sealed class BuildCommandService
         Action<string> log,
         bool promptReturnKey)
     {
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             log("[x] build cancel failed: daemon is not attached");
             return;
@@ -1300,7 +1300,7 @@ internal sealed class BuildCommandService
 
     private async Task<ProjectCommandResponseDto> ExecuteProjectCommandAsync(CliSessionState session, ProjectCommandRequestDto request)
     {
-        if (session.AttachedPort is not int port)
+        if (DaemonControlService.GetPort(session) is not int port)
         {
             return new ProjectCommandResponseDto(false, "daemon is not attached", null, null);
         }

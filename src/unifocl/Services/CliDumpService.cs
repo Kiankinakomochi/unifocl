@@ -111,13 +111,13 @@ internal static class CliDumpService
 
     private static async Task<object?> BuildHierarchyDumpAsync(CliSessionState session)
     {
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int hierarchyPort)
         {
             return null;
         }
 
         var client = new HierarchyDaemonClient();
-        var snapshot = await client.GetSnapshotAsync(session.AttachedPort.Value);
+        var snapshot = await client.GetSnapshotAsync(hierarchyPort);
         return snapshot;
     }
 
@@ -201,7 +201,7 @@ internal static class CliDumpService
 
     private static async Task<object?> BuildInspectorDumpAsync(CliSessionState session)
     {
-        if (session.AttachedPort is null)
+        if (DaemonControlService.GetPort(session) is not int inspectorPort)
         {
             return null;
         }
@@ -224,7 +224,7 @@ internal static class CliDumpService
                 query = ""
             });
             using var listResponse = await http.PostAsync(
-                $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
+                $"http://127.0.0.1:{inspectorPort}/inspect",
                 new StringContent(listPayload, Encoding.UTF8, "application/json"),
                 cts.Token);
             if (!listResponse.IsSuccessStatusCode)
@@ -255,7 +255,7 @@ internal static class CliDumpService
                     query = ""
                 });
                 using var fieldResponse = await http.PostAsync(
-                    $"http://127.0.0.1:{session.AttachedPort.Value}/inspect",
+                    $"http://127.0.0.1:{inspectorPort}/inspect",
                     new StringContent(fieldsPayload, Encoding.UTF8, "application/json"),
                     cts.Token);
                 var fields = Array.Empty<object>();
