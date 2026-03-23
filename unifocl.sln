@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "unifocl", "src\unifocl\unif
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "unifocl.unity.compatcheck", "src\unifocl.unity.compatcheck\unifocl.unity.compatcheck.csproj", "{97016E79-23AD-4256-AEC2-0EA2DF4E34B6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "unifocl.unity.analyzer", "src\unifocl.unity.analyzer\unifocl.unity.analyzer.csproj", "{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -37,6 +39,18 @@ Global
 		{97016E79-23AD-4256-AEC2-0EA2DF4E34B6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{97016E79-23AD-4256-AEC2-0EA2DF4E34B6}.Release|x64.ActiveCfg = Release|Any CPU
 		{97016E79-23AD-4256-AEC2-0EA2DF4E34B6}.Release|x86.ActiveCfg = Release|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Debug|x64.Build.0 = Debug|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Debug|x86.Build.0 = Debug|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Release|x64.ActiveCfg = Release|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Release|x64.Build.0 = Release|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Release|x86.ActiveCfg = Release|Any CPU
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -44,5 +58,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{B2BF5ADA-28E6-4492-9CE3-3377A206612A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{97016E79-23AD-4256-AEC2-0EA2DF4E34B6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{38323E5A-50E2-4D5C-B10C-A7BC0CB0A21E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

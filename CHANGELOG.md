@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.0 - 2026-03-23
+
+### Added
+- **Custom MCP commands via `[UnifoclCommand]`**: expose any static C# editor method as a live MCP tool by adding the attribute. Tools are reflected at compile time into a per-project manifest (`<projectRoot>/.local/unifocl-manifest.json`) and grouped by category. See [`docs/custom-commands.md`](docs/custom-commands.md).
+- **Deferred MCP tool loading** (`get_categories` / `load_category` / `unload_category`): agents discover and load only the categories they need, keeping the default MCP schema lean and token-efficient.
+- **Dry-run sandbox for custom tools**: every `[UnifoclCommand]` method automatically supports `dryRun`; the dispatcher wraps execution in an Undo group and reverts if dry-run is requested.
+- **`UnifoclManifestGenerator`** (`[InitializeOnLoad]`): generates the tool manifest on every domain reload and on `compilationFinished`, eliminating the "two compiles needed" race.
+- **`UnifoclCompilationService`**: global editor-side utility that combines OS-level Unity window activation (macOS `osascript`, Windows PowerShell `Shell.Application`, Linux `xdotool`/`wmctrl`) with `CompilationPipeline.RequestScriptCompilation()` for zero-touch, asset-pipeline-free recompilation.
+- **`UnifoclEditorConfig`**: per-project JSON config (`<projectRoot>/.unifocl/editor-config.json`) with `allowWindowGrab` flag (default `true`). Set to `false` on headless CI runners to suppress window-activation attempts while keeping recompilation active.
+- **UNIFOCL001 Roslyn analyzer**: compile-time warning when a `[UnifoclCommand]`-decorated method performs direct `System.IO` writes, guiding authors toward the dry-run-safe mutation path.
+- Documentation: [`docs/editor-compilation.md`](docs/editor-compilation.md) covering the two-compiles race fix, `UnifoclCompilationService`, platform window-grab table, and CI/headless guidance.
+
 ## 2.1.0 - 2026-03-23
 
 ### Added

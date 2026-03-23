@@ -831,6 +831,14 @@ namespace UniFocl.EditorBridge
                         message = "cancel requires requestId"
                     })
                     : DaemonProjectService.CancelMutationPayload(request.requestId),
+                "execute_custom_tool" => string.IsNullOrWhiteSpace(request.tool)
+                    ? JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = "execute_custom_tool requires tool name",
+                        kind = "mcp"
+                    })
+                    : DaemonCustomToolService.ExecuteCustomTool(request.tool, request.args, request.dryRun),
                 _ => JsonUtility.ToJson(new ProjectCommandResponse
                 {
                     ok = false,
@@ -1772,6 +1780,9 @@ namespace UniFocl.EditorBridge
             public string operation = string.Empty;
             public string requestId = string.Empty;
             public string commandPayload = string.Empty;
+            public string tool = string.Empty;
+            public string args = string.Empty;
+            public bool dryRun;
         }
 
         private sealed class UpmBatchInstallStatus

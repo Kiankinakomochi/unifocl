@@ -5,6 +5,8 @@ A dual-purpose operations layer for Unity development, engineered for both human
 
 It serves as a programmable bridge to Unity—offering a focused CLI/TUI (Terminal User Interface) for developers who prefer keyboard-driven workflows, alongside a robust, schema-driven execution path for LLMs, automations, and autonomous tooling.
 
+At its core, unifocl is designed to be lightweight and highly adaptable. It provides a reliable foundation of essential editing tools out of the box, while making it incredibly easy for developers to create custom commands. Instead of bundling a massive, one-size-fits-all toolset, unifocl empowers you to build exactly what your unique project needs. This streamlined approach keeps your workflow clean, prevents unnecessary LLM context consumption, and ensures your MCP server schemas stay lightning-fast and token-efficient.
+
 unifocl is an independent project and is not associated with, affiliated with, or endorsed by Unity Technologies.
 
 ## Features
@@ -14,6 +16,9 @@ Built to provide a unified operational model for both humans and machines, unifo
 - **Dual-Interface Navigation:** Context-aware environments (Hierarchy, Project, Inspector) accessible via a clean Spectre.Console TUI for humans, or as structured state dumps for agent context windows.
 - **Deterministic Manipulation:** Command-driven file and object operations guarded by transactional safety and dry-run capabilities, ensuring predictability for both manual inputs and machine execution.
 - **Native Agentic Tooling:** Built-in MCP (Model Context Protocol) server mode, strict JSON/YAML response envelopes, and concurrent worktree orchestration designed for multi-agent workflows.
+- **Lean & Token-Efficient:** By keeping the core API surface streamlined and focused on essential project operations, unifocl preserves precious LLM context windows. This minimizes MCP server token consumption, ensuring your AI agents remain fast, highly focused, and cost-effective.
+- **Highly Customizable Tools:** Every Unity project is unique, so unifocl is built to be easily extended. Developers can seamlessly expose their own C# editor methods as live MCP tools simply by adding the [UnifoclCommand] attribute. This allows you to effortlessly tailor the toolset to exactly match your team's needs. Custom tools are dynamically discovered via `get_categories` / `load_category` / `unload_category` and support the full dry-run sandbox automatically. See [`docs/custom-commands.md`](docs/custom-commands.md).
+- **Zero-Touch Compilation:** After deploying editor scripts, unifocl automatically triggers Unity recompilation without requiring manual window focus. OS-level window activation and `CompilationPipeline.RequestScriptCompilation()` are combined so new tools are available immediately. Configurable for CI/headless runners. See [`docs/editor-compilation.md`](docs/editor-compilation.md).
 
 ## Installation
 
@@ -32,7 +37,7 @@ brew install unifocl
 
 ### Winget (Windows)
 
-Winget submission is currently pending approval in the community repository ([Pull Request #350729](https://github.com/microsoft/winget-pkgs/pull/350729)).
+Winget submission is currently planned for submission.
 
 After approval, install with:
 
@@ -103,6 +108,11 @@ These commands manage your session, project loading, and configuration. In the i
 - MCP command lookup tools are exposed by the built-in server so agents can discover usage without reading full docs:
     - `ListCommands(scope, query, limit)`
     - `LookupCommand(command, scope)`
+- **Custom tool category tools** allow agents to discover and load user-defined `[UnifoclCommand]` methods on demand:
+    - `get_categories()` — list available tool categories from the project manifest
+    - `load_category(name)` — register a category's tools as live MCP tools (`tools/list_changed` is fired)
+    - `unload_category(name)` — remove a category's tools from the active list
+    - Full guide: [`docs/custom-commands.md`](docs/custom-commands.md)
 - MCP server architecture + agent JSON configuration guide:
     - `docs/mcp-server-architecture.md`
     - Quick multi-client setup helper: `scripts/setup-mcp-agents.sh`
@@ -185,6 +195,7 @@ Both human operators and AI agents can validate mutations safely before executio
 - `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`)
 - `Inspector` mutations (`set`, `toggle`, `component add/remove`, `make`, `remove`, `rename`, `move`)
 - `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`)
+- **Custom `[UnifoclCommand]` tools** — pass `dryRun: true` in the tool arguments; unifocl wraps the call in a Unity Undo group and reverts all in-memory and AssetDatabase changes automatically (see [`docs/custom-commands.md`](docs/custom-commands.md))
 
 Behavior:
 

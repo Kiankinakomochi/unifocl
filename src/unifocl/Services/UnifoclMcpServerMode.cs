@@ -1,11 +1,78 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 
 internal static class UnifoclMcpServerMode
 {
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    internal static readonly JsonSerializerOptions _jsonOpts = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Forwards a custom tool call to the running Unity daemon via HTTP.
+    /// Resolves the daemon port from the runtime registry.
+    /// </summary>
+    internal static async Task<string> ForwardToUnityAsync(string toolName, string argsJson, bool dryRun, CancellationToken ct)
+    {
+        // Try host-mode registry first ($CWD/.unifocl-runtime/daemons/)
+        var runtimeRoot = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
+        var runtime = new DaemonRuntime(runtimeRoot);
+        var daemon = runtime.GetAll().FirstOrDefault();
+
+        // Fall back to bridge-mode session file (<projectPath>/.unifocl/daemon.session.json)
+        if (daemon is null)
+        {
+            var projectPath = UnifoclManifestService.ResolveActiveProjectPath();
+            if (!string.IsNullOrEmpty(projectPath))
+            {
+                var sessionFile = Path.Combine(projectPath, ".unifocl", "daemon.session.json");
+                if (File.Exists(sessionFile))
+                {
+                    try
+                    {
+                        var sessionJson = await File.ReadAllTextAsync(sessionFile, ct);
+                        var session = JsonSerializer.Deserialize<DaemonSessionInfo>(sessionJson);
+                        if (session is not null)
+                            daemon = new DaemonInstance(session.Port, 0, DateTime.UtcNow, null, false, projectPath, DateTime.UtcNow);
+                    }
+                    catch { /* ignore malformed session file */ }
+                }
+            }
+        }
+
+        if (daemon is null)
+        {
+            return $"{{\"ok\":false,\"message\":\"no active unifocl daemon found\"}}";
+        }
+
+        var payload = new
+        {
+            operation = "execute_custom_tool",
+            tool = toolName,
+            args = argsJson,
+            dryRun
+        };
+
+        var json = JsonSerializer.Serialize(payload, _jsonOpts);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var url = $"http://127.0.0.1:{daemon.Port}/mcp/unifocl_project_command";
+
+        try
+        {
+            var response = await _http.PostAsync(url, content, ct);
+            return await response.Content.ReadAsStringAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            return $"{{\"ok\":false,\"message\":\"{ex.Message.Replace("\"", "'")}\"}}";
+        }
+    }
+
     public static bool IsRequested(string[] args)
     {
         return args.Any(static arg =>
@@ -27,12 +94,21 @@ internal static class UnifoclMcpServerMode
         {
             options.LogToStandardErrorThreshold = LogLevel.Trace;
         });
+        builder.Services.AddSingleton<UnifoclManifestService>();
         builder.Services
             .AddMcpServer()
             .WithStdioServerTransport()
             .WithToolsFromAssembly();
 
-        await builder.Build().RunAsync(cancellationToken);
+        var host = builder.Build();
+
+        var projectPath = UnifoclManifestService.ResolveActiveProjectPath();
+        if (!string.IsNullOrEmpty(projectPath))
+        {
+            host.Services.GetRequiredService<UnifoclManifestService>().EnsureLoaded(projectPath);
+        }
+
+        await host.RunAsync(cancellationToken);
     }
 }
 
@@ -360,6 +436,175 @@ public sealed record MutateValidationResult(
     bool Valid,
     List<string> Errors,
     List<MutateValidationItem> Items);
+
+// ── Tool manifest: deferred category loading ──────────────────────────────────
+
+/// <summary>
+/// An MCP server tool dynamically registered from the unifocl manifest.
+/// One instance is created per manifest tool entry when a category is loaded.
+/// </summary>
+internal sealed class ManifestMcpServerTool : McpServerTool
+{
+    private readonly Tool _protocolTool;
+
+    public string CategoryName { get; }
+
+    public override Tool ProtocolTool => _protocolTool;
+    public override IReadOnlyList<object> Metadata => [];
+
+    public ManifestMcpServerTool(UnifoclToolManifest tool, string categoryName)
+    {
+        CategoryName = categoryName;
+        _protocolTool = new Tool
+        {
+            Name = tool.Name,
+            Description = tool.Description,
+            InputSchema = tool.InputSchema
+        };
+    }
+
+    public override async ValueTask<CallToolResult> InvokeAsync(
+        RequestContext<CallToolRequestParams> ctx, CancellationToken ct)
+    {
+        var arguments = ctx.Params?.Arguments;
+        var dryRun = false;
+
+        // Extract dryRun from the args dict before forwarding — it is a transport-level
+        // flag, not a user-declared parameter, so it must not appear in argsJson.
+        Dictionary<string, JsonElement>? filteredArgs = null;
+        if (arguments is not null)
+        {
+            if (arguments.TryGetValue("dryRun", out var dryRunElement)
+                && dryRunElement.ValueKind == JsonValueKind.True)
+            {
+                dryRun = true;
+            }
+
+            // Strip dryRun from the forwarded args so the user method doesn't receive it
+            // as an unexpected named parameter.
+            filteredArgs = new Dictionary<string, JsonElement>(arguments.Count, StringComparer.Ordinal);
+            foreach (var kv in arguments)
+            {
+                if (!string.Equals(kv.Key, "dryRun", StringComparison.Ordinal))
+                {
+                    filteredArgs[kv.Key] = kv.Value;
+                }
+            }
+        }
+
+        var argsJson = filteredArgs is not null
+            ? JsonSerializer.Serialize(filteredArgs, UnifoclMcpServerMode._jsonOpts)
+            : "{}";
+
+        var result = await UnifoclMcpServerMode.ForwardToUnityAsync(ProtocolTool.Name, argsJson, dryRun, ct);
+        return new CallToolResult { Content = [new TextContentBlock { Text = result }] };
+    }
+}
+
+[McpServerToolType]
+public static class UnifoclCategoryTools
+{
+    [McpServerTool, Description(
+        "Returns all tool categories available in the unifocl manifest for the active Unity project. " +
+        "Call this first to discover which categories exist before calling load_category.")]
+    public static GetCategoriesResult GetCategories(McpServer server, UnifoclManifestService manifest)
+    {
+        if (!manifest.IsManifestLoaded)
+        {
+            manifest.EnsureLoaded(UnifoclManifestService.ResolveActiveProjectPath());
+        }
+
+        var infos = manifest.GetCategoryInfos();
+        var categories = new List<CategoryInfo>(infos.Count);
+        foreach (var (name, toolCount, active) in infos)
+        {
+            categories.Add(new CategoryInfo(name, toolCount, active));
+        }
+
+        return new GetCategoriesResult(manifest.IsManifestLoaded, categories);
+    }
+
+    [McpServerTool, Description(
+        "Loads a tool category from the unifocl manifest, registering all tools in that category " +
+        "as live MCP tools. The MCP client will receive a tools/list_changed notification. " +
+        "Call get_categories first to discover available category names.")]
+    public static LoadCategoryResult LoadCategory(
+        [Description("Exact category name as returned by get_categories.")] string categoryName,
+        McpServer server,
+        UnifoclManifestService manifest)
+    {
+        if (!manifest.IsManifestLoaded)
+        {
+            manifest.EnsureLoaded(UnifoclManifestService.ResolveActiveProjectPath());
+        }
+
+        var wasAdded = manifest.LoadCategory(categoryName);
+        if (!wasAdded)
+        {
+            var infos = manifest.GetCategoryInfos();
+            var exists = false;
+            foreach (var info in infos)
+            {
+                if (string.Equals(info.Name, categoryName, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (!exists)
+            {
+                return new LoadCategoryResult(false, $"category '{categoryName}' not found in manifest", 0);
+            }
+
+            return new LoadCategoryResult(true, $"category '{categoryName}' was already loaded", 0);
+        }
+
+        var tools = manifest.GetToolsForCategory(categoryName);
+        var added = 0;
+        foreach (var tool in tools)
+        {
+            var mcpTool = new ManifestMcpServerTool(tool, categoryName);
+            server.ServerOptions.ToolCollection!.TryAdd(mcpTool);
+            added++;
+        }
+
+        return new LoadCategoryResult(true, $"category '{categoryName}' loaded: {added} tool(s) registered", added);
+    }
+
+    [McpServerTool, Description(
+        "Unloads a tool category, removing all its tools from the active MCP tool list. " +
+        "The MCP client will receive a tools/list_changed notification.")]
+    public static UnloadCategoryResult UnloadCategory(
+        [Description("Exact category name to unload.")] string categoryName,
+        McpServer server,
+        UnifoclManifestService manifest)
+    {
+        var wasRemoved = manifest.UnloadCategory(categoryName);
+        if (!wasRemoved)
+        {
+            return new UnloadCategoryResult(false, $"category '{categoryName}' was not loaded", 0);
+        }
+
+        var toRemove = server.ServerOptions.ToolCollection!
+            .ToArray()
+            .OfType<ManifestMcpServerTool>()
+            .Where(t => string.Equals(t.CategoryName, categoryName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var tool in toRemove)
+        {
+            server.ServerOptions.ToolCollection!.Remove(tool);
+        }
+
+        return new UnloadCategoryResult(true, $"category '{categoryName}' unloaded: {toRemove.Count} tool(s) removed", toRemove.Count);
+    }
+}
+
+public sealed record CategoryInfo(string Name, int ToolCount, bool Active);
+public sealed record GetCategoriesResult(bool ManifestLoaded, List<CategoryInfo> Categories);
+public sealed record LoadCategoryResult(bool Ok, string Message, int ToolsAdded);
+public sealed record UnloadCategoryResult(bool Ok, string Message, int ToolsRemoved);
 
 // ── Agentic workflow guide tool ───────────────────────────────────────────────
 
