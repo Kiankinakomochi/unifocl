@@ -19,11 +19,32 @@ internal static class UnifoclMcpServerMode
     /// </summary>
     internal static async Task<string> ForwardToUnityAsync(string toolName, string argsJson, bool dryRun, CancellationToken ct)
     {
-        var runtimeRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".unifocl-runtime");
+        // Try host-mode registry first ($CWD/.unifocl-runtime/daemons/)
+        var runtimeRoot = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
         var runtime = new DaemonRuntime(runtimeRoot);
         var daemon = runtime.GetAll().FirstOrDefault();
+
+        // Fall back to bridge-mode session file (<projectPath>/.unifocl/daemon.session.json)
+        if (daemon is null)
+        {
+            var projectPath = UnifoclManifestService.ResolveActiveProjectPath();
+            if (!string.IsNullOrEmpty(projectPath))
+            {
+                var sessionFile = Path.Combine(projectPath, ".unifocl", "daemon.session.json");
+                if (File.Exists(sessionFile))
+                {
+                    try
+                    {
+                        var sessionJson = await File.ReadAllTextAsync(sessionFile, ct);
+                        var session = JsonSerializer.Deserialize<DaemonSessionInfo>(sessionJson);
+                        if (session is not null)
+                            daemon = new DaemonInstance(session.Port, 0, DateTime.UtcNow, null, false, projectPath, DateTime.UtcNow);
+                    }
+                    catch { /* ignore malformed session file */ }
+                }
+            }
+        }
+
         if (daemon is null)
         {
             return $"{{\"ok\":false,\"message\":\"no active unifocl daemon found\"}}";

@@ -16,6 +16,13 @@ namespace UniFocl.EditorBridge
         static UnifoclManifestGenerator()
         {
             CompilationPipeline.compilationFinished += OnCompilationFinished;
+            // Regenerate immediately on every domain reload.
+            // This eliminates the "needs two compiles" race where compilationFinished
+            // fires before [InitializeOnLoad] runs, so the first compile never writes
+            // the manifest. Running here guarantees the manifest is always fresh after
+            // any recompile, at the cost of one extra generation per domain reload
+            // (fast: reflection-only scan + file write).
+            GenerateManifest();
         }
 
         private static void OnCompilationFinished(object _)

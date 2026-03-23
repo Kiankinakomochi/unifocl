@@ -18,6 +18,7 @@ Built to provide a unified operational model for both humans and machines, unifo
 - **Native Agentic Tooling:** Built-in MCP (Model Context Protocol) server mode, strict JSON/YAML response envelopes, and concurrent worktree orchestration designed for multi-agent workflows.
 - **Lean & Token-Efficient:** By keeping the core API surface streamlined and focused on essential project operations, unifocl preserves precious LLM context windows. This minimizes MCP server token consumption, ensuring your AI agents remain fast, highly focused, and cost-effective.
 - **Highly Customizable Tools:** Every Unity project is unique, so unifocl is built to be easily extended. Developers can seamlessly expose their own C# editor methods as live MCP tools simply by adding the [UnifoclCommand] attribute. This allows you to effortlessly tailor the toolset to exactly match your team's needs. Custom tools are dynamically discovered via `get_categories` / `load_category` / `unload_category` and support the full dry-run sandbox automatically. See [`docs/custom-commands.md`](docs/custom-commands.md).
+- **Zero-Touch Compilation:** After deploying editor scripts, unifocl automatically triggers Unity recompilation without requiring manual window focus. OS-level window activation and `CompilationPipeline.RequestScriptCompilation()` are combined so new tools are available immediately. Configurable for CI/headless runners. See [`docs/editor-compilation.md`](docs/editor-compilation.md).
 
 ## Installation
 
