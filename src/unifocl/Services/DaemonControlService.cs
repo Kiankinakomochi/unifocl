@@ -146,7 +146,8 @@ internal sealed class DaemonControlService
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
         var execRegistry = new ExecCommandRegistry();
         var execApproval = new ExecApprovalService();
-        var execRouter = new ExecOperationRouter(execRegistry, execApproval);
+        var execSessions = new ExecSessionService();
+        var execRouter = new ExecOperationRouter(execRegistry, execApproval, execSessions);
 
         runtime.Upsert(state);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

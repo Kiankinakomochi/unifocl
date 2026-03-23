@@ -8,12 +8,14 @@ internal sealed class ExecOperationRouter
 {
     private readonly ExecCommandRegistry _registry;
     private readonly ExecApprovalService _approval;
+    private readonly ExecSessionService _sessions;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public ExecOperationRouter(ExecCommandRegistry registry, ExecApprovalService approval)
+    public ExecOperationRouter(ExecCommandRegistry registry, ExecApprovalService approval, ExecSessionService sessions)
     {
         _registry = registry;
         _approval = approval;
+        _sessions = sessions;
     }
 
     public ExecV2Response Route(ExecV2Request request, ProjectDaemonBridge projectBridge)
@@ -21,6 +23,12 @@ internal sealed class ExecOperationRouter
         if (string.IsNullOrWhiteSpace(request.RequestId))
         {
             return Rejected("", "requestId is required");
+        }
+
+        // session.* operations are handled inline — no approval required
+        if (request.Operation.StartsWith("session.", StringComparison.OrdinalIgnoreCase))
+        {
+            return HandleSessionOperation(request);
         }
 
         // approval.confirm is a special meta-operation that consumes a pending ticket
@@ -37,14 +45,22 @@ internal sealed class ExecOperationRouter
         _registry.TryGetRisk(request.Operation, out var risk);
         var intent = request.Intent ?? new ExecV2Intent();
 
+        // Touch session activity if provided
+        if (!string.IsNullOrWhiteSpace(request.SessionId))
+        {
+            _sessions.Touch(request.SessionId);
+        }
+
         // If an approval token is already supplied, validate and execute
         if (!string.IsNullOrWhiteSpace(intent.ApprovalToken))
         {
             return ExecuteWithApprovalToken(request, intent, projectBridge);
         }
 
-        // Gate destructive/privileged operations behind approval
-        if (_approval.IsApprovalRequired(risk))
+        // Gate destructive/privileged operations behind approval.
+        // safe_write is allowed without approval when the session is trusted.
+        var sessionTrusted = _sessions.IsTrusted(request.SessionId);
+        if (_approval.IsApprovalRequired(risk, sessionTrusted))
         {
             var argsJson = request.Args.HasValue ? request.Args.Value.GetRawText() : null;
             var token = _approval.CreatePendingApproval(request.RequestId, request.Operation, argsJson);
@@ -57,6 +73,61 @@ internal sealed class ExecOperationRouter
         }
 
         return Dispatch(request, intent.DryRun, projectBridge);
+    }
+
+    private ExecV2Response HandleSessionOperation(ExecV2Request request)
+    {
+        switch (request.Operation.ToLowerInvariant())
+        {
+            case "session.open":
+            {
+                var projectPath = GetString(request.Args, "projectPath") ?? string.Empty;
+                var runtimeType = GetString(request.Args, "runtimeType");
+                var session = _sessions.Open(projectPath, runtimeType);
+                return new ExecV2Response(
+                    ExecV2Status.Completed,
+                    request.RequestId,
+                    Message: $"session opened",
+                    Result: new { session.SessionId, session.ProjectPath, session.RuntimeType, session.Trusted });
+            }
+
+            case "session.close":
+            {
+                var targetId = GetString(request.Args, "sessionId") ?? request.SessionId ?? string.Empty;
+                var closed = _sessions.Close(targetId);
+                return new ExecV2Response(
+                    ExecV2Status.Completed,
+                    request.RequestId,
+                    Message: closed ? "session closed" : "session not found");
+            }
+
+            case "session.status":
+            {
+                var targetId = GetString(request.Args, "sessionId") ?? request.SessionId ?? string.Empty;
+                var session = _sessions.Get(targetId);
+                if (session is null)
+                {
+                    return new ExecV2Response(ExecV2Status.Completed, request.RequestId, Message: "session not found");
+                }
+
+                return new ExecV2Response(
+                    ExecV2Status.Completed,
+                    request.RequestId,
+                    Message: "session active",
+                    Result: new
+                    {
+                        session.SessionId,
+                        session.ProjectPath,
+                        session.RuntimeType,
+                        session.Trusted,
+                        OpenedAtUtc = session.OpenedAtUtc.ToString("O"),
+                        LastActivityUtc = session.LastActivityUtc.ToString("O")
+                    });
+            }
+
+            default:
+                return Rejected(request.RequestId, $"unknown session operation: {request.Operation}");
+        }
     }
 
     private ExecV2Response ExecuteWithApprovalToken(

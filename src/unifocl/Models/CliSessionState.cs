@@ -17,6 +17,8 @@ internal sealed class CliSessionState
     public CliMode Mode { get; set; } = CliMode.Boot;
     public CliContextMode ContextMode { get; set; } = CliContextMode.None;
     public int? AttachedPort { get; set; }
+    /// <summary>ExecV2 session identifier. Replaces AttachedPort-based session tracking (Sprint 4 migration target).</summary>
+    public string? SessionId { get; set; }
     public string? CurrentProjectPath { get; set; }
     public DateTimeOffset? LastOpenedUtc { get; set; }
     public string FocusPath { get; set; } = "/Player";
@@ -36,6 +38,7 @@ internal sealed class CliSessionState
         Mode = CliMode.Boot;
         ContextMode = CliContextMode.None;
         AttachedPort = null;
+        SessionId = null;
         CurrentProjectPath = null;
         LastOpenedUtc = null;
         FocusPath = "/Player";
