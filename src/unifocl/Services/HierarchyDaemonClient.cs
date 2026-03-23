@@ -16,7 +16,10 @@ internal sealed class HierarchyDaemonClient
     private static readonly TimeSpan MutationPollBackoff = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan MutationPollMaxInterval = TimeSpan.FromMilliseconds(800);
     private const int SceneLoadRetryCount = 1;
-    private static readonly IProjectMutationTransport HttpMutationTransport = new HttpProjectMutationTransport();
+
+    // Sprint 3/4.5: IExecTransportClient replaces the private IProjectMutationTransport.
+    // Defaulting to HttpExecTransportClient; future sprints can inject UdsExecTransportClient.
+    internal static IExecTransportClient MutationTransport = new HttpExecTransportClient();
 
     public async Task<HierarchySnapshotDto?> GetSnapshotAsync(int port)
     {
@@ -126,7 +129,7 @@ internal sealed class HierarchyDaemonClient
             ? SceneLoadTimeout
             : (isBuildDispatch ? TimeSpan.FromSeconds(20) : (isUpmMutation ? UpmMutationTimeout : TimeSpan.FromSeconds(90)));
 
-        var durable = await HttpMutationTransport.ExecuteAsync(port, requestWithId, timeout, onStatus);
+        var durable = await MutationTransport.ExecuteProjectCommandAsync(port, requestWithId, timeout, onStatus);
         if (durable is not null)
         {
             return durable;
@@ -240,7 +243,7 @@ internal sealed class HierarchyDaemonClient
         }
     }
 
-    private static async Task<ProjectCommandResponseDto?> ExecuteDurableMutationOverHttpAsync(
+    internal static async Task<ProjectCommandResponseDto?> ExecuteDurableMutationOverHttpAsync(
         int port,
         ProjectCommandRequestDto request,
         TimeSpan timeout,
@@ -608,27 +611,6 @@ internal sealed class HierarchyDaemonClient
         catch
         {
             return null;
-        }
-    }
-
-    private interface IProjectMutationTransport
-    {
-        Task<ProjectCommandResponseDto?> ExecuteAsync(
-            int port,
-            ProjectCommandRequestDto request,
-            TimeSpan timeout,
-            Action<string>? onStatus);
-    }
-
-    private sealed class HttpProjectMutationTransport : IProjectMutationTransport
-    {
-        public Task<ProjectCommandResponseDto?> ExecuteAsync(
-            int port,
-            ProjectCommandRequestDto request,
-            TimeSpan timeout,
-            Action<string>? onStatus)
-        {
-            return ExecuteDurableMutationOverHttpAsync(port, request, timeout, onStatus);
         }
     }
 

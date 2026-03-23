@@ -135,6 +135,26 @@
 
 ---
 
+### ✅ Sprint 4.5: Sprint 3 残作業 — Transport Client 完成 (Sprint 5 前提条件)
+**ブランチ**: `feature/exec-v2-sprint4-session-migration` (Sprint 4 コミットに追加)
+
+**背景**: Sprint 3 で `IExecTransportClient` インターフェースは作成されたが、具体実装と
+`HierarchyDaemonClient` の移行が未完了だった。Sprint 5 の HTTP Opt-in 化の前提として完了させる。
+
+**完了タスク**:
+1. `HttpExecTransportClient.cs` 追加 (`Transport/` フォルダ)
+   - `IExecTransportClient` の具体実装
+   - `HierarchyDaemonClient.ExecuteDurableMutationOverHttpAsync` に委譲
+2. `HierarchyDaemonClient` 更新:
+   - private `IProjectMutationTransport` / `HttpProjectMutationTransport` を削除
+   - `internal static IExecTransportClient MutationTransport = new HttpExecTransportClient()` に置換
+   - `ExecuteDurableMutationOverHttpAsync` を `internal static` に変更
+
+**今後の展開**: Unity 側が UDS に対応したら `UdsExecTransportClient` を実装し、
+`HierarchyDaemonClient.MutationTransport` を差し替えるだけで CLI→Unity の transport が切り替わる。
+
+---
+
 ### 🔲 Sprint 5: HTTP Opt-in 化
 - `--unsafe-http` フラグ以外では HttpListener 起動しない
 - `UNIFOCL_LEGACY_EXEC=1` フラグ削除 (CommandText 実行コード除去)
