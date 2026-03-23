@@ -92,18 +92,66 @@
 
 ---
 
-### 🔲 Sprint 3: Transport 抽象化
-**タスク**:
-- `HierarchyDaemonClient.cs` 内の private `IProjectMutationTransport` を `src/unifocl/Services/Transport/` に昇格
-- `IExecTransportServer.cs`, `IExecTransportClient.cs`, `IExecRequestContext.cs` 作成
-- DaemonControlService / CLIDaemon の HttpListener を1層ラップ
-- UDS (Unix Domain Socket) server/client を `Transport/Uds/` に追加
+### ✅ Sprint 3: Transport 抽象化
+**ブランチ**: `feature/exec-v2-sprint3-transport`
+**PR**: #126
+
+**追加ファイル**:
+- `src/unifocl/Services/Transport/IExecRequestContext.cs`
+- `src/unifocl/Services/Transport/IExecTransportClient.cs`
+- `src/unifocl/Services/Transport/IExecTransportServer.cs`
+- `src/unifocl/Services/Transport/HttpExecRequestContext.cs`
+- `src/unifocl/Services/Transport/HttpExecTransportServer.cs`
+- `src/unifocl/Services/Transport/Uds/UdsExecRequestContext.cs`
+- `src/unifocl/Services/Transport/Uds/UdsExecTransportServer.cs`
 
 ---
 
-### 🔲 Sprint 4: Session 移行完了
-- `CliSessionState.AttachedPort` deprecated 化、`SessionId` 主キー化
-- orphan cleanup 実装
+### ✅ Sprint 4: Session 移行完了
+**ブランチ**: `feature/exec-v2-sprint4-session-migration`
+
+**完了タスク**:
+1. `CliSessionState.AttachedPort` に `[Obsolete]` 追加 — Sprint 5 で削除予定
+2. `ExecSession` レコードに `Port` (int?) フィールド追加
+3. `ExecSessionService` に port ベースのメソッド追加:
+   - `OpenForPort(port, projectPath)` — port に紐づくセッションを開く (既存は置換)
+   - `CloseByPort(port)` — port に紐づくセッションを閉じる
+   - `GetByPort(port)` — port からセッションを検索
+4. `ExecSessionService` にオーファンクリーンアップ実装:
+   - `CleanupOrphans(TimeSpan maxIdle)` メソッド
+   - バックグラウンドタイマー (5分間隔、30分アイドルで削除)
+   - `IDisposable` 実装
+5. `DaemonControlService` を更新:
+   - `_sessionService` をフィールドに昇格 (旧: `RunDaemonServiceAsync` のローカル変数)
+   - `SetAttachedPort(session, port, projectPath)` ヘルパー追加 — `AttachedPort` + `SessionId` を同期
+   - `ClearAttachedPort(session)` ヘルパー追加 — `AttachedPort` + `SessionId` をクリア
+   - 全 `session.AttachedPort = port` / `session.AttachedPort = null` をヘルパー経由に統一
+   - `#pragma warning disable CS0618` を追加 (移行中ファイルのため)
+
+**変更ファイル**:
+- `src/unifocl/Models/CliSessionState.cs` (AttachedPort に `[Obsolete]`)
+- `src/unifocl/Services/ExecSessionService.cs` (Port フィールド、port 系メソッド、orphan cleanup)
+- `src/unifocl/Services/DaemonControlService.cs` (`_sessionService` フィールド化、sync helpers)
+
+---
+
+### ✅ Sprint 4.5: Sprint 3 残作業 — Transport Client 完成 (Sprint 5 前提条件)
+**ブランチ**: `feature/exec-v2-sprint4-session-migration` (Sprint 4 コミットに追加)
+
+**背景**: Sprint 3 で `IExecTransportClient` インターフェースは作成されたが、具体実装と
+`HierarchyDaemonClient` の移行が未完了だった。Sprint 5 の HTTP Opt-in 化の前提として完了させる。
+
+**完了タスク**:
+1. `HttpExecTransportClient.cs` 追加 (`Transport/` フォルダ)
+   - `IExecTransportClient` の具体実装
+   - `HierarchyDaemonClient.ExecuteDurableMutationOverHttpAsync` に委譲
+2. `HierarchyDaemonClient` 更新:
+   - private `IProjectMutationTransport` / `HttpProjectMutationTransport` を削除
+   - `internal static IExecTransportClient MutationTransport = new HttpExecTransportClient()` に置換
+   - `ExecuteDurableMutationOverHttpAsync` を `internal static` に変更
+
+**今後の展開**: Unity 側が UDS に対応したら `UdsExecTransportClient` を実装し、
+`HierarchyDaemonClient.MutationTransport` を差し替えるだけで CLI→Unity の transport が切り替わる。
 
 ---
 

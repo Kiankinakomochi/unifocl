@@ -1,3 +1,6 @@
+// Sprint 4: AttachedPort is deprecated — this file is the active migration site.
+// Suppress CS0618 here; other callers should NOT use AttachedPort directly.
+#pragma warning disable CS0618
 using Spectre.Console;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -16,6 +19,7 @@ internal sealed class DaemonControlService
     private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
     private static readonly HttpClient Http = new();
     private DaemonStartupFailure? _lastStartupFailure;
+    private readonly ExecSessionService _sessionService = new();
 
     public async Task HandleDaemonCommandAsync(
         string input,
@@ -146,8 +150,7 @@ internal sealed class DaemonControlService
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
         var execRegistry = new ExecCommandRegistry();
         var execApproval = new ExecApprovalService();
-        var execSessions = new ExecSessionService();
-        var execRouter = new ExecOperationRouter(execRegistry, execApproval, execSessions);
+        var execRouter = new ExecOperationRouter(execRegistry, execApproval, _sessionService);
 
         runtime.Upsert(state);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -600,7 +603,7 @@ internal sealed class DaemonControlService
                 {
                     log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} responds to ping but project commands are unresponsive; restarting bridge");
                     await TrySendControlAsync(port, "STOP", "STOPPING");
-                    session.AttachedPort = null;
+                    ClearAttachedPort(session);
                     await Task.Delay(200);
                 }
             }
@@ -622,7 +625,7 @@ internal sealed class DaemonControlService
 
                 log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} is attachable but unmanaged; restarting in managed Host mode");
                 await TrySendControlAsync(port, "STOP", "STOPPING");
-                session.AttachedPort = null;
+                ClearAttachedPort(session);
                 await Task.Delay(200);
             }
         }
@@ -701,7 +704,7 @@ internal sealed class DaemonControlService
             }
         }
 
-        session.AttachedPort = port;
+        SetAttachedPort(session, port, projectPath);
         await TrySendControlAsync(port, "TOUCH", "OK");
         var projectCommandReadyTimeout = ResolveStartupTimeout(startupTimeout);
         var projectCommandReadyAfterStart = await WaitForProjectCommandReadyAsync(
@@ -728,7 +731,7 @@ internal sealed class DaemonControlService
             }
 
             runtime.Remove(port);
-            session.AttachedPort = null;
+            ClearAttachedPort(session);
             return false;
         }
 
@@ -847,7 +850,7 @@ internal sealed class DaemonControlService
         {
             if (await TrySendControlAsync(port, "PING", "PONG"))
             {
-                session.AttachedPort = port;
+                SetAttachedPort(session, port, projectPath);
                 await TrySendControlAsync(port, "TOUCH", "OK");
                 return true;
             }
@@ -896,7 +899,7 @@ internal sealed class DaemonControlService
             runtime.Remove(port);
             if (session.AttachedPort == port)
             {
-                session.AttachedPort = null;
+                ClearAttachedPort(session);
             }
 
             return true;
@@ -936,7 +939,7 @@ internal sealed class DaemonControlService
         runtime.Remove(target.Port);
         if (session.AttachedPort == target.Port)
         {
-            session.AttachedPort = null;
+            ClearAttachedPort(session);
         }
 
         return true;
@@ -1131,7 +1134,7 @@ internal sealed class DaemonControlService
 
                     log($"[yellow]daemon[/]: existing Bridge mode endpoint on port {projectPort} responds to ping but project commands are unresponsive; restarting");
                     await TrySendControlAsync(projectPort, "STOP", "STOPPING");
-                    session.AttachedPort = null;
+                    ClearAttachedPort(session);
                     await Task.Delay(200);
                 }
                 else
@@ -1308,7 +1311,7 @@ internal sealed class DaemonControlService
 
             if (session.AttachedPort == attachedPort)
             {
-                session.AttachedPort = null;
+                ClearAttachedPort(session);
             }
 
             log($"[grey]daemon[/]: stopped attached endpoint on port {attachedPort}");
@@ -1376,7 +1379,7 @@ internal sealed class DaemonControlService
             hasLiveAttachedOnly = await TrySendControlAsync(attachedPortProbe, "PING", "PONG");
             if (!hasLiveAttachedOnly)
             {
-                session.AttachedPort = null;
+                ClearAttachedPort(session);
             }
         }
 
@@ -1432,7 +1435,7 @@ internal sealed class DaemonControlService
             }
             else
             {
-                session.AttachedPort = null;
+                ClearAttachedPort(session);
                 log($"[yellow]daemon[/]: detached stale session from port {attachedPort} (endpoint not responding)");
             }
         }
@@ -1467,7 +1470,8 @@ internal sealed class DaemonControlService
             return;
         }
 
-        session.AttachedPort = port;
+        var attachProjectPath = runtime.GetByPort(port)?.ProjectPath ?? session.CurrentProjectPath ?? string.Empty;
+        SetAttachedPort(session, port, attachProjectPath);
         var known = runtime.GetByPort(port);
         if (known is null)
         {
@@ -1487,8 +1491,39 @@ internal sealed class DaemonControlService
         }
 
         var detachedPort = session.AttachedPort.Value;
-        session.AttachedPort = null;
+        ClearAttachedPort(session);
         log($"[green]daemon[/]: detached from port {detachedPort}; daemon kept running");
+    }
+
+    // ── Session / AttachedPort sync helpers ──────────────────────────────────
+    // Sprint 4: keep SessionId in sync with AttachedPort transitions.
+    // Sprint 5 will remove AttachedPort entirely.
+
+    /// <summary>
+    /// Sets <see cref="CliSessionState.AttachedPort"/> and opens (or replaces) the
+    /// corresponding <see cref="ExecSession"/> so <see cref="CliSessionState.SessionId"/>
+    /// stays up-to-date.
+    /// </summary>
+    private void SetAttachedPort(CliSessionState session, int port, string projectPath)
+    {
+        session.AttachedPort = port;
+        var s = _sessionService.OpenForPort(port, projectPath);
+        session.SessionId = s.SessionId;
+    }
+
+    /// <summary>
+    /// Clears <see cref="CliSessionState.AttachedPort"/> and closes the associated
+    /// <see cref="ExecSession"/> so <see cref="CliSessionState.SessionId"/> is cleared too.
+    /// </summary>
+    private void ClearAttachedPort(CliSessionState session)
+    {
+        if (session.AttachedPort is int port)
+        {
+            _sessionService.CloseByPort(port);
+        }
+
+        session.AttachedPort = null;
+        session.SessionId = null;
     }
 
     private static DaemonInstance? ResolveTargetDaemon(DaemonRuntime runtime, CliSessionState session)
@@ -2071,7 +2106,7 @@ internal sealed class DaemonControlService
 
             if (await TrySendControlAsync(port, "PING", "PONG"))
             {
-                session.AttachedPort = port;
+                SetAttachedPort(session, port, projectPath);
                 await TrySendControlAsync(port, "TOUCH", "OK");
                 var readyAfterAttach = await WaitForProjectCommandReadyAsync(
                     port,
