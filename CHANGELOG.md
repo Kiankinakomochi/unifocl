@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.1.0 - 2026-03-23
+
+### Added
+- Officialized `2.1.0` by closing the development cycle suffix.
+- Added `/mutate` batch mutation command for agentic workflows:
+  - accepts a JSON array of mutation ops; infers hierarchy vs. inspector context per-op without mode switching
+  - hierarchy ops (`create`, `rename`, `remove`, `move`, `toggle_active`) route directly to `HierarchyDaemonClient`
+  - inspector ops (`add_component`, `remove_component`, `set_field`, `toggle_field`, `toggle_component`) route directly to the `/inspect` HTTP endpoint
+  - snapshot-based path resolver converts `/Canvas/Panel` style paths to node IDs without a prior `inspect` call
+  - snapshot lazily loaded; invalidated automatically after structural mutations
+  - supports `--dry-run` and `--continue-on-error` flags
+- Added MCP discoverability tools in `UnifoclMcpServerMode`:
+  - `GetMutateSchema` — complete op reference with field definitions, path format, and response shape; no `/help` calls needed
+  - `ValidateMutateBatch` — validates a JSON batch and returns per-op diagnostics without executing
+  - `GetAgentWorkflowGuide` — documents `--session-seed`, `--mode`, `--format`, and all exec flags for zero-friction agentic onboarding
+
 ## 1.5.0 - 2026-03-23
 
 ### Changed
