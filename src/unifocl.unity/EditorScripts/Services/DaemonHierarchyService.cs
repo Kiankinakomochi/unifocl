@@ -240,30 +240,59 @@ namespace UniFocl.EditorBridge
                     : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
                 var undoGroup = Undo.GetCurrentGroup();
                 Undo.SetCurrentGroupName("unifocl hierarchy dry-run");
+
+                // Capture which scenes were already dirty before the dry-run so we can
+                // restore clean scenes that Undo.RevertAllDownToGroup leaves dirty.
+                var (preDryRunScenes, preDryRunDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();
+
+                string? failedPayload = null;
+                HierarchyCommandResponse? successParsed = null;
+                string? afterJson = null;
+
                 try
                 {
-                    using var dryRunScope = DaemonDryRunContext.Enter();
-                    var responsePayload = ExecuteCommandCore(request);
-                    var parsed = JsonUtility.FromJson<HierarchyCommandResponse>(responsePayload);
-                    if (parsed is null || !parsed.ok)
+                    // Use an explicit using-block (not `using var`) so the dry-run scope
+                    // exits before the scene-restore call below, which needs IsActive = false
+                    // to allow EditorSceneManager.SaveScene to write through.
+                    using (DaemonDryRunContext.Enter())
                     {
-                        Undo.RevertAllDownToGroup(undoGroup);
-                        _snapshotVersion = beforeSnapshotVersion;
-                        _lastSnapshotHash = beforeHash;
-                        _hasSnapshotHash = beforeHasHash;
-                        return responsePayload;
+                        var responsePayload = ExecuteCommandCore(request);
+                        var parsed = JsonUtility.FromJson<HierarchyCommandResponse>(responsePayload);
+                        if (parsed is null || !parsed.ok)
+                        {
+                            Undo.RevertAllDownToGroup(undoGroup);
+                            _snapshotVersion = beforeSnapshotVersion;
+                            _lastSnapshotHash = beforeHash;
+                            _hasSnapshotHash = beforeHasHash;
+                            failedPayload = responsePayload;
+                        }
+                        else
+                        {
+                            afterJson = snapshotTarget is null
+                                ? BuildSnapshotPayload()
+                                : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+                            Undo.RevertAllDownToGroup(undoGroup);
+                            _snapshotVersion = beforeSnapshotVersion;
+                            _lastSnapshotHash = beforeHash;
+                            _hasSnapshotHash = beforeHasHash;
+                            successParsed = parsed;
+                        }
                     }
 
-                    var afterJson = snapshotTarget is null
-                        ? BuildSnapshotPayload()
-                        : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
-                    Undo.RevertAllDownToGroup(undoGroup);
-                    _snapshotVersion = beforeSnapshotVersion;
-                    _lastSnapshotHash = beforeHash;
-                    _hasSnapshotHash = beforeHasHash;
-                    parsed.message = "dry-run preview";
-                    parsed.content = DaemonDryRunDiffService.BuildJsonDiffPayload("hierarchy mutation preview", beforeJson, afterJson);
-                    return JsonUtility.ToJson(parsed);
+                    // DaemonDryRunContext.IsActive is now false — safe to save scenes.
+                    // Saves scenes that became dirty as a side-effect of the undo, and for
+                    // UVC-controlled (read-only) scenes performs checkout → save → revert so
+                    // no spurious VCS checkout is left for the user to clean up manually.
+                    DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(preDryRunScenes, preDryRunDirty);
+
+                    if (failedPayload is not null)
+                    {
+                        return failedPayload;
+                    }
+
+                    successParsed!.message = "dry-run preview";
+                    successParsed.content = DaemonDryRunDiffService.BuildJsonDiffPayload("hierarchy mutation preview", beforeJson, afterJson!);
+                    return JsonUtility.ToJson(successParsed);
                 }
                 catch (Exception ex)
                 {
@@ -271,6 +300,9 @@ namespace UniFocl.EditorBridge
                     _snapshotVersion = beforeSnapshotVersion;
                     _lastSnapshotHash = beforeHash;
                     _hasSnapshotHash = beforeHasHash;
+                    // The using-block disposes the scope before the catch runs, so
+                    // IsActive is already false here — safe to call RestorePreviouslyCleanScenes.
+                    DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(preDryRunScenes, preDryRunDirty);
                     return JsonUtility.ToJson(new HierarchyCommandResponse
                     {
                         ok = false,

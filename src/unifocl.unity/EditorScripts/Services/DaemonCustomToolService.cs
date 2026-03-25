@@ -70,6 +70,9 @@ namespace UniFocl.EditorBridge
             Undo.IncrementCurrentGroup();
             Undo.SetCurrentGroupName($"[unifocl dry-run] {toolName}");
 
+            // Capture scene dirty states before the dry-run so we can restore them afterwards.
+            var (preDryRunScenes, preDryRunDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();
+
             // Enter the ambient dry-run context so any built-in unifocl services
             // (e.g. DaemonScenePersistenceService) also suppress their durable writes.
             IDisposable dryRunScope = DaemonDryRunContext.Enter();
@@ -89,6 +92,8 @@ namespace UniFocl.EditorBridge
                 Undo.RevertAllDownToGroup(undoGroupBefore);
                 AssetDatabase.Refresh();
                 dryRunScope.Dispose();
+                // IsActive is now false — safe to restore scene dirty state.
+                DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(preDryRunScenes, preDryRunDirty);
                 return ErrorResponse($"tool execution failed during dry-run: {msg}");
             }
             finally
@@ -99,10 +104,16 @@ namespace UniFocl.EditorBridge
             }
 
             // Revert all Unity Undo-tracked changes made inside the group.
+            // At this point IsActive is already false (finally ran above), so scene saves
+            // are no longer blocked by DaemonDryRunAssetModificationProcessor.
             Undo.RevertAllDownToGroup(undoGroupBefore);
 
             // Resync the asset database to a clean state after the undo.
             AssetDatabase.Refresh();
+
+            // Clear any dirty flag left on scenes that were clean before the dry-run.
+            // For UVC-controlled (read-only) scenes this issues checkout → save → revert.
+            DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(preDryRunScenes, preDryRunDirty);
 
             var summary = $"Dry-run of '{toolName}' completed. Unity Undo-tracked changes were reverted. " +
                           "Raw file I/O (System.IO) is not guaranteed to have been prevented.";
