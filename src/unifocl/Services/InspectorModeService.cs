@@ -2900,6 +2900,14 @@ internal sealed class InspectorModeService
             };
         }
 
+        // JsonUtility.FromJson (Unity side) deserializes JSON null as 0 for int fields,
+        // but the Unity-side sentinel for "no component index specified" is -1.
+        // Normalize null → -1 here so Unity's ResolveComponent falls through to name lookup.
+        if (request.ComponentIndex is null)
+        {
+            request = request with { ComponentIndex = -1 };
+        }
+
         for (var attempt = 0; attempt < 3; attempt++)
         {
             try
