@@ -8,7 +8,7 @@ description: >
 
 Before any edits or worktree actions, run this one-shot bootstrap command from the repository root:
 
-1. `src/unifocl/scripts/agent-worktree.sh setup --worktree-path . --branch claude/<task-name>`
+1. `src/unifocl/scripts/agent-worktree.sh setup --worktree-path . --branch <agent-name>/<task-name>`
 2. This command automatically:
    - Creates/switches to the requested branch from `origin/main`
    - Syncs and initializes submodules recursively
@@ -37,7 +37,7 @@ The agent must treat the following as **non-negotiable principles**:
 - **Editor Change Validation:** When changing any code under `/Editor` (for example `src/unifocl.unity/EditorScripts/**`), run compatcheck before finalizing:
   - `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
   - Preferred bootstrap command (one-shot AGENT setup including compatcheck):
-    - `src/unifocl/scripts/agent-worktree.sh setup --worktree-path . --branch claude/<task-name>`
+    - `src/unifocl/scripts/agent-worktree.sh setup --worktree-path . --branch <agent-name>/<task-name>`
   - If branch/setup is already complete and only compatcheck paths need refresh:
     - `src/unifocl/scripts/agent-worktree-compatcheck-update.sh --project-path .local/compatcheck-benchmark --write-local-config --run-compatcheck`
   - The setup command writes local-only artifacts:

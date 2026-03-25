@@ -250,7 +250,7 @@ jobs:
 
           dotnet tool install --global wingetcreate
 
-          wingetcreate update Kiankinakomochi.unifocl \
+          wingetcreate update KinichiAnjuMakino.unifocl \
             --version "${version}" \
             --urls "${installer_url}" \
             --token "${WINGET_TOKEN}" \
