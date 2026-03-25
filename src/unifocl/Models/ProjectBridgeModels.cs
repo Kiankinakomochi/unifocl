@@ -50,6 +50,13 @@ internal sealed record BuildLogChunkDto(
     long NextOffset,
     List<BuildLogLineDto> Lines);
 
+internal sealed record CompileStatusDto(
+    bool Running,
+    bool Succeeded,
+    string[] Errors,
+    string? StartedAtUtc,
+    string? FinishedAtUtc);
+
 internal sealed record BuildLogLineDto(
     string Level,
     string Text);

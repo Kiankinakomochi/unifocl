@@ -15,6 +15,9 @@ internal sealed class ExecCommandRegistry
         ["build.scenes.set"]    = ExecRiskLevel.SafeWrite,
         // package management
         ["upm.remove"]          = ExecRiskLevel.DestructiveWrite,
+        // compile operations
+        ["compile.request"]     = ExecRiskLevel.SafeWrite,
+        ["compile.status"]      = ExecRiskLevel.SafeRead,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         // meta
@@ -155,6 +158,18 @@ internal sealed class ExecCommandRegistry
                 var base_ = new ProjectCommandRequestDto("upm-remove", null, null, content, req.RequestId);
                 var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
                 dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "compile.request":
+            {
+                dto = new ProjectCommandRequestDto("compile-request", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "compile.status":
+            {
+                dto = new ProjectCommandRequestDto("compile-status", null, null, null, req.RequestId);
                 return true;
             }
 

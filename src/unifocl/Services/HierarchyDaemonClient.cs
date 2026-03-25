@@ -219,6 +219,24 @@ internal sealed class HierarchyDaemonClient
         }
     }
 
+    public async Task<CompileStatusDto?> GetCompileStatusAsync(int port)
+    {
+        var payload = await SendGetAsync($"http://127.0.0.1:{port}/compile/status", BuildStatusTimeout);
+        if (payload is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<CompileStatusDto>(payload, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static bool IsMcpTransportEnabledByPolicy()
     {
         return false;
