@@ -2,6 +2,10 @@
 
 ## 2.4.0 - 2026-03-26
 
+### CI
+- **WinGet publish job now runs on `windows-latest`**: `wingetcreate` is a Windows-only tool; the step was moved out of the `release` (ubuntu-latest) job into a dedicated `winget` job that depends on `release`.
+- **`workflow_dispatch` trigger with `version` input**: allows manual republishing of Homebrew and WinGet for a given version (e.g. `2.4.0`) when publishing fails post-release. Binary build and GitHub Release creation are skipped on manual dispatch.
+
 ### Added
 - **`reload_manifest` MCP tool**: force-reloads the tool manifest from disk even if already loaded. Call after Unity recompiles with new `[UnifoclCommand]` methods to pick up the updated tool list without restarting the MCP server.
 - **`get_categories` hint**: when no project is open, `get_categories` now returns a `hint` field containing actionable instructions (`exec '/open <path>'` then call `get_categories` again), eliminating the silent `ManifestLoaded: false` dead end.
