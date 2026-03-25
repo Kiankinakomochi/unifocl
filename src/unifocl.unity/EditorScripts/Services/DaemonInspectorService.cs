@@ -227,16 +227,7 @@ namespace UniFocl.EditorBridge
         {
             return request.action switch
             {
-                "add-component" => (() =>
-                {
-                    var addOk = TryAddComponent(request.targetPath, request.componentName, out var addError, out var addedIndex);
-                    return new InspectorMutationResponse
-                    {
-                        ok = addOk,
-                        message = addOk ? string.Empty : (addError ?? "add component failed"),
-                        assignedIndex = addedIndex
-                    };
-                })(),
+                "add-component" => ExecuteAddComponent(request.targetPath, request.componentName),
                 "remove-component" => BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError),
                 "toggle-component" => BuildMutationResponse(
                     ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
@@ -252,6 +243,17 @@ namespace UniFocl.EditorBridge
                     ok = false,
                     message = $"unsupported inspector action for mutation core: {request.action}"
                 }
+            };
+        }
+
+        private static InspectorMutationResponse ExecuteAddComponent(string targetPath, string componentName)
+        {
+            var addOk = TryAddComponent(targetPath, componentName, out var addError, out var addedIndex);
+            return new InspectorMutationResponse
+            {
+                ok = addOk,
+                message = addOk ? string.Empty : (addError ?? "add component failed"),
+                assignedIndex = addedIndex
             };
         }
 

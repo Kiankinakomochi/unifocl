@@ -610,8 +610,12 @@ namespace UniFocl.EditorBridge
                     SceneManager.MoveGameObjectToScene(created, parentScene);
                 }
 
-                Undo.SetTransformParent(created.transform, parentTransform, "unifocl create hierarchy object");
+                // Check uniqueness BEFORE parenting: GetUniqueNameForSibling inspects existing
+                // siblings of parentTransform. If called after parenting, the newly added object
+                // is already in the sibling list and the name appears "taken", causing Unity to
+                // append " (1)" even when no conflict exists.
                 created.name = GameObjectUtility.GetUniqueNameForSibling(parentTransform, created.name);
+                Undo.SetTransformParent(created.transform, parentTransform, "unifocl create hierarchy object");
                 return created;
             }
 
