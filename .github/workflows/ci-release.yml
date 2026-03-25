@@ -231,3 +231,27 @@ jobs:
           git -C "${formula_repo_dir}" add Formula/unifocl.rb
           git -C "${formula_repo_dir}" commit -m "unifocl ${version}"
           git -C "${formula_repo_dir}" push origin HEAD:main
+
+      - name: Publish to WinGet
+        if: steps.version.outputs.skip == 'false'
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${WINGET_TOKEN:-}" ]]; then
+            echo "WINGET_TOKEN is not set; skipping winget publish."
+            exit 0
+          fi
+
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          installer_url="https://github.com/Kiankinakomochi/unifocl/releases/download/${tag}/unifocl-${version}-win-x64.zip"
+
+          dotnet tool install --global wingetcreate
+
+          wingetcreate update KinichiAnjuMakino.unifocl \
+            --version "${version}" \
+            --urls "${installer_url}" \
+            --token "${WINGET_TOKEN}" \
+            --submit
