@@ -24,6 +24,16 @@ internal static class UnifoclMcpServerMode
         var runtime = new DaemonRuntime(runtimeRoot);
         var daemon = runtime.GetAll().FirstOrDefault();
 
+        // Fall back to global registry (~/.unifocl-runtime) when MCP is launched outside the project CWD
+        if (daemon is null)
+        {
+            var globalRuntimeRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".unifocl-runtime");
+            var globalRuntime = new DaemonRuntime(globalRuntimeRoot);
+            daemon = globalRuntime.GetAll().FirstOrDefault();
+        }
+
         // Fall back to bridge-mode session file (<projectPath>/.unifocl/daemon.session.json)
         if (daemon is null)
         {
@@ -521,7 +531,17 @@ public static class UnifoclCategoryTools
             categories.Add(new CategoryInfo(name, toolCount, active));
         }
 
-        return new GetCategoriesResult(manifest.IsManifestLoaded, categories);
+        string? hint = null;
+        if (!manifest.IsManifestLoaded)
+        {
+            hint = "No manifest loaded. Open a Unity project first: " +
+                   "exec '/open <project-path>' --agentic --project <project-path>, " +
+                   "then call get_categories again. " +
+                   "If a project is already open and you added new [UnifoclCommand] methods, " +
+                   "call reload_manifest after Unity finishes recompiling.";
+        }
+
+        return new GetCategoriesResult(manifest.IsManifestLoaded, categories, hint);
     }
 
     [McpServerTool, Description(
@@ -599,12 +619,38 @@ public static class UnifoclCategoryTools
 
         return new UnloadCategoryResult(true, $"category '{categoryName}' unloaded: {toRemove.Count} tool(s) removed", toRemove.Count);
     }
+
+    [McpServerTool, Description(
+        "Force-reloads the tool manifest from disk for the active Unity project, " +
+        "even if the manifest was already loaded. " +
+        "Call this after Unity recompiles (e.g. you added a new [UnifoclCommand] method) " +
+        "to pick up the updated tool list. Returns updated category and tool counts.")]
+    public static ReloadManifestResult ReloadManifest(McpServer server, UnifoclManifestService manifest)
+    {
+        var projectPath = UnifoclManifestService.ResolveActiveProjectPath();
+        if (string.IsNullOrEmpty(projectPath))
+            return new ReloadManifestResult(false,
+                "No active project path found. Open a project first via exec '/open <path>' --agentic --project <path>.",
+                0, 0);
+
+        manifest.ForceReload(projectPath);
+
+        var infos = manifest.GetCategoryInfos();
+        var totalTools = 0;
+        foreach (var (_, toolCount, _) in infos) totalTools += toolCount;
+
+        return new ReloadManifestResult(
+            manifest.IsManifestLoaded,
+            $"Manifest reloaded: {infos.Count} category/categories, {totalTools} tool(s) available.",
+            infos.Count, totalTools);
+    }
 }
 
 public sealed record CategoryInfo(string Name, int ToolCount, bool Active);
-public sealed record GetCategoriesResult(bool ManifestLoaded, List<CategoryInfo> Categories);
+public sealed record GetCategoriesResult(bool ManifestLoaded, List<CategoryInfo> Categories, string? Hint = null);
 public sealed record LoadCategoryResult(bool Ok, string Message, int ToolsAdded);
 public sealed record UnloadCategoryResult(bool Ok, string Message, int ToolsRemoved);
+public sealed record ReloadManifestResult(bool Ok, string Message, int CategoryCount, int TotalTools);
 
 // ── Agentic workflow guide tool ───────────────────────────────────────────────
 
@@ -646,7 +692,28 @@ public static class UnifoclAgentWorkflowTools
             "hierarchy": "TUI-only. Contextual commands (rm/rn/mv) do NOT execute in agentic exec. Use inspector mode or /mutate instead."
           },
           "session_storage": ".unifocl-runtime/agentic/sessions/<seed>.json (relative to CWD or project root)",
-          "ansi_note": "Some responses prefix JSON with ANSI screen-clear codes. Strip with: sed 's/\\x1b\\[[0-9;]*[mJKH]//g' or find first '{' index before parsing."
+          "ansi_note": "Some responses prefix JSON with ANSI screen-clear codes. Strip with: sed 's/\\x1b\\[[0-9;]*[mJKH]//g' or find first '{' index before parsing.",
+          "custom_commands": {
+            "description": "Custom tools defined with [UnifoclCommand] on static C# methods in Unity editor scripts.",
+            "discovery_flow": [
+              "1. Call get_categories — returns available categories in the loaded manifest.",
+              "2. Call load_category with the category name — registers those tools as live MCP tools.",
+              "3. The tools are now directly callable as MCP tools."
+            ],
+            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then load_category again for new categories.",
+            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first."
+          },
+          "command_discovery": {
+            "description": "Use list_commands and lookup_command to explore all built-in unifocl commands without reading the README.",
+            "list_commands": {
+              "scope_root": "list_commands(scope='root') — lifecycle commands: /open, /close, /init, /new, /clone, /build, /upm, /mutate, /dump, etc.",
+              "scope_project": "list_commands(scope='project') — project-mode commands: mk, load, rm, rn, set, upm, build, etc.",
+              "scope_inspector": "list_commands(scope='inspector') — inspector-mode commands: set, toggle, comp add/remove, etc.",
+              "query": "list_commands(query='build') — filter by keyword across all scopes."
+            },
+            "lookup_command": "lookup_command('/open') — exact match + fuzzy fallback; returns signature and description for the best match.",
+            "when_to_use": "Call list_commands(scope='root') at session start to understand available lifecycle commands before issuing exec calls."
+          }
         }
         """;
 
