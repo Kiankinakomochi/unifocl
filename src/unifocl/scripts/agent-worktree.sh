@@ -113,21 +113,23 @@ resolve_unity_version() {
         return 0
     fi
 
-    local detected=""
-    detected="$(
+    # Walk candidates newest-first; skip incomplete installs missing UnityEditor.dll.
+    local candidate
+    while IFS= read -r candidate; do
+        local ver
+        ver="$(basename "$candidate")"
+        if [[ -f "/Applications/Unity/Hub/Editor/${ver}/Unity.app/Contents/Managed/UnityEditor.dll" ]]; then
+            echo "$ver"
+            return 0
+        fi
+    done < <(
         ls -d /Applications/Unity/Hub/Editor/* 2>/dev/null \
             | sed -E 's#.*/##' \
             | sort -V \
-            | tail -n 1 || true
-    )"
+            | tail -r
+    )
 
-    if [ -n "$detected" ]; then
-        echo "$detected"
-        return 0
-    fi
-
-    # Deterministic fallback when Unity Hub is not available in the environment.
-    echo "6000.0.0f1"
+    die "no valid Unity installation found under /Applications/Unity/Hub/Editor (UnityEditor.dll missing in all candidates). Set UNITY_EDITOR_VERSION or install Unity."
 }
 
 bump_cli_version_dev_cycle() {
