@@ -126,7 +126,15 @@ namespace UniFocl.EditorBridge
                         });
 
                     case "add-component":
-                        return JsonUtility.ToJson(BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError));
+                    {
+                        var addOk = TryAddComponent(request.targetPath, request.componentName, out var addError, out var addedIndex);
+                        return JsonUtility.ToJson(new InspectorMutationResponse
+                        {
+                            ok = addOk,
+                            message = addOk ? string.Empty : (addError ?? "add component failed"),
+                            assignedIndex = addedIndex
+                        });
+                    }
 
                     case "remove-component":
                         return JsonUtility.ToJson(BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
@@ -219,7 +227,16 @@ namespace UniFocl.EditorBridge
         {
             return request.action switch
             {
-                "add-component" => BuildMutationResponse(TryAddComponent(request.targetPath, request.componentName, out var addError), addError),
+                "add-component" => (() =>
+                {
+                    var addOk = TryAddComponent(request.targetPath, request.componentName, out var addError, out var addedIndex);
+                    return new InspectorMutationResponse
+                    {
+                        ok = addOk,
+                        message = addOk ? string.Empty : (addError ?? "add component failed"),
+                        assignedIndex = addedIndex
+                    };
+                })(),
                 "remove-component" => BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError),
                 "toggle-component" => BuildMutationResponse(
                     ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
@@ -640,9 +657,10 @@ namespace UniFocl.EditorBridge
             return false;
         }
 
-        private static bool TryAddComponent(string? targetPath, string? componentTypeToken, out string? error)
+        private static bool TryAddComponent(string? targetPath, string? componentTypeToken, out string? error, out int componentIndex)
         {
             error = null;
+            componentIndex = -1;
             var target = ResolveTarget(targetPath);
             if (target is null)
             {
@@ -682,6 +700,17 @@ namespace UniFocl.EditorBridge
             DaemonScenePersistenceService.RecordPrefabInstanceMutation(target);
             DaemonScenePersistenceService.RecordPrefabInstanceMutation(added);
             DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", target.scene);
+
+            var components = target.GetComponents<Component>();
+            for (var i = 0; i < components.Length; i++)
+            {
+                if (components[i] == added)
+                {
+                    componentIndex = i;
+                    break;
+                }
+            }
+
             return true;
         }
 

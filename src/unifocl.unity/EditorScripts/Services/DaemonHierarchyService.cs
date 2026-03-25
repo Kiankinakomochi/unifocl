@@ -447,7 +447,8 @@ namespace UniFocl.EditorBridge
                 ok = true,
                 message = count <= 1 ? $"created {normalizedType}" : $"created {normalizedType} x{count}",
                 nodeId = lastCreated.GetInstanceID(),
-                isActive = lastCreated.activeSelf
+                isActive = lastCreated.activeSelf,
+                assignedName = lastCreated.name
             });
         }
 
@@ -905,7 +906,8 @@ namespace UniFocl.EditorBridge
                     ok = true,
                     message = "unchanged",
                     nodeId = target.GetInstanceID(),
-                    isActive = target.activeSelf
+                    isActive = target.activeSelf,
+                    assignedName = target.name
                 });
             }
 
@@ -917,7 +919,8 @@ namespace UniFocl.EditorBridge
                 ok = true,
                 message = "renamed",
                 nodeId = target.GetInstanceID(),
-                isActive = target.activeSelf
+                isActive = target.activeSelf,
+                assignedName = target.name
             });
         }
 
@@ -958,7 +961,8 @@ namespace UniFocl.EditorBridge
                     ok = true,
                     message = "moved",
                     nodeId = target.GetInstanceID(),
-                    isActive = target.activeSelf
+                    isActive = target.activeSelf,
+                    assignedName = target.name
                 });
             }
 
@@ -991,7 +995,8 @@ namespace UniFocl.EditorBridge
                 ok = true,
                 message = "moved",
                 nodeId = target.GetInstanceID(),
-                isActive = target.activeSelf
+                isActive = target.activeSelf,
+                assignedName = target.name
             });
         }
 

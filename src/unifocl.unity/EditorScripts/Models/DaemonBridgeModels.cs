@@ -73,6 +73,13 @@ namespace UniFocl.EditorBridge
         public int nodeId;
         public bool isActive;
         public string content = string.Empty;
+        /// <summary>
+        /// The name Unity actually assigned to the affected object.
+        /// Populated for create, rename, and move ops.
+        /// May differ from the requested name when Unity's duplicate-name
+        /// resolution appends " (1)", " (2)", etc.
+        /// </summary>
+        public string assignedName = string.Empty;
     }
 
     [Serializable]
@@ -171,6 +178,14 @@ namespace UniFocl.EditorBridge
         public bool ok;
         public string message = string.Empty;
         public string content = string.Empty;
+        /// <summary>
+        /// The 0-based index of the component in the target object's component list.
+        /// Populated only for successful add_component ops; -1 otherwise.
+        /// Agents should use this index for subsequent set_field / toggle_component
+        /// calls instead of relying on the component type name, which is ambiguous
+        /// when the same component type appears more than once.
+        /// </summary>
+        public int assignedIndex = -1;
     }
 
     [Serializable]

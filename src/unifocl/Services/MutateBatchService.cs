@@ -146,7 +146,7 @@ internal sealed class MutateBatchService
             new HierarchyCommandRequestDto("mk", parentId, null, op.Name, false, op.Type, op.Count ?? 1));
 
         return response.Ok
-            ? new MutateOpResult(index, op.Op, op.Parent ?? "/", true, null, response.NodeId)
+            ? new MutateOpResult(index, op.Op, op.Parent ?? "/", true, null, response.NodeId, response.AssignedName)
             : Fail(index, op, response.Message);
     }
 
@@ -172,7 +172,9 @@ internal sealed class MutateBatchService
         var response = await _hierarchyClient.ExecuteAsync(port,
             new HierarchyCommandRequestDto("rename", null, node.Id, op.Name, false));
 
-        return response.Ok ? Ok(index, op) : Fail(index, op, response.Message);
+        return response.Ok
+            ? new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, AssignedName: response.AssignedName)
+            : Fail(index, op, response.Message);
     }
 
     private async Task<MutateOpResult> ExecuteRemoveAsync(
@@ -218,7 +220,9 @@ internal sealed class MutateBatchService
         var response = await _hierarchyClient.ExecuteAsync(port,
             new HierarchyCommandRequestDto("mv", parentId, targetNode.Id, null, false));
 
-        return response.Ok ? Ok(index, op) : Fail(index, op, response.Message);
+        return response.Ok
+            ? new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, AssignedName: response.AssignedName)
+            : Fail(index, op, response.Message);
     }
 
     private async Task<MutateOpResult> ExecuteToggleActiveAsync(
@@ -296,9 +300,13 @@ internal sealed class MutateBatchService
         try
         {
             var response = JsonSerializer.Deserialize<InspectorBatchMutationResponse>(responseJson, JsonOptions);
-            return response?.Ok == true
-                ? Ok(index, op)
-                : Fail(index, op, response?.Message ?? "inspector mutation failed");
+            if (response?.Ok != true)
+            {
+                return Fail(index, op, response?.Message ?? "inspector mutation failed");
+            }
+
+            var addedComponentIndex = bridgeAction == "add-component" ? response.AssignedIndex : null;
+            return new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, ComponentIndex: addedComponentIndex);
         }
         catch
         {
@@ -441,6 +449,14 @@ internal sealed class MutateBatchService
             if (r.Ok)
             {
                 var extra = r.CreatedId.HasValue ? $" id={r.CreatedId.Value}" : string.Empty;
+                if (r.AssignedName is not null)
+                {
+                    extra += $" name=\"{r.AssignedName}\"";
+                }
+                if (r.ComponentIndex.HasValue)
+                {
+                    extra += $" index={r.ComponentIndex.Value}";
+                }
                 log($"  [green]+[/]  {r.Op} {r.Target}{extra}");
             }
             else
@@ -532,5 +548,9 @@ internal sealed class MutateBatchService
         string? EnabledValue = null,
         MutationIntentDto? Intent = null);
 
-    private sealed record InspectorBatchMutationResponse(bool Ok, string? Message, string? Content);
+    private sealed record InspectorBatchMutationResponse(
+        bool Ok,
+        string? Message,
+        string? Content,
+        [property: JsonPropertyName("assignedIndex")] int? AssignedIndex = null);
 }

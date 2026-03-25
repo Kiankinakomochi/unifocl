@@ -68,7 +68,21 @@ internal sealed record MutateOpResult(
     [property: JsonPropertyOrder(3)] string? Target,
     [property: JsonPropertyOrder(4)] bool Ok,
     [property: JsonPropertyOrder(5)] string? Message = null,
-    [property: JsonPropertyOrder(6)] int? CreatedId = null);
+    [property: JsonPropertyOrder(6)] int? CreatedId = null,
+    /// <summary>
+    /// The name Unity actually assigned to the object after create / rename / move.
+    /// May differ from the requested name when Unity's sibling-deduplication
+    /// appends " (1)", " (2)", etc. Always use this value — not the requested name —
+    /// when referencing the object as a parent or target in subsequent ops.
+    /// </summary>
+    [property: JsonPropertyOrder(7)] string? AssignedName = null,
+    /// <summary>
+    /// For add_component: the 0-based index of the newly added component in the
+    /// target object's component list. Use this in subsequent set_field /
+    /// toggle_component ops (e.g. "component": "3") instead of the type name to
+    /// avoid ambiguity when the same component type appears more than once.
+    /// </summary>
+    [property: JsonPropertyOrder(8)] int? ComponentIndex = null);
 
 internal sealed record MutateBatchResult(
     [property: JsonPropertyOrder(1)] bool AllOk,
