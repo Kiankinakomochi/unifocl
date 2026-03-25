@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.4.0 - 2026-03-26
+
+### CI
+- **WinGet publish job now runs on `windows-latest`**: `wingetcreate` is a Windows-only tool; the step was moved out of the `release` (ubuntu-latest) job into a dedicated `winget` job that depends on `release`.
+- **`workflow_dispatch` trigger with `version` input**: allows manual republishing of Homebrew and WinGet for a given version (e.g. `2.4.0`) when publishing fails post-release. Binary build and GitHub Release creation are skipped on manual dispatch.
+
+### Added
+- **`reload_manifest` MCP tool**: force-reloads the tool manifest from disk even if already loaded. Call after Unity recompiles with new `[UnifoclCommand]` methods to pick up the updated tool list without restarting the MCP server.
+- **`get_categories` hint**: when no project is open, `get_categories` now returns a `hint` field containing actionable instructions (`exec '/open <path>'` then call `get_categories` again), eliminating the silent `ManifestLoaded: false` dead end.
+- **Workflow guide `custom_commands` section**: `get_agent_workflow_guide` now includes a `custom_commands` key documenting the full `get_categories` → `load_category` → call flow, the `reload_manifest` step after recompile, and the open-project prerequisite.
+- **Workflow guide `command_discovery` section**: `get_agent_workflow_guide` now includes a `command_discovery` key documenting `list_commands` and `lookup_command` so agents discover built-in lifecycle commands without reading the README.
+
+### Fixed
+- **Global daemon registry fallback in `ForwardToUnityAsync`**: the MCP server now checks `~/.unifocl-runtime` when no daemon is found in `$CWD/.unifocl-runtime`, fixing custom tool calls when the MCP server is launched by an IDE/agent from an arbitrary working directory outside the project root.
+
 ## 2.3.1 - 2026-03-24
 
 ### Fixed
