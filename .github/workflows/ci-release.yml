@@ -256,7 +256,7 @@ jobs:
   winget:
     name: Publish to WinGet
     needs: release
-    if: needs.release.outputs.skip == 'false'
+    if: needs.release.outputs.skip == 'false' && github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     permissions:
       contents: read
