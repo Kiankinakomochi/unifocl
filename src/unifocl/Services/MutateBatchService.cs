@@ -17,13 +17,13 @@ internal sealed class MutateBatchService
 
     // ── Command entry point ──────────────────────────────────────────────────
 
-    public async Task HandleCommandAsync(string rawInput, CliSessionState session, Action<string> log)
+    public async Task<MutateBatchResult?> HandleCommandAsync(string rawInput, CliSessionState session, Action<string> log)
     {
         if (!TryExtractPayload(rawInput, out var jsonText, out var dryRun, out var continueOnError))
         {
             log("[red]mutate[/]: no JSON payload found — expected /mutate (--dry-run) (--continue-on-error) <json-array>");
             log("[grey]mutate[/]: example: /mutate [[{\"op\":\"create\",\"parent\":\"/\",\"type\":\"canvas\",\"name\":\"MyCanvas\"}]]");
-            return;
+            return null;
         }
 
         List<MutateOp>? ops;
@@ -34,31 +34,29 @@ internal sealed class MutateBatchService
         catch (JsonException ex)
         {
             log($"[red]mutate[/]: JSON parse error — {ex.Message}");
-            return;
+            return null;
         }
 
         if (ops is null || ops.Count == 0)
         {
             log("[yellow]mutate[/]: empty op list");
-            return;
+            return null;
         }
 
         var port = DaemonControlService.GetPort(session);
-        if (port is null)
-        {
-            log("[red]mutate[/]: no attached daemon — open a project first with /open <path>");
-            return;
-        }
+        var projectPath = session.CurrentProjectPath;
 
         using var dryRunScope = CliDryRunScope.Push(dryRun);
-        var result = await ExecuteBatchAsync(port.Value, ops, continueOnError, dryRun);
+        var result = await ExecuteBatchAsync(port, projectPath, ops, continueOnError, dryRun);
         EmitResults(result, log);
+        return result;
     }
 
     // ── Batch execution ──────────────────────────────────────────────────────
 
     private async Task<MutateBatchResult> ExecuteBatchAsync(
-        int port,
+        int? port,
+        string? projectPath,
         List<MutateOp> ops,
         bool continueOnError,
         bool dryRun)
@@ -73,10 +71,17 @@ internal sealed class MutateBatchService
 
             if (needsSnapshot && snapshot is null)
             {
-                snapshot = await _hierarchyClient.GetSnapshotAsync(port);
+                if (port is null)
+                {
+                    results.Add(Fail(i, op, $"{op.Op} requires bridge mode — open a project first with /open <path>"));
+                    if (!continueOnError) break;
+                    continue;
+                }
+
+                snapshot = await _hierarchyClient.GetSnapshotAsync(port.Value);
             }
 
-            var opResult = await ExecuteOpAsync(port, op, i, snapshot);
+            var opResult = await ExecuteOpAsync(port, projectPath, op, i, snapshot);
             results.Add(opResult);
 
             // Invalidate snapshot after structural changes so next path-lookup is fresh.
@@ -103,27 +108,77 @@ internal sealed class MutateBatchService
     // ── Op dispatch ──────────────────────────────────────────────────────────
 
     private async Task<MutateOpResult> ExecuteOpAsync(
-        int port,
+        int? port,
+        string? projectPath,
         MutateOp op,
         int index,
         HierarchySnapshotDto? snapshot)
     {
-        return op.Op.ToLowerInvariant() switch
+        var opLower = op.Op.ToLowerInvariant();
+
+        // set_field on asset files can be handled via host-mode YAML editing without a daemon.
+        if (opLower == "set_field"
+            && IsAssetFilePath(op.Target)
+            && !string.IsNullOrWhiteSpace(projectPath))
         {
-            "create"           => await ExecuteCreateAsync(port, op, index, snapshot),
-            "rename"           => await ExecuteRenameAsync(port, op, index, snapshot),
-            "remove"           => await ExecuteRemoveAsync(port, op, index, snapshot),
-            "move"             => await ExecuteMoveAsync(port, op, index, snapshot),
-            "toggle_active"    => await ExecuteToggleActiveAsync(port, op, index, snapshot),
-            "add_component"    => await ExecuteInspectorAsync(port, op, index, "add-component"),
-            "remove_component" => await ExecuteInspectorAsync(port, op, index, "remove-component"),
-            "set_field"        => await ExecuteInspectorAsync(port, op, index, "set-field"),
-            "toggle_field"     => await ExecuteInspectorAsync(port, op, index, "toggle-field"),
-            "toggle_component" => await ExecuteInspectorAsync(port, op, index, "toggle-component"),
+            return ExecuteHostModeSetField(op, index, projectPath!);
+        }
+
+        // All remaining ops require a running daemon (bridge mode).
+        if (port is null)
+        {
+            return Fail(index, op, $"{op.Op} requires bridge mode — open a project first with /open <path>");
+        }
+
+        return opLower switch
+        {
+            "create"           => await ExecuteCreateAsync(port.Value, op, index, snapshot),
+            "rename"           => await ExecuteRenameAsync(port.Value, op, index, snapshot),
+            "remove"           => await ExecuteRemoveAsync(port.Value, op, index, snapshot),
+            "move"             => await ExecuteMoveAsync(port.Value, op, index, snapshot),
+            "toggle_active"    => await ExecuteToggleActiveAsync(port.Value, op, index, snapshot),
+            "add_component"    => await ExecuteInspectorAsync(port.Value, op, index, "add-component"),
+            "remove_component" => await ExecuteInspectorAsync(port.Value, op, index, "remove-component"),
+            "set_field"        => await ExecuteInspectorAsync(port.Value, op, index, "set-field"),
+            "toggle_field"     => await ExecuteInspectorAsync(port.Value, op, index, "toggle-field"),
+            "toggle_component" => await ExecuteInspectorAsync(port.Value, op, index, "toggle-component"),
             _ => new MutateOpResult(index, op.Op, op.Target, false,
                      $"unknown op '{op.Op}'. Valid: create, rename, remove, move, toggle_active, " +
                      "add_component, remove_component, set_field, toggle_field, toggle_component")
         };
+    }
+
+    private static bool IsAssetFilePath(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) return false;
+        var normalized = target.TrimStart('/');
+        return normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static MutateOpResult ExecuteHostModeSetField(MutateOp op, int index, string projectPath)
+    {
+        int? componentIndex = null;
+        string? componentName = null;
+        if (!string.IsNullOrWhiteSpace(op.Component))
+        {
+            if (int.TryParse(op.Component, out var idx))
+                componentIndex = idx;
+            else
+                componentName = op.Component;
+        }
+
+        var ok = HostModeYamlFieldService.TrySetField(
+            op.Target,
+            componentIndex,
+            componentName,
+            op.Field,
+            op.Value,
+            projectPath,
+            out var error);
+
+        return ok
+            ? new MutateOpResult(index, op.Op, op.Target, true)
+            : Fail(index, op, error ?? "host-mode set-field failed");
     }
 
     // ── Hierarchy ops ────────────────────────────────────────────────────────
@@ -146,7 +201,7 @@ internal sealed class MutateBatchService
             new HierarchyCommandRequestDto("mk", parentId, null, op.Name, false, op.Type, op.Count ?? 1));
 
         return response.Ok
-            ? new MutateOpResult(index, op.Op, op.Parent ?? "/", true, null, response.NodeId)
+            ? new MutateOpResult(index, op.Op, op.Parent ?? "/", true, null, response.NodeId, response.AssignedName)
             : Fail(index, op, response.Message);
     }
 
@@ -172,7 +227,9 @@ internal sealed class MutateBatchService
         var response = await _hierarchyClient.ExecuteAsync(port,
             new HierarchyCommandRequestDto("rename", null, node.Id, op.Name, false));
 
-        return response.Ok ? Ok(index, op) : Fail(index, op, response.Message);
+        return response.Ok
+            ? new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, AssignedName: response.AssignedName)
+            : Fail(index, op, response.Message);
     }
 
     private async Task<MutateOpResult> ExecuteRemoveAsync(
@@ -218,7 +275,9 @@ internal sealed class MutateBatchService
         var response = await _hierarchyClient.ExecuteAsync(port,
             new HierarchyCommandRequestDto("mv", parentId, targetNode.Id, null, false));
 
-        return response.Ok ? Ok(index, op) : Fail(index, op, response.Message);
+        return response.Ok
+            ? new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, AssignedName: response.AssignedName)
+            : Fail(index, op, response.Message);
     }
 
     private async Task<MutateOpResult> ExecuteToggleActiveAsync(
@@ -296,9 +355,13 @@ internal sealed class MutateBatchService
         try
         {
             var response = JsonSerializer.Deserialize<InspectorBatchMutationResponse>(responseJson, JsonOptions);
-            return response?.Ok == true
-                ? Ok(index, op)
-                : Fail(index, op, response?.Message ?? "inspector mutation failed");
+            if (response?.Ok != true)
+            {
+                return Fail(index, op, response?.Message ?? "inspector mutation failed");
+            }
+
+            var addedComponentIndex = bridgeAction == "add-component" ? response.AssignedIndex : null;
+            return new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, ComponentIndex: addedComponentIndex);
         }
         catch
         {
@@ -320,6 +383,14 @@ internal sealed class MutateBatchService
                     request.FieldName,
                     request.Value)
             };
+        }
+
+        // JsonUtility.FromJson (Unity side) deserializes JSON null as 0 for int fields,
+        // but the Unity-side sentinel for "no component index specified" is -1.
+        // Normalize null → -1 here so Unity's ResolveComponent falls through to name lookup.
+        if (request.ComponentIndex is null)
+        {
+            request = request with { ComponentIndex = -1 };
         }
 
         for (var attempt = 0; attempt < 3; attempt++)
@@ -441,6 +512,14 @@ internal sealed class MutateBatchService
             if (r.Ok)
             {
                 var extra = r.CreatedId.HasValue ? $" id={r.CreatedId.Value}" : string.Empty;
+                if (r.AssignedName is not null)
+                {
+                    extra += $" name=\"{r.AssignedName}\"";
+                }
+                if (r.ComponentIndex.HasValue)
+                {
+                    extra += $" index={r.ComponentIndex.Value}";
+                }
                 log($"  [green]+[/]  {r.Op} {r.Target}{extra}");
             }
             else
@@ -532,5 +611,9 @@ internal sealed class MutateBatchService
         string? EnabledValue = null,
         MutationIntentDto? Intent = null);
 
-    private sealed record InspectorBatchMutationResponse(bool Ok, string? Message, string? Content);
+    private sealed record InspectorBatchMutationResponse(
+        bool Ok,
+        string? Message,
+        string? Content,
+        [property: JsonPropertyName("assignedIndex")] int? AssignedIndex = null);
 }

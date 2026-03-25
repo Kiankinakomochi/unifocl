@@ -26,4 +26,5 @@ internal sealed record HierarchyCommandResponseDto(
     string Message,
     int? NodeId,
     [property: JsonPropertyName("isActive")] bool? IsActive,
-    string? Content = null);
+    string? Content = null,
+    [property: JsonPropertyName("assignedName")] string? AssignedName = null);

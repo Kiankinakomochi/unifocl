@@ -45,14 +45,19 @@ resolve_unity_editor_app() {
         return 0
     fi
 
-    local latest
-    latest="$(
+    # Walk candidates newest-first; skip incomplete installs missing UnityEditor.dll.
+    local candidate
+    while IFS= read -r candidate; do
+        if [[ -f "${candidate}/Contents/Managed/UnityEditor.dll" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done < <(
         ls -d /Applications/Unity/Hub/Editor/*/Unity.app 2>/dev/null \
             | sort -V \
-            | tail -n 1 || true
-    )"
-    [[ -n "${latest}" ]] || return 1
-    echo "${latest}"
+            | tail -r
+    )
+    return 1
 }
 
 write_local_config=false
