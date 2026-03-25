@@ -40,6 +40,16 @@ public sealed class UnifoclManifestService
     }
 
     /// <summary>
+    /// Forces a reload of the manifest from disk, bypassing the EnsureLoaded idempotency guard.
+    /// Use after Unity recompiles to pick up newly registered [UnifoclCommand] methods.
+    /// </summary>
+    public void ForceReload(string projectPath)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath)) return;
+        LoadFromProject(projectPath);
+    }
+
+    /// <summary>
     /// Resolves the active Unity project path for the current MCP server session.
     /// Checks the UNIFOCL_UNITY_PROJECT_PATH environment variable first,
     /// then falls back to scanning the daemon runtime registry.
