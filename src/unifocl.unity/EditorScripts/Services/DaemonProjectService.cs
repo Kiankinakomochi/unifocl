@@ -389,7 +389,8 @@ namespace UniFocl.EditorBridge
                 {
                     ok = true,
                     message = "script created",
-                    kind = "script"
+                    kind = "script",
+                    content = assetPath
                 });
             });
         }

@@ -3,6 +3,12 @@ using System.Text.Json;
 internal sealed class InspectorDaemonBridge
 {
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly string? _projectPath;
+
+    public InspectorDaemonBridge(string? projectPath = null)
+    {
+        _projectPath = projectPath;
+    }
 
     public bool TryHandle(string? commandLine, out string response)
     {
@@ -31,7 +37,7 @@ internal sealed class InspectorDaemonBridge
                 "remove-component" => JsonSerializer.Serialize(new { ok = false, message = "inspector component mutation requires Bridge mode" }, _jsonOptions),
                 "toggle-component" => JsonSerializer.Serialize(new { ok = false, message = "inspector component mutation requires Bridge mode" }, _jsonOptions),
                 "toggle-field" => JsonSerializer.Serialize(new { ok = false, message = "inspector field mutation requires Bridge mode" }, _jsonOptions),
-                "set-field" => JsonSerializer.Serialize(new { ok = false, message = "inspector field mutation requires Bridge mode" }, _jsonOptions),
+                "set-field" => HandleSetField(request),
                 _ => JsonSerializer.Serialize(new { ok = false }, _jsonOptions)
             };
             return true;
@@ -41,6 +47,27 @@ internal sealed class InspectorDaemonBridge
             response = JsonSerializer.Serialize(new { ok = false }, _jsonOptions);
             return true;
         }
+    }
+
+    private string HandleSetField(InspectorBridgeRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(_projectPath))
+        {
+            return JsonSerializer.Serialize(new { ok = false, message = "inspector field mutation requires Bridge mode" }, _jsonOptions);
+        }
+
+        var ok = HostModeYamlFieldService.TrySetField(
+            request.TargetPath,
+            request.ComponentIndex,
+            request.ComponentName,
+            request.FieldName,
+            request.Value,
+            _projectPath,
+            out var error);
+
+        return ok
+            ? JsonSerializer.Serialize(new { ok = true }, _jsonOptions)
+            : JsonSerializer.Serialize(new { ok = false, message = error }, _jsonOptions);
     }
 
     private sealed record InspectorBridgeRequest(

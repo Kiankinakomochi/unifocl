@@ -148,7 +148,7 @@ internal sealed class DaemonControlService
         var state = new DaemonInstance(options.Port, pid, startedAtUtc, options.UnityPath, options.Headless, options.ProjectPath, DateTime.UtcNow);
         var hierarchyBridge = new HierarchyDaemonBridge(options.ProjectPath);
         using var assetIndexBridge = new AssetIndexDaemonBridge(options.ProjectPath);
-        var inspectorBridge = new InspectorDaemonBridge();
+        var inspectorBridge = new InspectorDaemonBridge(options.ProjectPath);
         var projectBridge = new ProjectDaemonBridge(options.ProjectPath);
         var execRegistry = new ExecCommandRegistry();
         var approvalStorePath = ResolveApprovalStorePath(options.Port);
