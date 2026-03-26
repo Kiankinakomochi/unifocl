@@ -176,6 +176,33 @@ internal static class CliOneShotExecutionService
                             continue;
                         }
 
+                        if (step.StartsWith("/mutate", StringComparison.OrdinalIgnoreCase)
+                            && session.Mode == CliMode.Project
+                            && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+                        {
+                            var mutatePayload = step.Length > "/mutate".Length
+                                ? $"mutate {step["/mutate".Length..].Trim()}"
+                                : "mutate";
+                            var mutateResult = await projectCommandRouterService.HandleMutateCommandAsync(
+                                mutatePayload,
+                                session,
+                                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+                            if (mutateResult is not null)
+                            {
+                                data = new Dictionary<string, object?>
+                                {
+                                    ["allOk"] = mutateResult.AllOk,
+                                    ["total"] = mutateResult.Total,
+                                    ["succeeded"] = mutateResult.Succeeded,
+                                    ["failed"] = mutateResult.Failed,
+                                    ["dryRun"] = mutateResult.DryRun,
+                                    ["results"] = mutateResult.Results,
+                                };
+                            }
+
+                            continue;
+                        }
+
                         await ExecuteCommandForOneShotAsync(
                             step,
                             commands,

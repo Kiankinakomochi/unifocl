@@ -60,6 +60,7 @@ internal sealed class ProjectCommandRouterService
             return true;
         }
 
+
         var normalizedInput = NormalizeContextualInput(input, session.ContextMode, log);
         if (normalizedInput is null)
         {
@@ -309,4 +310,8 @@ internal sealed class ProjectCommandRouterService
 
         return tokens;
     }
+
+    /// <summary>Returns the structured <see cref="MutateBatchResult"/> so callers can surface it in agentic responses.</summary>
+    public Task<MutateBatchResult?> HandleMutateCommandAsync(string mutatePayload, CliSessionState session, Action<string> log)
+        => _mutateBatchService.HandleCommandAsync(mutatePayload, session, log);
 }

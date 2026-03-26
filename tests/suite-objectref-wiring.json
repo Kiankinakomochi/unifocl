@@ -1,0 +1,63 @@
+{
+  "$schema": "../.codex/testcase.schema.json",
+  "suite": "objectref-wiring",
+  "runner": "dotnet run --project {suite_dir}/../src/unifocl/unifocl.csproj --no-build --",
+  "project": "{suite_dir}/../.local/compatcheck-benchmark",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "bridge-componentindex-null-fix",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"/Canvas/TitleText\",\"component\":\"Text\",\"field\":\"m_Text\",\"value\":\"Hello\"}]",
+          "assert": { ".status": "success", ".data.allOk": true }
+        }
+      ]
+    },
+    {
+      "id": "host-mode-scene-ref",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"Assets/Prefabs/MissionConsole.prefab\",\"component\":\"MissionConsoleUI\",\"field\":\"titleText\",\"value\":\"scene:/Canvas/TitleText\"}]",
+          "assert": { ".status": "success", ".data.allOk": true }
+        }
+      ]
+    },
+    {
+      "id": "host-mode-asset-ref",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"Assets/Prefabs/MissionConsole.prefab\",\"component\":\"MissionConsoleUI\",\"field\":\"icon\",\"value\":\"asset:Assets/Textures/icon.png\"}]",
+          "assert": { ".status": "success", ".data.allOk": true }
+        }
+      ]
+    },
+    {
+      "id": "host-mode-clear-ref",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"Assets/Prefabs/MissionConsole.prefab\",\"component\":\"MissionConsoleUI\",\"field\":\"titleText\",\"value\":null}]",
+          "assert": { ".status": "success", ".data.allOk": true }
+        }
+      ]
+    },
+    {
+      "id": "regression-wrong-component-inspected",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"/Canvas/Button\",\"component\":\"Button\",\"field\":\"m_Interactable\",\"value\":\"false\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".errors | length": 0
+          }
+        }
+      ]
+    }
+  ]
+}

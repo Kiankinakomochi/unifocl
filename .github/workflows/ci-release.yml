@@ -7,6 +7,12 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to republish (e.g. 2.3.1) — skips binary build and GitHub Release creation'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -36,10 +42,14 @@ jobs:
 
   release:
     name: Release (Main)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      skip: ${{ steps.version.outputs.skip }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,6 +67,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            semver="${{ inputs.version }}"
+            tag="v${semver}"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=none" >> "$GITHUB_OUTPUT"
+            echo "version=$semver" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           version_file="src/unifocl/Services/CliVersion.cs"
           major="$(sed -n 's/.*Major = \([0-9]\+\);/\1/p' "$version_file" | head -n1)"
           minor="$(sed -n 's/.*Minor = \([0-9]\+\);/\1/p' "$version_file" | head -n1)"
@@ -100,7 +121,7 @@ jobs:
           echo "tag: ${{ steps.version.outputs.tag }}"
 
       - name: Publish binaries
-        if: steps.version.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -131,7 +152,7 @@ jobs:
           git archive --format=tar.gz --output "$dist/unifocl-${version}.tar.gz" HEAD
 
       - name: Build release notes
-        if: steps.version.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
         id: notes
         shell: bash
         run: |
@@ -160,7 +181,7 @@ jobs:
           echo "file=$notes_file" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        if: steps.version.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -231,3 +252,34 @@ jobs:
           git -C "${formula_repo_dir}" add Formula/unifocl.rb
           git -C "${formula_repo_dir}" commit -m "unifocl ${version}"
           git -C "${formula_repo_dir}" push origin HEAD:main
+
+  winget:
+    name: Publish to WinGet
+    needs: release
+    if: needs.release.outputs.skip == 'false' && github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Publish to WinGet
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host "WINGET_TOKEN is not set; skipping winget publish."
+            exit 0
+          }
+
+          $version = "${{ needs.release.outputs.version }}"
+          $tag = "${{ needs.release.outputs.tag }}"
+          $installerUrl = "https://github.com/Kiankinakomochi/unifocl/releases/download/$tag/unifocl-$version-win-x64.zip"
+
+          $wingetcreate = "$env:TEMP\wingetcreate.exe"
+          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile $wingetcreate
+
+          & $wingetcreate update KinichiAnjuMakino.unifocl `
+            --version $version `
+            --urls $installerUrl `
+            --token $env:WINGET_TOKEN `
+            --submit
