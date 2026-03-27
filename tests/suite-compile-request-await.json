@@ -1,0 +1,151 @@
+{
+  "suite": "compile-request-await",
+  "runner": "dotnet run --no-build --project {suite_dir}/../src/unifocl/unifocl.csproj --",
+  "project": "{suite_dir}/../test-scaffold-compile",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "scaffold-new-project",
+      "steps": [
+        {
+          "cmd": "/new test-scaffold-compile 6000.0.58f1",
+          "assert": {
+            ".meta.exitCode": { "$gte": 0 }
+          }
+        }
+      ]
+    },
+    {
+      "id": "init-scaffolded-project",
+      "steps": [
+        {
+          "cmd": "/init test-scaffold-compile",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "version-reports-v12",
+      "steps": [
+        {
+          "cmd": "/version",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".meta.protocol": "v12"
+          }
+        }
+      ]
+    },
+    {
+      "id": "open-persists-daemon-session",
+      "steps": [
+        {
+          "cmd": "/open test-scaffold-compile",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".meta.extra.sessionSeed": { "$exists": true }
+          }
+        },
+        {
+          "cmd": "/dump project",
+          "assert": {
+            ".meta.extra.sessionRestored": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-create-returns-assigned-name",
+      "steps": [
+        {
+          "cmd": "/open test-scaffold-compile",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"CompileTestObj\"}]",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true,
+            ".data.results[0].createdId": { "$exists": true },
+            ".data.results[0].assignedName": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-rename-returns-assigned-name",
+      "steps": [
+        {
+          "cmd": "/open test-scaffold-compile",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"RenameTarget\"},{\"op\":\"rename\",\"target\":\"/RenameTarget\",\"name\":\"RenamedObj\"}]",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[1].ok": true,
+            ".data.results[1].assignedName": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-add-component-returns-index",
+      "steps": [
+        {
+          "cmd": "/open test-scaffold-compile",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"ComponentTarget\"},{\"op\":\"add_component\",\"target\":\"/ComponentTarget\",\"component\":\"BoxCollider\"}]",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[1].ok": true,
+            ".data.results[1].componentIndex": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-set-field-via-bridge",
+      "steps": [
+        {
+          "cmd": "/open test-scaffold-compile",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"SetFieldTarget\"},{\"op\":\"set_field\",\"target\":\"/SetFieldTarget\",\"component\":\"Transform\",\"field\":\"m_LocalPosition.x\",\"value\":\"1\"}]",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[1].ok": true
+          }
+        }
+      ]
+    }
+  ]
+}
