@@ -1,0 +1,125 @@
+{
+  "$schema": "../.codex/testcase.schema.json",
+  "suite": "dryrun-uvc-revert-v2",
+  "runner": "{suite_dir}/../src/unifocl/bin/Debug/net10.0/unifocl",
+  "project": "{suite_dir}/../.local/dryrun-uvc-test",
+  "mode": "hierarchy",
+  "cases": [
+    {
+      "id": "dryrun-toggle-returns-ok",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open \"/Users/makinokinichianju/Documents/GitHub/unifocl/.claude/worktrees/fix-dryryn-uvc-revert/.local/dryrun-uvc-test\"",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/Canvas/Button\"}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/close",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-then-real-toggle",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open \"/Users/makinokinichianju/Documents/GitHub/unifocl/.claude/worktrees/fix-dryryn-uvc-revert/.local/dryrun-uvc-test\"",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/Canvas/Button\"}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"toggle_active\",\"target\":\"/Canvas/Button\"}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/close",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        }
+      ]
+    },
+    {
+      "id": "repeated-dryrun-stable",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open \"/Users/makinokinichianju/Documents/GitHub/unifocl/.claude/worktrees/fix-dryryn-uvc-revert/.local/dryrun-uvc-test\"",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/Canvas/Button\"}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/Canvas/TitleText\"}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 2",
+          "assert": {
+            ".status": "success",
+            ".data.root.children[0].name": "Canvas"
+          }
+        },
+        {
+          "cmd": "/close",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-setfield-then-real",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open \"/Users/makinokinichianju/Documents/GitHub/unifocl/.claude/worktrees/fix-dryryn-uvc-revert/.local/dryrun-uvc-test\"",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"set_field\",\"target\":\"/Canvas/TitleText\",\"component\":\"RectTransform\",\"field\":\"m_AnchoredPosition\",\"value\":[100,50]}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"/Canvas/TitleText\",\"component\":\"RectTransform\",\"field\":\"m_AnchoredPosition\",\"value\":[100,50]}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/close",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-hierarchy-intact",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open \"/Users/makinokinichianju/Documents/GitHub/unifocl/.claude/worktrees/fix-dryryn-uvc-revert/.local/dryrun-uvc-test\"",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/Canvas/Button\"}]",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 2",
+          "assert": {
+            ".status": "success",
+            ".data.root.children[0].name": "Canvas"
+          }
+        },
+        {
+          "cmd": "/close",
+          "assert": { ".meta.exitCode": { "$gte": 0 } }
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.1 - 2026-03-27
+
+### Fixed
+- **Dry-run leaves scene dirty after UVC checkout**: a dry-run mutation was calling into the UVC/Plastic SCM checkout flow but not reverting it via `Undo.RevertAllDownToGroup`, leaving the scene in a locked dirty state that caused the immediately following real mutation to fail. The revert is now called unconditionally after every dry-run batch.
+
+### Tests
+- **`suite-dryrun-uvc-revert-v2`**: 5-case regression suite covering dry-run success, dry-run→real mutation (core regression), consecutive dry-runs, `set_field` dry-run→real, and hierarchy integrity after dry-run.
+
 ## 2.4.0 - 2026-03-26
 
 ### CI
