@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.6.0 - 2026-03-27
+
+### Added
+- **`compile.request` / `compile.status` ExecV2 operations**: agents can trigger a script recompile and poll compilation state (running, succeeded, errors, timestamps) through the structured exec API without manual editor interaction.
+- **`/compile/status` daemon HTTP endpoint**: direct GET endpoint on the daemon for lightweight compilation state polling.
+- **Unity-side compilation tracking**: hooks into `CompilationPipeline` events to track compilation lifecycle (start, per-assembly errors, finish) and expose status via `DaemonProjectService`.
+
+### Tests
+- **`suite-compile-request-await`**: 8-case agentic test suite covering `/new` scaffold, `/init`, protocol version, `/open` session persistence, and mutate response field integrity (`assignedName`, `createdId`, `componentIndex`).
+
 ## 2.5.1 - 2026-03-27
 
 ### Fixed

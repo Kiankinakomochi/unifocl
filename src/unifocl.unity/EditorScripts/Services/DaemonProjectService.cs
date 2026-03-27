@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
+using UnityEditor.Compilation;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
 using UnityEditor.SceneManagement;
@@ -25,9 +26,11 @@ namespace UniFocl.EditorBridge
     internal static class DaemonProjectService
     {
         private static readonly object BuildStateLock = new();
+        private static readonly object CompilationStateLock = new();
         private static readonly Regex PercentRegex = new(@"(?<!\d)(\d{1,3})\s*%", RegexOptions.Compiled);
         private static readonly SemaphoreSlim FileSystemMutationSemaphore = new(1, 1);
         private static BuildRuntimeState _buildState = new();
+        private static CompilationRuntimeState _compilationState = new();
         private static int _unityMainThreadId;
         private static bool _buildInProgress;
         private static bool _cancelRequested;
@@ -36,6 +39,88 @@ namespace UniFocl.EditorBridge
         private const string VcsModeUvcsHybridGitIgnore = "uvcs_hybrid_gitignore";
         private const string VcsOwnerUvcs = "uvcs";
         private const string LastOpenedSceneMarkerRelativePath = ".unifocl/last-opened-scene.txt";
+
+        [InitializeOnLoadMethod]
+        private static void InitializeCompilationTracking()
+        {
+            CompilationPipeline.compilationStarted += OnCompilationStarted;
+            CompilationPipeline.assemblyCompilationFinished += OnAssemblyCompilationFinished;
+            CompilationPipeline.compilationFinished += OnCompilationFinished;
+        }
+
+        private static void OnCompilationStarted(object obj)
+        {
+            lock (CompilationStateLock)
+            {
+                _compilationState = new CompilationRuntimeState
+                {
+                    running = true,
+                    succeeded = false,
+                    errors = Array.Empty<string>(),
+                    startedAtUtc = DateTime.UtcNow.ToString("O"),
+                    finishedAtUtc = string.Empty
+                };
+            }
+        }
+
+        private static void OnAssemblyCompilationFinished(string assemblyPath, CompilerMessage[] messages)
+        {
+            var errorMessages = messages
+                .Where(m => m.type == CompilerMessageType.Error)
+                .Select(m => m.message)
+                .ToArray();
+
+            if (errorMessages.Length == 0)
+            {
+                return;
+            }
+
+            lock (CompilationStateLock)
+            {
+                var existing = _compilationState.errors ?? Array.Empty<string>();
+                var combined = new string[existing.Length + errorMessages.Length];
+                Array.Copy(existing, combined, existing.Length);
+                Array.Copy(errorMessages, 0, combined, existing.Length, errorMessages.Length);
+                _compilationState = new CompilationRuntimeState
+                {
+                    running = _compilationState.running,
+                    succeeded = _compilationState.succeeded,
+                    errors = combined,
+                    startedAtUtc = _compilationState.startedAtUtc,
+                    finishedAtUtc = _compilationState.finishedAtUtc
+                };
+            }
+        }
+
+        private static void OnCompilationFinished(object obj)
+        {
+            lock (CompilationStateLock)
+            {
+                _compilationState = new CompilationRuntimeState
+                {
+                    running = false,
+                    succeeded = _compilationState.errors == null || _compilationState.errors.Length == 0,
+                    errors = _compilationState.errors ?? Array.Empty<string>(),
+                    startedAtUtc = _compilationState.startedAtUtc,
+                    finishedAtUtc = DateTime.UtcNow.ToString("O")
+                };
+            }
+        }
+
+        public static string GetCompilationStatusPayload()
+        {
+            lock (CompilationStateLock)
+            {
+                return JsonUtility.ToJson(new CompilationStatusResponse
+                {
+                    running = _compilationState.running,
+                    succeeded = _compilationState.succeeded,
+                    errors = _compilationState.errors ?? Array.Empty<string>(),
+                    startedAtUtc = _compilationState.startedAtUtc,
+                    finishedAtUtc = _compilationState.finishedAtUtc
+                });
+            }
+        }
 
         public static string Execute(string payload)
         {
@@ -247,6 +332,8 @@ namespace UniFocl.EditorBridge
                 "build-addressables" => Task.FromResult(ExecuteBuildAddressables(request)),
                 "build-cancel" => Task.FromResult(ExecuteBuildCancel()),
                 "build-targets" => Task.FromResult(ExecuteBuildTargets()),
+                "compile-request" => Task.FromResult(ExecuteCompileRequest()),
+                "compile-status" => Task.FromResult(ExecuteCompileStatus()),
                 _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
             };
         }
@@ -1189,7 +1276,7 @@ namespace UniFocl.EditorBridge
             });
         }
 
-        private static string? ResolveAddressablesContentStatePath(Assembly editorAssembly, object settings)
+        private static string? ResolveAddressablesContentStatePath(System.Reflection.Assembly editorAssembly, object settings)
         {
             var settingsType = settings.GetType();
             var contentStateProperty = settingsType.GetProperty(
@@ -1970,6 +2057,47 @@ namespace UniFocl.EditorBridge
             public string lastHeartbeatUtc = string.Empty;
             public string lastDiagnostic = string.Empty;
             public string lastException = string.Empty;
+        }
+
+        private static string ExecuteCompileRequest()
+        {
+            UnifoclCompilationService.RequestRecompile();
+            return JsonUtility.ToJson(new ProjectCommandResponse
+            {
+                ok = true,
+                message = "compile request submitted",
+                kind = "compile-request"
+            });
+        }
+
+        private static string ExecuteCompileStatus()
+        {
+            return JsonUtility.ToJson(new ProjectCommandResponse
+            {
+                ok = true,
+                message = "compile status",
+                kind = "compile-status",
+                content = GetCompilationStatusPayload()
+            });
+        }
+
+        [Serializable]
+        private sealed class CompilationStatusResponse
+        {
+            public bool running;
+            public bool succeeded;
+            public string[] errors = Array.Empty<string>();
+            public string startedAtUtc = string.Empty;
+            public string finishedAtUtc = string.Empty;
+        }
+
+        private sealed class CompilationRuntimeState
+        {
+            public bool running;
+            public bool succeeded;
+            public string[]? errors;
+            public string startedAtUtc = string.Empty;
+            public string finishedAtUtc = string.Empty;
         }
 
         private static UpmListRequestOptions ParseUpmListOptions(string rawContent)

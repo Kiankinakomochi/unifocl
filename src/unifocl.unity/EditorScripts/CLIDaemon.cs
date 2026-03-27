@@ -671,6 +671,12 @@ namespace UniFocl.EditorBridge
                     return;
                 }
 
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/compile/status", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteJsonResponseAsync(context.Response, DaemonProjectService.GetCompilationStatusPayload(), cancellationToken: cancellationToken);
+                    return;
+                }
+
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/build/log", StringComparison.OrdinalIgnoreCase))
                 {
                     var offsetRaw = request.QueryString["offset"];
