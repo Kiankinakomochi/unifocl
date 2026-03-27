@@ -3784,6 +3784,22 @@ $"{{\n  \"name\": \"{name}\",\n  \"maps\": [],\n  \"controlSchemes\": []\n}}";
                     }
                 }
 
+                // The stash restored original content, so each checked-out file now matches
+                // its pre-mutation state. Attempt to revert the UVC checkout (Unchanged mode)
+                // so the workspace is left clean without requiring manual VCS intervention.
+                // Files whose content still differs from the server (e.g. the user had their
+                // own local changes before the mutation was attempted) are not touched because
+                // Provider.Revert(Unchanged) is a no-op when content diverges from the server.
+                var mode = request.intent?.flags?.vcsMode ?? string.Empty;
+                if (mode.Equals(VcsModeUvcsAll, StringComparison.OrdinalIgnoreCase)
+                    || mode.Equals(VcsModeUvcsHybridGitIgnore, StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var entry in entries)
+                    {
+                        DaemonDryRunSceneRestoreService.TryRevertViaUvcs(entry.RelativePath);
+                    }
+                }
+
                 return true;
             }
             catch (Exception ex)

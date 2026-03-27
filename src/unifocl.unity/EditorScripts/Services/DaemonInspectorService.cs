@@ -196,25 +196,47 @@ namespace UniFocl.EditorBridge
             var beforeJson = DaemonDryRunDiffService.SnapshotObject(target);
             var undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("unifocl inspector dry-run");
+
+            var (preDryRunScenes, preDryRunDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();
+
+            InspectorMutationResponse? failedMutation = null;
+            InspectorMutationResponse? successMutation = null;
+            string? afterJson = null;
+
             try
             {
-                using var dryRunScope = DaemonDryRunContext.Enter();
-                var mutation = ExecuteMutationCore(request);
-                if (!mutation.ok)
+                using (DaemonDryRunContext.Enter())
                 {
-                    Undo.RevertAllDownToGroup(undoGroup);
-                    return JsonUtility.ToJson(mutation);
+                    var mutation = ExecuteMutationCore(request);
+                    if (!mutation.ok)
+                    {
+                        Undo.RevertAllDownToGroup(undoGroup);
+                        failedMutation = mutation;
+                    }
+                    else
+                    {
+                        afterJson = DaemonDryRunDiffService.SnapshotObject(target);
+                        Undo.RevertAllDownToGroup(undoGroup);
+                        successMutation = mutation;
+                    }
                 }
 
-                var afterJson = DaemonDryRunDiffService.SnapshotObject(target);
-                Undo.RevertAllDownToGroup(undoGroup);
-                mutation.message = "dry-run preview";
-                mutation.content = DaemonDryRunDiffService.BuildJsonDiffPayload("inspector mutation preview", beforeJson, afterJson);
-                return JsonUtility.ToJson(mutation);
+                // DaemonDryRunContext.IsActive is now false — safe to save scenes.
+                DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(preDryRunScenes, preDryRunDirty);
+
+                if (failedMutation is not null)
+                {
+                    return JsonUtility.ToJson(failedMutation);
+                }
+
+                successMutation!.message = "dry-run preview";
+                successMutation.content = DaemonDryRunDiffService.BuildJsonDiffPayload("inspector mutation preview", beforeJson, afterJson!);
+                return JsonUtility.ToJson(successMutation);
             }
             catch (Exception ex)
             {
                 Undo.RevertAllDownToGroup(undoGroup);
+                DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(preDryRunScenes, preDryRunDirty);
                 return JsonUtility.ToJson(new InspectorMutationResponse
                 {
                     ok = false,
