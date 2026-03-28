@@ -198,6 +198,7 @@ jobs:
   # Requires manual approval via the "publish" environment protection rule.
   # GitHub will pause here and notify required reviewers — approve to proceed
   # with the PAT-authenticated pushes below.
+  # npm publish uses OIDC Trusted Publishers — no NPM_TOKEN needed.
   publish:
     name: Publish to Registries
     needs: release
@@ -206,6 +207,7 @@ jobs:
     environment: publish
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -273,14 +275,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Publish npm plugin
         working-directory: src/unifocl.claude-plugin
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           version="${{ needs.release.outputs.version }}"
@@ -290,7 +290,7 @@ jobs:
             pkg.version = process.env.VERSION;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          npm publish --access public
+          npm publish --access public --provenance
 
   winget:
     name: Publish to WinGet
