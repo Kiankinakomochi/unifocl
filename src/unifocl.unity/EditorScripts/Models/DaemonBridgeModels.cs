@@ -366,6 +366,16 @@ namespace UniFocl.EditorBridge
         public string message = string.Empty;
     }
 
+    // ── Eval bridge ────────────────────────────────────────────────────────────
+
+    [Serializable]
+    internal sealed class EvalRequestPayload
+    {
+        public string code = string.Empty;
+        public string declarations = string.Empty;
+        public int timeoutMs = 10000;
+    }
+
     // ── ExecV2 adapter ──────────────────────────────────────────────────────────
 
     /// <summary>Incoming ExecV2Request JSON as parsed by JsonUtility on the Unity side.</summary>

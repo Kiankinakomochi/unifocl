@@ -658,6 +658,20 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger == "/eval")
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            await AwaitWithCancellationAsync(
+                () => HandleEvalCommandAsync(input, session, daemonControlService, daemonRuntime, streamLog),
+                cancellationToken);
+            return;
+        }
+
         if (matched.Trigger.StartsWith("/build", StringComparison.Ordinal))
         {
             await AwaitWithCancellationAsync(
@@ -735,5 +749,115 @@ internal static class CliOneShotExecutionService
 
         CliLogService.AppendLog(streamLog, $"[yellow]command[/]: unsupported route -> {Markup.Escape(matched.Signature)}");
         CliLogService.AppendLog(streamLog, "[grey]hint[/]: run /help for available commands and mode-specific workflows");
+    }
+
+    private static async Task HandleEvalCommandAsync(
+        string input,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        List<string> streamLog)
+    {
+        var tokens = CliCommandParsingService.TokenizeComposerInput(input);
+        if (tokens.Count < 2)
+        {
+            CliLogService.AppendLog(streamLog, "[red]eval[/]: usage: /eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]");
+            return;
+        }
+
+        string? code = null;
+        string? declarations = null;
+        var timeoutMs = 10000;
+        var dryRun = false;
+
+        for (var i = 1; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (token.Equals("--declarations", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+            {
+                declarations = tokens[++i];
+                continue;
+            }
+
+            if (token.Equals("--timeout", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+            {
+                if (int.TryParse(tokens[++i], out var parsed) && parsed > 0)
+                {
+                    timeoutMs = parsed;
+                }
+
+                continue;
+            }
+
+            code ??= token;
+        }
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            CliLogService.AppendLog(streamLog, "[red]eval[/]: code expression is required");
+            return;
+        }
+
+        // Ensure daemon is attached (re-attach/start if session has a persisted project)
+        if (DaemonControlService.GetPort(session) is not int)
+        {
+            if (!await daemonControlService.TouchAttachedDaemonAsync(session)
+                && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                if (DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
+                {
+                    await daemonControlService.TryAttachProjectDaemonAsync(session.CurrentProjectPath, session);
+                }
+                else
+                {
+                    await daemonControlService.EnsureProjectDaemonAsync(
+                        session.CurrentProjectPath, daemonRuntime, session,
+                        line => CliLogService.AppendLog(streamLog, line),
+                        requireBridgeMode: true);
+                }
+            }
+        }
+
+        if (DaemonControlService.GetPort(session) is not int port)
+        {
+            CliLogService.AppendLog(streamLog, "[yellow]eval[/]: daemon is not attached — open a project first with /open");
+            return;
+        }
+
+        var content = System.Text.Json.JsonSerializer.Serialize(new { code, declarations = declarations ?? string.Empty, timeoutMs });
+        var baseDto = new ProjectCommandRequestDto("eval-code", null, null, content);
+        var withIntent = MutationIntentFactory.EnsureProjectIntent(baseDto);
+        var dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+
+        CliLogService.AppendLog(streamLog, $"[grey]eval[/]: compiling and executing{(dryRun ? " (dry-run)" : "")}...");
+        var client = new HierarchyDaemonClient();
+        var response = await client.ExecuteProjectCommandAsync(port, dto);
+        if (response.Ok)
+        {
+            var kind = response.Kind ?? "eval";
+            CliLogService.AppendLog(streamLog, $"[green]eval[/]: {Markup.Escape(kind)}");
+            if (!string.IsNullOrWhiteSpace(response.Content))
+            {
+                CliLogService.AppendLog(streamLog, Markup.Escape(response.Content!));
+            }
+            else if (!string.IsNullOrWhiteSpace(response.Message))
+            {
+                CliLogService.AppendLog(streamLog, Markup.Escape(response.Message));
+            }
+        }
+        else
+        {
+            CliLogService.AppendLog(streamLog, $"[red]eval[/]: {Markup.Escape(response.Message)}");
+            if (!string.IsNullOrWhiteSpace(response.Content))
+            {
+                CliLogService.AppendLog(streamLog, $"[grey]{Markup.Escape(response.Content!)}[/]");
+            }
+        }
     }
 }

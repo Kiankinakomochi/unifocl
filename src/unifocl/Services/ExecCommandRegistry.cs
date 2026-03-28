@@ -15,6 +15,8 @@ internal sealed class ExecCommandRegistry
         ["build.scenes.set"]    = ExecRiskLevel.SafeWrite,
         // package management
         ["upm.remove"]          = ExecRiskLevel.DestructiveWrite,
+        // eval operations
+        ["eval.run"]            = ExecRiskLevel.PrivilegedExec,
         // compile operations
         ["compile.request"]     = ExecRiskLevel.SafeWrite,
         ["compile.status"]      = ExecRiskLevel.SafeRead,
@@ -162,6 +164,25 @@ internal sealed class ExecCommandRegistry
 
                 var content = $"{{\"packageId\":\"{packageId}\"}}";
                 var base_ = new ProjectCommandRequestDto("upm-remove", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "eval.run":
+            {
+                var code = GetString(req.Args, "code");
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    validationError = "eval.run requires args.code";
+                    return false;
+                }
+
+                var declarations = GetString(req.Args, "declarations") ?? string.Empty;
+                var timeoutMs = req.Args.HasValue && req.Args.Value.TryGetProperty("timeoutMs", out var tm)
+                    && tm.ValueKind == JsonValueKind.Number ? tm.GetInt32() : 10000;
+                var content = JsonSerializer.Serialize(new { code, declarations, timeoutMs });
+                var base_ = new ProjectCommandRequestDto("eval-code", null, null, content, req.RequestId);
                 var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
                 dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
                 return true;

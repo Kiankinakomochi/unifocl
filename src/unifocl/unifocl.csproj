@@ -84,6 +84,7 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/UnifoclManifestGenerator.cs" LogicalName="Payload/EditorScripts/UnifoclManifestGenerator.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Models/UnifoclEditorConfig.cs" LogicalName="Payload/EditorScripts/Models/UnifoclEditorConfig.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonCustomToolService.cs" LogicalName="Payload/EditorScripts/Services/DaemonCustomToolService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonEvalService.cs" LogicalName="Payload/EditorScripts/Services/DaemonEvalService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/UnifoclCompilationService.cs" LogicalName="Payload/EditorScripts/Services/UnifoclCompilationService.cs" />
     <EmbeddedResource Include="../unifocl.unity/SharedModels/BridgeModels.cs" LogicalName="Payload/SharedModels/BridgeModels.cs" />
   </ItemGroup>

@@ -16,6 +16,17 @@ internal sealed record ExecLaunchOptions(
     string? RequestId,
     string? SessionSeed);
 
+internal sealed record EvalLaunchOptions(
+    string Code,
+    string? Declarations,
+    int TimeoutMs,
+    bool DryRun,
+    bool Json,
+    string? ProjectPath,
+    int? AttachPort,
+    string? RequestId,
+    string? SessionSeed);
+
 internal sealed record AgenticExecutionRequest(
     string CommandText,
     string ContextMode,
