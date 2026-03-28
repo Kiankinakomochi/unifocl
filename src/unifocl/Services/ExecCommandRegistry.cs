@@ -18,6 +18,12 @@ internal sealed class ExecCommandRegistry
         // compile operations
         ["compile.request"]     = ExecRiskLevel.SafeWrite,
         ["compile.status"]      = ExecRiskLevel.SafeRead,
+        // prefab operations
+        ["prefab.create"]       = ExecRiskLevel.SafeWrite,
+        ["prefab.apply"]        = ExecRiskLevel.SafeWrite,
+        ["prefab.revert"]       = ExecRiskLevel.SafeWrite,
+        ["prefab.unpack"]       = ExecRiskLevel.DestructiveWrite,
+        ["prefab.variant"]      = ExecRiskLevel.SafeWrite,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         // meta
@@ -170,6 +176,91 @@ internal sealed class ExecCommandRegistry
             case "compile.status":
             {
                 dto = new ProjectCommandRequestDto("compile-status", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "prefab.create":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var nodeSelector = GetString(req.Args, "nodeSelector");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(nodeSelector))
+                {
+                    validationError = "prefab.create requires args.assetPath and args.nodeSelector";
+                    return false;
+                }
+
+                var content = $"{{\"nodeSelector\":\"{nodeSelector}\"}}";
+                var base_ = new ProjectCommandRequestDto("prefab-create", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "prefab.apply":
+            {
+                var nodeSelector = GetString(req.Args, "nodeSelector");
+                if (string.IsNullOrWhiteSpace(nodeSelector))
+                {
+                    validationError = "prefab.apply requires args.nodeSelector";
+                    return false;
+                }
+
+                var content = $"{{\"nodeSelector\":\"{nodeSelector}\"}}";
+                var base_ = new ProjectCommandRequestDto("prefab-apply", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "prefab.revert":
+            {
+                var nodeSelector = GetString(req.Args, "nodeSelector");
+                if (string.IsNullOrWhiteSpace(nodeSelector))
+                {
+                    validationError = "prefab.revert requires args.nodeSelector";
+                    return false;
+                }
+
+                var content = $"{{\"nodeSelector\":\"{nodeSelector}\"}}";
+                var base_ = new ProjectCommandRequestDto("prefab-revert", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "prefab.unpack":
+            {
+                var nodeSelector = GetString(req.Args, "nodeSelector");
+                if (string.IsNullOrWhiteSpace(nodeSelector))
+                {
+                    validationError = "prefab.unpack requires args.nodeSelector";
+                    return false;
+                }
+
+                var completely = req.Args is not null
+                    && req.Args.Value.TryGetProperty("completely", out var completelyProp)
+                    && completelyProp.ValueKind == JsonValueKind.True;
+                var content = $"{{\"nodeSelector\":\"{nodeSelector}\",\"completely\":{(completely ? "true" : "false")}}}";
+                var base_ = new ProjectCommandRequestDto("prefab-unpack", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "prefab.variant":
+            {
+                var sourcePath = GetString(req.Args, "sourcePath");
+                var newPath = GetString(req.Args, "newPath");
+                if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(newPath))
+                {
+                    validationError = "prefab.variant requires args.sourcePath and args.newPath";
+                    return false;
+                }
+
+                var base_ = new ProjectCommandRequestDto("prefab-variant", sourcePath, newPath, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+
                 return true;
             }
 

@@ -124,7 +124,12 @@ internal static class CliCommandCatalog
             new("build logs", "Open restartable build log tail viewer", "build logs"),
             new("b [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Alias for build run", "b"),
             new("bx <Method>", "Alias for build exec", "bx"),
-            new("ba [--clean] [--update]", "Alias for build addressables", "ba")
+            new("ba [--clean] [--update]", "Alias for build addressables", "ba"),
+            new("prefab create <idx|name> <asset-path>", "Convert scene GameObject to new Prefab Asset on disk", "prefab create"),
+            new("prefab apply <idx>", "Push instance overrides back to source Prefab Asset", "prefab apply"),
+            new("prefab revert <idx>", "Discard local overrides, revert to source Prefab Asset", "prefab revert"),
+            new("prefab unpack <idx> [--completely]", "Break prefab connection, turn into regular GameObject", "prefab unpack"),
+            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant")
         ];
     }
 

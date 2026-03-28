@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.0 - 2026-03-28
+
+### Added
+- **Prefab command surface** (`prefab create`, `prefab variant`, `prefab apply`, `prefab revert`, `prefab unpack`, `prefab unpack --completely`): full prefab lifecycle management from hierarchy and project modes.
+- **ExecV2 prefab operations** (`prefab.create`, `prefab.apply`, `prefab.revert`, `prefab.unpack`, `prefab.variant`): agentic API bindings for all prefab commands with mutation intent support.
+- **`suite-prefab-live.json` integration test suite**: 10-case end-to-end test against a live headless Unity daemon covering create, nested hierarchy, variant, apply, revert, unpack, and session lifecycle.
+
+### Fixed
+- **`mk EmptyChild` fails when cwd is scene root**: `DaemonHierarchyService.CreateTypedObject` returned null for EmptyChild when `parentTransform` was null (scene root), because `ResolveTargetTransform` passed null as fallback. Now falls through to scene-root creation, matching `mk Empty` behavior.
+
 ## 2.6.0 - 2026-03-27
 
 ### Added
