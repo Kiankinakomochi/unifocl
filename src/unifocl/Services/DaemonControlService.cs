@@ -692,11 +692,13 @@ internal sealed class DaemonControlService
 
                 if (managedRuntimePresent && bridgeSatisfied && hostModeSatisfied)
                 {
+                    WarnIfProjectSourceStale(existing!, log);
                     return true;
                 }
 
                 if (!preferHostMode && bridgeSatisfied)
                 {
+                    if (existing is not null) WarnIfProjectSourceStale(existing, log);
                     return true;
                 }
 
@@ -2694,6 +2696,39 @@ internal sealed class DaemonControlService
         }
 
         return tokens;
+    }
+
+    /// <summary>
+    /// Scans <c>{projectPath}/Assets/</c> for <c>.cs</c> files and logs a warning if any were
+    /// modified after the daemon started (indicating the daemon may be serving stale compiled code).
+    /// </summary>
+    private static void WarnIfProjectSourceStale(DaemonInstance daemon, Action<string> log)
+    {
+        if (string.IsNullOrWhiteSpace(daemon.ProjectPath)) return;
+
+        var assetsPath = Path.Combine(daemon.ProjectPath, "Assets");
+        if (!Directory.Exists(assetsPath)) return;
+
+        try
+        {
+            var newestSource = Directory
+                .EnumerateFiles(assetsPath, "*.cs", SearchOption.AllDirectories)
+                .Select(f => new FileInfo(f).LastWriteTimeUtc)
+                .DefaultIfEmpty(DateTime.MinValue)
+                .Max();
+
+            // Allow a 5-second grace period to account for filesystem timestamp skew.
+            if (newestSource > daemon.StartedAtUtc.AddSeconds(5))
+            {
+                log($"[yellow]daemon[/]: stale compiled code suspected — Unity source files in Assets/ were modified after daemon start " +
+                    $"({newestSource:yyyy-MM-dd HH:mm:ss}Z > {daemon.StartedAtUtc:yyyy-MM-dd HH:mm:ss}Z); " +
+                    $"consider [white]/daemon restart[/] to recompile");
+            }
+        }
+        catch
+        {
+            // Non-critical warning; ignore enumeration errors.
+        }
     }
 
     internal sealed record DaemonStartupFailure(

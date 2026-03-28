@@ -8,10 +8,13 @@
 #   ./scripts/run-testcases.sh <suite.json> [OPTIONS]
 #
 # Options:
-#   --project <path>    Override project path from suite file
-#   --runner <cmd>      Override runner command from suite file
-#   --seed <seed>       Use a fixed session seed for all cases (skips per-case seeds)
-#   --no-build          Pass through to runner (skip build step)
+#   --project <path>          Override project path from suite file
+#   --runner <cmd>            Override runner command from suite file
+#   --seed <seed>             Use a fixed session seed for all cases (skips per-case seeds)
+#   --no-build                Pass through to runner (skip build step)
+#   --unity-src <dir>         Directory of Unity .cs source files to check for staleness
+#                             (default: <script-dir>/../src/unifocl.unity if it exists)
+#   --force-restart-daemon    Kill and remove lockfile for any stale daemon before running
 #
 # Suite file format: see schema at .codex/testcase.schema.json
 #
@@ -34,6 +37,8 @@ override_project=""
 override_runner=""
 pass_no_build=""
 override_seed=""
+override_unity_src=""
+force_restart_daemon=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -41,13 +46,15 @@ while [[ $# -gt 0 ]]; do
         --runner)  override_runner="$2";  shift 2 ;;
         --no-build) pass_no_build="--no-build"; shift ;;
         --seed)    override_seed="$2"; shift 2 ;;
+        --unity-src) override_unity_src="$2"; shift 2 ;;
+        --force-restart-daemon) force_restart_daemon=1; shift ;;
         -*) echo "ERROR: Unknown option: $1" >&2; exit 2 ;;
         *) suite_file="$1"; shift ;;
     esac
 done
 
 if [[ -z "$suite_file" ]]; then
-    echo "Usage: run-testcases.sh <suite.json> [--project <path>] [--runner <cmd>] [--seed <seed>] [--no-build]" >&2
+    echo "Usage: run-testcases.sh <suite.json> [--project <path>] [--runner <cmd>] [--seed <seed>] [--no-build] [--unity-src <dir>] [--force-restart-daemon]" >&2
     exit 2
 fi
 
@@ -174,6 +181,76 @@ evaluate_assert() {
     return 0
 }
 
+# ── Daemon freshness check ────────────────────────────────────────────────────
+#
+# Scans ~/.unifocl-runtime/daemons/*.json for a daemon whose projectPath matches
+# the suite's project. If the daemon was started before the newest .cs file in
+# $unity_src_dir, it is considered stale.
+#
+# With --force-restart-daemon: kills the stale process and removes its lockfile.
+# Without the flag:            prints a warning but continues.
+#
+check_daemon_freshness() {
+    local project="$1"
+    local unity_src_dir="$2"
+    local runtime_dir="${HOME}/.unifocl-runtime/daemons"
+
+    [[ ! -d "$runtime_dir" ]] && return 0
+    [[ -z "$unity_src_dir" || ! -d "$unity_src_dir" ]] && return 0
+
+    # Find the newest .cs mtime in the Unity source tree (seconds since epoch).
+    local newest_src_epoch
+    # macOS stat syntax
+    newest_src_epoch=$(find "$unity_src_dir" -name "*.cs" -exec stat -f '%m' {} \; 2>/dev/null \
+        | sort -rn | head -1)
+    # Linux fallback
+    if [[ -z "$newest_src_epoch" ]]; then
+        newest_src_epoch=$(find "$unity_src_dir" -name "*.cs" -printf '%T@\n' 2>/dev/null \
+            | sort -rn | head -1 | cut -d. -f1)
+    fi
+    [[ -z "$newest_src_epoch" || "$newest_src_epoch" == "0" ]] && return 0
+
+    local norm_project
+    norm_project=$(cd "$project" 2>/dev/null && pwd || echo "$project")
+
+    for lockfile in "$runtime_dir"/*.json; do
+        [[ -f "$lockfile" ]] || continue
+
+        local lf_project lf_started lf_pid lf_port
+        lf_project=$(jq -r '.projectPath // ""' "$lockfile" 2>/dev/null)
+        lf_started=$(jq -r '.startedAtUtc // ""' "$lockfile" 2>/dev/null)
+        lf_pid=$(jq -r '.pid // 0' "$lockfile" 2>/dev/null)
+        lf_port=$(jq -r '.port // 0' "$lockfile" 2>/dev/null)
+
+        # Normalize and compare project paths.
+        local norm_lf
+        norm_lf=$(echo "$lf_project" | sed 's|/$||')
+        [[ "$norm_project" != "$norm_lf" ]] && continue
+
+        # Convert ISO-8601 UTC timestamp to epoch.
+        local daemon_epoch
+        # macOS date
+        daemon_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "${lf_started}" "+%s" 2>/dev/null || true)
+        # GNU date fallback
+        if [[ -z "$daemon_epoch" ]]; then
+            daemon_epoch=$(date -d "${lf_started}" "+%s" 2>/dev/null || echo "0")
+        fi
+        [[ -z "$daemon_epoch" ]] && daemon_epoch=0
+
+        if (( newest_src_epoch > daemon_epoch )); then
+            if [[ -n "$force_restart_daemon" ]]; then
+                echo "WARN: Stale daemon on port ${lf_port} (PID ${lf_pid}): Unity source changed after daemon start; force-restarting..."
+                kill "$lf_pid" 2>/dev/null || true
+                rm -f "$lockfile"
+            else
+                echo "WARN: Stale daemon detected (port ${lf_port}): Unity source files were modified after daemon start."
+                echo "      Tests may execute against outdated compiled code."
+                echo "      Re-run with --force-restart-daemon to force a clean restart."
+            fi
+        fi
+    done
+}
+
 # ── Exec helper ───────────────────────────────────────────────────────────────
 
 run_exec_step() {
@@ -210,6 +287,18 @@ run_exec_step() {
     rm -f "$tmp_out"
     echo "$envelope"
 }
+
+# ── Pre-suite: stale daemon detection ────────────────────────────────────────
+
+_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_default_unity_src="${_script_dir}/../src/unifocl.unity"
+
+_unity_src_dir="${override_unity_src}"
+if [[ -z "$_unity_src_dir" && -d "$_default_unity_src" ]]; then
+    _unity_src_dir="$(cd "$_default_unity_src" && pwd)"
+fi
+
+check_daemon_freshness "$project_path" "$_unity_src_dir"
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
