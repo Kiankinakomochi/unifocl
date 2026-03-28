@@ -57,6 +57,39 @@ winget install Kiankinakomochi.unifocl
 
 Download pre-built archives from the [latest GitHub release](https://github.com/Kiankinakomochi/unifocl/releases/latest) and place the binary anywhere in your `PATH`.
 
+### Claude Code Plugin
+
+`@unifocl/claude-plugin` is an npm package that integrates unifocl natively into Claude Code. Installing it does two things automatically:
+
+1. **Registers the MCP server** — adds `unifocl --mcp-server` to your Claude Code MCP config so the `ListCommands`, `LookupCommand`, `GetMutateSchema`, `GetCategories`, `LoadCategory`, and `GetAgentWorkflowGuide` tools are available in every session without manual JSON editing.
+2. **Installs slash commands** — adds five workflow prompts directly into Claude Code:
+   - `/init` — initialize the unifocl bridge in a Unity project
+   - `/context` — hydrate full scene state (hierarchy, project, inspector)
+   - `/mutate` — guided mutation with schema validation and mandatory dry-run
+   - `/status` — check daemon, project, and editor status
+   - `/workflow` — full agentic workflow reference for multi-step sessions
+
+**Responsibility split:** The plugin handles the Claude Code install experience and narrative workflow prompts. The MCP server (`unifocl --mcp-server`) handles the low-level programmatic Unity bridge. They run as separate processes and have no overlapping responsibilities.
+
+**Prerequisites:** `unifocl` must be installed and on your `PATH` before the plugin's MCP server entry can start.
+
+```sh
+# Install via Claude Code
+claude mcp add @unifocl/claude-plugin
+
+# Or install the npm package globally and restart Claude Code
+npm install -g @unifocl/claude-plugin
+```
+
+After installation, confirm the MCP server is registered:
+
+```sh
+claude mcp list
+# unifocl   unifocl --mcp-server
+```
+
+Then use `/init <path-to-unity-project>` in Claude Code to get started.
+
 ## Command & Feature Guide
 
 unifocl operates through a unified command set. Humans can launch the interactive shell (boot screen) to use **slash commands** (e.g., `/open`) for lifecycle operations and **standard commands** (e.g., `ls`, `cd`) for contextual actions. AI agents access these exact same commands via the stateless `exec` pathway or the built-in MCP server.

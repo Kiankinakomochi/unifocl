@@ -253,6 +253,30 @@ jobs:
           git -C "${formula_repo_dir}" commit -m "unifocl ${version}"
           git -C "${formula_repo_dir}" push origin HEAD:main
 
+      - name: Setup Node.js
+        if: steps.version.outputs.skip == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish npm plugin
+        if: steps.version.outputs.skip == 'false'
+        working-directory: src/unifocl.claude-plugin
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          " VERSION="$version"
+          npm publish --access public
+
   winget:
     name: Publish to WinGet
     needs: release
