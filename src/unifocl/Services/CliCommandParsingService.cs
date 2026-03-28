@@ -159,6 +159,139 @@ internal static class CliCommandParsingService
         return true;
     }
 
+    public static bool TryParseEvalLaunchOptions(string[] args, out EvalLaunchOptions? options, out string? error)
+    {
+        options = null;
+        error = null;
+        if (args.Length == 0)
+        {
+            return false;
+        }
+
+        if (!args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string? declarations = null;
+        var timeoutMs = 10000;
+        var dryRun = false;
+        var json = false;
+        string? projectPath = null;
+        int? attachPort = null;
+        string? requestId = null;
+        string? sessionSeed = null;
+        var codeTokens = new List<string>();
+
+        for (var i = 1; i < args.Length; i++)
+        {
+            var token = args[i];
+            if (token.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (token.Equals("--json", StringComparison.OrdinalIgnoreCase))
+            {
+                json = true;
+                continue;
+            }
+
+            if (token.Equals("--declarations", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    error = "missing value for --declarations";
+                    return true;
+                }
+
+                declarations = args[++i];
+                continue;
+            }
+
+            if (token.Equals("--timeout", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length || !int.TryParse(args[++i], out var parsedTimeout) || parsedTimeout <= 0)
+                {
+                    error = "invalid --timeout value (positive integer in ms)";
+                    return true;
+                }
+
+                timeoutMs = parsedTimeout;
+                continue;
+            }
+
+            if (token.Equals("--project", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    error = "missing value for --project";
+                    return true;
+                }
+
+                projectPath = args[++i];
+                continue;
+            }
+
+            if (token.Equals("--attach-port", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length || !int.TryParse(args[++i], out var parsedPort) || parsedPort is < 1 or > 65535)
+                {
+                    error = "invalid --attach-port value";
+                    return true;
+                }
+
+                attachPort = parsedPort;
+                continue;
+            }
+
+            if (token.Equals("--request-id", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    error = "missing value for --request-id";
+                    return true;
+                }
+
+                requestId = args[++i];
+                continue;
+            }
+
+            if (token.Equals("--session-seed", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    error = "missing value for --session-seed";
+                    return true;
+                }
+
+                sessionSeed = args[++i];
+                continue;
+            }
+
+            codeTokens.Add(token);
+        }
+
+        if (codeTokens.Count == 0)
+        {
+            error = "eval requires a code expression";
+            return true;
+        }
+
+        options = new EvalLaunchOptions(
+            string.Join(' ', codeTokens),
+            declarations,
+            timeoutMs,
+            dryRun,
+            json,
+            projectPath,
+            attachPort,
+            requestId,
+            sessionSeed);
+        return true;
+    }
+
     public static string ExtractActionLabel(string commandText)
     {
         var tokens = TokenizeComposerInput(commandText);
@@ -197,6 +330,7 @@ internal static class CliCommandParsingService
             "/b" => "/build run",
             "/bx" => "/build exec",
             "/ba" => "/build addressables",
+            "/ev" => "/eval",
             "/exit" => "/quit",
             _ => commandToken
         };

@@ -76,7 +76,9 @@ internal static class CliCommandCatalog
             new("/build logs", "Open restartable build log tail viewer", "/build logs"),
             new("/b [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Alias for /build run", "/b"),
             new("/bx <Method>", "Alias for /build exec", "/bx"),
-            new("/ba [--clean] [--update]", "Alias for /build addressables", "/ba")
+            new("/ba [--clean] [--update]", "Alias for /build addressables", "/ba"),
+            new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval"),
+            new("/ev '<code>'", "Alias for /eval", "/ev")
         ];
     }
 

@@ -339,6 +339,7 @@ namespace UniFocl.EditorBridge
                 "prefab-revert" => Task.FromResult(ExecutePrefabRevert(request)),
                 "prefab-unpack" => Task.FromResult(ExecutePrefabUnpack(request)),
                 "prefab-variant" => Task.FromResult(ExecutePrefabVariant(request)),
+                "eval-code" => Task.FromResult(DaemonEvalService.Execute(request, isDryRun)),
                 _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
             };
         }

@@ -31,7 +31,8 @@ namespace UniFocl.EditorBridge
                    || action.Equals("remove-asset", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
-                   || action.Equals("build-scenes-set", StringComparison.OrdinalIgnoreCase);
+                   || action.Equals("build-scenes-set", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
         }
 
         public static MutationTransactionDecision ValidateHierarchyIntent(string action, MutationIntentEnvelope intent)

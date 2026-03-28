@@ -140,6 +140,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/version` |  | Show CLI and protocol version. |
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
+| `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -251,6 +252,7 @@ Both human operators and AI agents can validate mutations safely before executio
 - `Inspector` mutations (`set`, `toggle`, `component add/remove`, `make`, `remove`, `rename`, `move`)
 - `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`, `prefab-create`, `prefab-apply`, `prefab-revert`, `prefab-unpack`, `prefab-variant`)
 - **Custom `[UnifoclCommand]` tools** — pass `dryRun: true` in the tool arguments; unifocl wraps the call in a Unity Undo group and reverts all in-memory and AssetDatabase changes automatically (see [`docs/custom-commands.md`](docs/custom-commands.md))
+- **`/eval` dynamic C# execution** — pass `--dry-run` to execute code inside the Undo sandbox; all Unity-tracked changes are reverted after execution completes
 
 Behavior:
 
@@ -273,6 +275,73 @@ component add Rigidbody --dry-run
 rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
+
+
+### 6. Dynamic C# Eval
+
+The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities without creating script files.
+
+```
+/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]
+```
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--declarations '<decl>'` | Additional C# declarations (classes, using directives) injected before the entry point. |
+| `--timeout <ms>` | Maximum execution time in milliseconds (default: 10000). |
+| `--dry-run` | Execute inside a Unity Undo sandbox; all Undo-tracked changes are reverted after execution. |
+| `--json` | Request JSON-formatted output. |
+
+**Examples:**
+
+```sh
+# Simple read query
+unifocl eval 'return Application.productName;'
+
+# Void side-effect
+unifocl eval 'Debug.Log("hello from eval");'
+
+# Async code with cancellation support
+unifocl eval 'await Task.Delay(10, cancellationToken); return "done";'
+
+# Timeout protection
+unifocl eval 'while(true){}' --timeout 200
+
+# Dry-run: execute and revert all Unity Undo-tracked changes
+unifocl eval 'Undo.RecordObject(Camera.main, "t"); Camera.main.name = "CHANGED";' --dry-run
+
+# Custom declarations
+unifocl eval 'return new Msg().text;' --declarations 'public class Msg { public string text = "hi"; }'
+
+# Return a UnityEngine.Object (serialized via EditorJsonUtility)
+unifocl eval 'return Camera.main;'
+```
+
+**Compilation details:**
+
+- Code is compiled in-memory via `CSharpCodeProvider` against all loaded project assemblies.
+- The entry point receives a `CancellationToken cancellationToken` parameter, wired to the `--timeout` value.
+- If the code contains `await`, the entry point is automatically promoted to `async Task<object>`.
+- Standard Unity namespaces (`UnityEngine`, `UnityEditor`, `System`, `System.Linq`, `System.Collections.Generic`, `System.Threading.Tasks`) are imported by default.
+
+**Result serialization:**
+
+| Return type | Serialization |
+| --- | --- |
+| `null` / void | `"null"` |
+| `string` | Raw string value |
+| `UnityEngine.Object` | `EditorJsonUtility.ToJson(obj)` |
+| `[Serializable]` type | `JsonUtility.ToJson(obj)` |
+| `IEnumerable` (non-string) | Recursive `[item1,item2,...]` |
+| Other | `obj.ToString()` |
+
+**Safety:**
+
+- `eval.run` is classified as `PrivilegedExec` in the ExecV2 API and requires two-step approval.
+- `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. `System.IO` writes are **not** reverted (documented limitation).
+- The Unity main thread is blocked during eval; the editor Update loop pauses for the duration.
 
 ## Human Interface: TUI & Keybindings
 
@@ -472,6 +541,7 @@ Endpoint list:
 | `prefab.revert` | SafeWrite | `nodeSelector` |
 | `prefab.unpack` | DestructiveWrite | `nodeSelector`, `completely?` |
 | `prefab.variant` | SafeWrite | `sourcePath`, `newPath` |
+| `eval.run` | PrivilegedExec | `code`, `declarations?`, `timeoutMs?` |
 | `hierarchy.snapshot` | SafeRead | _(none)_ |
 | `session.open` | SafeRead | _(none)_ |
 | `session.close` | SafeRead | _(none)_ |
