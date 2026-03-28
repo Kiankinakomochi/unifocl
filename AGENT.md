@@ -45,8 +45,7 @@ The agent must treat the following as **non-negotiable principles**:
     - `.local/compatcheck-benchmark/`
   - Keep those artifacts uncommitted.
 - **Unity Type Reference Strategy (Primary):** For types defined in Unity-side assemblies, use mirrored POCO contracts for compile-safe boundaries and HTTP communication. Avoid reflection-based type access as a default approach.
-- **Contract Pipeline Strategy (Primary):** Shared transport contracts must be defined in protobuf `.proto` files under the `external/unifocl-protobuf` submodule and consumed via generated C# classes (`Unifocl.Shared`). CLI code must reference only generated protobuf DTOs for transport boundaries; Unity bridge code maps Unity types to/from these stable protobuf contracts.
-- **Plugin Sync:** After protobuf contract updates, run `./scripts/sync-protobuf-unity-plugin.sh` to rebuild `Unifocl.Shared.dll` and copy it into `src/unifocl.unity/EditorScripts/Plugins/`.
+- **Contract Strategy (Primary):** Shared transport contracts between CLI and Unity are plain C# records serialized as JSON. No protobuf dependency in the CLI build. Hierarchy `mk` types are defined as a CLI-local string catalog; the Unity side uses a normalized switch for built-in types with `TypeCache.GetTypesDerivedFrom<MonoBehaviour>()` as the open-ended fallback for custom types.
 - **Build Versioning Rule:** Development builds must use `aX` incremental suffixes in `CliVersion.SemVer` (for example: `0.3.2a1` -> `0.3.2a2`)
 - **PR Finalization Version Rule:** When finalizing changes for PR (push/PR creation), harden the version by closing the active dev-cycle suffix (set `CliVersion.DevCycle` to empty) and add an `Officialized` release entry in `CHANGELOG.md`.
 - **Bridge Protocol Rule:** If a change requires users to re-run `/init` (for example editor payload/package content changes), bump `CliVersion.Protocol` and include `/init` re-run guidance in the task summary/PR description.

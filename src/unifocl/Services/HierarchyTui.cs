@@ -1,6 +1,5 @@
 using System.Text;
 using Spectre.Console;
-using Unifocl.Contracts;
 
 internal sealed class HierarchyTui
 {
@@ -70,7 +69,7 @@ internal sealed class HierarchyTui
         new("mk EmptyChild [count]", "Create empty child under current object", "mk EmptyChild")
     ];
 
-    private static readonly Dictionary<string, HierarchyMkType> MkTypeLookup = BuildMkTypeLookup();
+    private static readonly Dictionary<string, string> MkTypeLookup = BuildMkTypeLookup();
 
     private readonly HierarchyDaemonClient _daemonClient = new();
     private readonly HashSet<int> _collapsedNodeIds = [];
@@ -2118,36 +2117,59 @@ internal sealed class HierarchyTui
         return true;
     }
 
-    private static Dictionary<string, HierarchyMkType> BuildMkTypeLookup()
+    private static Dictionary<string, string> BuildMkTypeLookup()
     {
-        var lookup = new Dictionary<string, HierarchyMkType>(StringComparer.OrdinalIgnoreCase);
-        foreach (var value in Enum.GetValues<HierarchyMkType>())
-        {
-            if (value == HierarchyMkType.Unspecified)
-            {
-                continue;
-            }
+        var lookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            var key = NormalizeMkTypeKey(value.ToString());
-            if (!lookup.ContainsKey(key))
+        void Add(string canonical, params string[] aliases)
+        {
+            lookup[NormalizeMkTypeKey(canonical)] = canonical;
+            foreach (var alias in aliases)
             {
-                lookup[key] = value;
+                lookup[NormalizeMkTypeKey(alias)] = canonical;
             }
         }
 
-        lookup[NormalizeMkTypeKey("ScrollView")] = HierarchyMkType.ScrollView;
-        lookup[NormalizeMkTypeKey("EventSystem")] = HierarchyMkType.EventSystem;
-        lookup[NormalizeMkTypeKey("DirLight")] = HierarchyMkType.DirLight;
-        lookup[NormalizeMkTypeKey("DirectionalLight")] = HierarchyMkType.DirectionalLight;
-        lookup[NormalizeMkTypeKey("PointLight")] = HierarchyMkType.PointLight;
-        lookup[NormalizeMkTypeKey("SpotLight")] = HierarchyMkType.SpotLight;
-        lookup[NormalizeMkTypeKey("AreaLight")] = HierarchyMkType.AreaLight;
-        lookup[NormalizeMkTypeKey("ReflectionProbe")] = HierarchyMkType.ReflectionProbe;
-        lookup[NormalizeMkTypeKey("SpriteMask")] = HierarchyMkType.SpriteMask;
-        lookup[NormalizeMkTypeKey("AudioSource")] = HierarchyMkType.AudioSource;
-        lookup[NormalizeMkTypeKey("EmptyParent")] = HierarchyMkType.EmptyParent;
-        lookup[NormalizeMkTypeKey("EmptyChild")] = HierarchyMkType.EmptyChild;
-        lookup[NormalizeMkTypeKey("TMP")] = HierarchyMkType.Tmp;
+        // UI
+        Add("Canvas");
+        Add("Panel");
+        Add("Text");
+        Add("Tmp", "TMP");
+        Add("Image");
+        Add("Button");
+        Add("Toggle");
+        Add("Slider");
+        Add("Scrollbar");
+        Add("ScrollView");
+        Add("EventSystem");
+
+        // 3D Primitives
+        Add("Cube");
+        Add("Sphere");
+        Add("Capsule");
+        Add("Cylinder");
+        Add("Plane");
+        Add("Quad");
+
+        // Lights
+        Add("DirLight");
+        Add("DirectionalLight");
+        Add("PointLight");
+        Add("SpotLight");
+        Add("AreaLight");
+        Add("ReflectionProbe");
+
+        // 2D
+        Add("Sprite");
+        Add("SpriteMask");
+
+        // Misc
+        Add("Camera");
+        Add("AudioSource");
+        Add("Empty");
+        Add("EmptyParent");
+        Add("EmptyChild");
+
         return lookup;
     }
 
@@ -2162,14 +2184,14 @@ internal sealed class HierarchyTui
         }
 
         var key = NormalizeMkTypeKey(raw);
-        if (!MkTypeLookup.TryGetValue(key, out var mkType))
+        if (!MkTypeLookup.TryGetValue(key, out var resolved))
         {
-            var known = string.Join(", ", MkTypeLookup.Values.Distinct().OrderBy(v => v.ToString()).Select(v => v.ToString()));
+            var known = string.Join(", ", MkTypeLookup.Values.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
             error = $"unsupported mk type: {raw}. supported types: {known}";
             return false;
         }
 
-        canonical = mkType.ToString();
+        canonical = resolved;
         return true;
     }
 
