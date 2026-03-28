@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.1 - 2026-03-28
+
+### Fixed
+- **Stale Unity daemon causes silent test failures** (closes #145): `DaemonControlService` now calls `WarnIfProjectSourceStale()` when reusing an existing daemon, scanning `Assets/**/*.cs` for files newer than `StartedAtUtc` and emitting a yellow warning with a `/daemon restart` hint.
+
+### Added
+- **`run-testcases.sh --force-restart-daemon` flag**: before the suite starts, the runner checks the daemon lockfile for the target project and compares `startedAtUtc` against the newest `.cs` in the Unity source tree (`src/unifocl.unity/` by default, or `--unity-src <dir>`). Without the flag a `WARN:` message is printed; with the flag the stale daemon is killed and its lockfile removed so the suite starts with fresh compiled code.
+- **`tests/test-stale-daemon-runner.sh`**: 9-case bash unit test covering all freshness-check branches (no lockfiles, fresh daemon, stale warn, force-restart, project mismatch, empty src dir).
+
 ## 2.7.0 - 2026-03-28
 
 ### Added
