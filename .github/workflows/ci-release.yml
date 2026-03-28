@@ -195,8 +195,25 @@ jobs:
             scripts/install.sh
             scripts/install.ps1
 
+  # Requires manual approval via the "publish" environment protection rule.
+  # GitHub will pause here and notify required reviewers — approve to proceed
+  # with the PAT-authenticated pushes below.
+  publish:
+    name: Publish to Registries
+    needs: release
+    if: needs.release.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
       - name: Update Homebrew Formula Tap
-        if: steps.version.outputs.skip == 'false'
         shell: bash
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -207,8 +224,8 @@ jobs:
             exit 0
           fi
 
-          version="${{ steps.version.outputs.version }}"
-          tag="${{ steps.version.outputs.tag }}"
+          version="${{ needs.release.outputs.version }}"
+          tag="${{ needs.release.outputs.tag }}"
           release_asset_url="https://github.com/Kiankinakomochi/unifocl/releases/download/${tag}/unifocl-${version}-macos-arm64.tar.gz"
           archive_path="/tmp/unifocl-${version}-macos-arm64.tar.gz"
           formula_repo_dir="$(mktemp -d)"
@@ -254,21 +271,19 @@ jobs:
           git -C "${formula_repo_dir}" push origin HEAD:main
 
       - name: Setup Node.js
-        if: steps.version.outputs.skip == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Publish npm plugin
-        if: steps.version.outputs.skip == 'false'
         working-directory: src/unifocl.claude-plugin
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
+          version="${{ needs.release.outputs.version }}"
           VERSION="$version" node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -282,6 +297,7 @@ jobs:
     needs: release
     if: needs.release.outputs.skip == 'false' && github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
+    environment: publish
     permissions:
       contents: read
     steps:
