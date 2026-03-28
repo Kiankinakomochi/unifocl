@@ -1,0 +1,25 @@
+{
+  "name": "@unifocl/claude-plugin",
+  "version": "0.0.0",
+  "description": "Claude Code plugin for unifocl — auto-configures MCP server and slash commands for Unity project workflows.",
+  "keywords": ["unity", "unifocl", "claude", "mcp", "claude-code-plugin"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kiankinakomochi/unifocl.git",
+    "directory": "src/unifocl.claude-plugin"
+  },
+  "files": [
+    "commands/",
+    "package.json"
+  ],
+  "claude": {
+    "mcpServers": {
+      "unifocl": {
+        "command": "unifocl",
+        "args": ["--mcp-server"]
+      }
+    },
+    "commands": "./commands"
+  }
+}
