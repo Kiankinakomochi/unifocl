@@ -96,6 +96,11 @@ internal static class DaemonMutationActionCatalog
                || action.Equals("remove-asset", StringComparison.OrdinalIgnoreCase)
                || action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
                || action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
-               || action.Equals("build-scenes-set", StringComparison.OrdinalIgnoreCase);
+               || action.Equals("build-scenes-set", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("prefab-create", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("prefab-apply", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("prefab-revert", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("prefab-unpack", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("prefab-variant", StringComparison.OrdinalIgnoreCase);
     }
 }

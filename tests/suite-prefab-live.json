@@ -1,0 +1,291 @@
+{
+  "$schema": "../.codex/testcase.schema.json",
+  "suite": "prefab-live",
+  "runner": "dotnet run --project {suite_dir}/../src/unifocl/unifocl.csproj --no-build --",
+  "project": "{suite_dir}/../.local/compatcheck-benchmark",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "open-project",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-gameobject-and-prefab",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "mk Empty --name PrefabTestObject",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "prefab create PrefabTestObject Assets/Prefabs/PrefabTestObject.prefab",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "PrefabTestObject" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-nested-prefab-root",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name NestedRoot",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name ChildA",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name ChildB",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd ChildA",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name GrandchildA1",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "up",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create NestedRoot Assets/Prefabs/NestedRoot.prefab",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "NestedRoot" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-nested-prefab-child-of-parent",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name ParentContainer",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd ParentContainer",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name NestedChild",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd NestedChild",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name LeafA",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name LeafB",
+          "mode": "hierarchy",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create NestedChild Assets/Prefabs/NestedChild.prefab",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "NestedChild" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-prefab-variant",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab variant Assets/Prefabs/PrefabTestObject.prefab Assets/Prefabs/PrefabTestVariant.prefab",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "PrefabTestVariant" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "apply-prefab-overrides",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab apply PrefabTestObject",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "applied" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "revert-prefab-instance",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab revert PrefabTestObject",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "reverted" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "unpack-prefab-outermost",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "mk Empty --name UnpackTarget",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab create UnpackTarget Assets/Prefabs/UnpackTarget.prefab",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab unpack UnpackTarget",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "unpacked" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "unpack-prefab-completely",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "mk Empty --name UnpackCompleteTarget",
+          "mode": "hierarchy",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab create UnpackCompleteTarget Assets/Prefabs/UnpackCompleteTarget.prefab",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "prefab unpack UnpackCompleteTarget --completely",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "completely" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "close-session",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "/close",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -593,12 +593,16 @@ namespace UniFocl.EditorBridge
                 case "emptychild":
                 {
                     var childParent = ResolveTargetTransform(request.targetId, parentTransform, out error);
-                    if (childParent is null)
+                    if (childParent is null && request.targetId != 0)
                     {
                         return null;
                     }
 
-                    return CreateAndParent(new GameObject("GameObject"), childParent, childParent.gameObject.scene, activeScene, explicitName);
+                    // When childParent is null (scene root), fall through to scene-root creation
+                    // just like the "empty" case — parentTransform == null is valid.
+                    var effectiveParent = childParent ?? parentTransform;
+                    var effectiveScene = effectiveParent is not null ? effectiveParent.gameObject.scene : activeScene;
+                    return CreateAndParent(new GameObject("GameObject"), effectiveParent, effectiveScene, activeScene, explicitName);
                 }
                 case "emptyparent":
                     return CreateEmptyParent(request.targetId, activeScene, explicitName, out error);

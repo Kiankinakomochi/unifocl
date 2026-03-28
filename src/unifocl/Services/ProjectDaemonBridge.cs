@@ -74,6 +74,11 @@ internal sealed class ProjectDaemonBridge
             "build-addressables" => RequireBridgeMode("build-addressables"),
             "build-targets" => HandleBuildTargetsStub(),
             "build-cancel" => HandleBuildCancelStub(),
+            "prefab-create" => RequireBridgeMode("prefab-create"),
+            "prefab-apply" => RequireBridgeMode("prefab-apply"),
+            "prefab-revert" => RequireBridgeMode("prefab-revert"),
+            "prefab-unpack" => RequireBridgeMode("prefab-unpack"),
+            "prefab-variant" => RequireBridgeMode("prefab-variant"),
             _ => new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} unsupported action: {request.Action}", null, null)
         };
         response = JsonSerializer.Serialize(result, _jsonOptions);
