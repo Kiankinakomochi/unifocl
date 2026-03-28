@@ -578,6 +578,7 @@ namespace UniFocl.EditorBridge
                 case "spotlight":
                     return CreateLight(explicitName ?? "Spot Light", LightType.Spot, parentTransform, parentScene, activeScene, explicitName);
                 case "arealight":
+                    return CreateLight(explicitName ?? "Area Light", LightType.Rectangle, parentTransform, parentScene, activeScene, explicitName);
                 case "reflectionprobe":
                     return CreateReflectionProbe(parentTransform, parentScene, activeScene, explicitName);
                 case "sprite":
