@@ -279,7 +279,7 @@ rm 7 --dry-run
 
 ### 6. Dynamic C# Eval
 
-The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities without creating script files.
+The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities — all without creating script files.
 
 ```
 /eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]
@@ -319,29 +319,39 @@ unifocl eval 'return new Msg().text;' --declarations 'public class Msg { public 
 unifocl eval 'return Camera.main;'
 ```
 
-**Compilation details:**
+**Compilation:**
 
-- Code is compiled in-memory via `CSharpCodeProvider` against all loaded project assemblies.
-- The entry point receives a `CancellationToken cancellationToken` parameter, wired to the `--timeout` value.
-- If the code contains `await`, the entry point is automatically promoted to `async Task<object>`.
-- Standard Unity namespaces (`UnityEngine`, `UnityEditor`, `System`, `System.Linq`, `System.Collections.Generic`, `System.Threading.Tasks`) are imported by default.
+Code is compiled through Unity's own `AssemblyBuilder` pipeline rather than the legacy `CSharpCodeProvider`. This means eval code targets the same C# language version your project uses — modern pattern matching, nullable reference types, records, and other recent C# features work out of the box.
+
+- The entry point is always `async Task<object>`, so `await` works naturally without special flags or detection heuristics.
+- A `CancellationToken cancellationToken` parameter is available inside eval code, wired to the `--timeout` value.
+- Default usings cover the most common scenarios: `System`, `System.IO`, `System.Linq`, `System.Collections.Generic`, `System.Text.RegularExpressions`, `System.Threading.Tasks`, `UnityEngine`, and `UnityEditor`.
+- All assemblies loaded in the current editor session are available as references (project scripts, packages, plugins). Temporary eval artefacts are automatically excluded.
 
 **Result serialization:**
 
-| Return type | Serialization |
+unifocl uses a three-tier serialization strategy to produce the most informative output for each return type:
+
+| Return type | Serialization strategy |
 | --- | --- |
 | `null` / void | `"null"` |
 | `string` | Raw string value |
-| `UnityEngine.Object` | `EditorJsonUtility.ToJson(obj)` |
-| `[Serializable]` type | `JsonUtility.ToJson(obj)` |
-| `IEnumerable` (non-string) | Recursive `[item1,item2,...]` |
+| Primitives (`int`, `float`, `bool`, ...) | Literal value with full numeric precision (`float` G9, `double` G17) |
+| `UnityEngine.Object` | Full editor serialization via `EditorJsonUtility.ToJson` |
+| `[Serializable]` types | Unity's fast `JsonUtility.ToJson` path |
+| `IDictionary` | JSON object with string keys |
+| `IEnumerable` (arrays, lists, sets, ...) | JSON array |
+| Structured objects | Depth-limited reflection walk over public fields and readable properties |
 | Other | `obj.ToString()` |
 
-**Safety:**
+The reflection serializer is depth-limited (max 8 levels) to safely handle cyclic or deeply nested object graphs without risking stack overflows.
 
-- `eval.run` is classified as `PrivilegedExec` in the ExecV2 API and requires two-step approval.
-- `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. `System.IO` writes are **not** reverted (documented limitation).
-- The Unity main thread is blocked during eval; the editor Update loop pauses for the duration.
+**Safety and approval:**
+
+- `eval.run` is classified as `PrivilegedExec` in the ExecV2 API. Like `build.run` and `build.exec`, it requires two-step approval before execution — agents cannot silently evaluate code without explicit confirmation.
+- `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
+- The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
+- The Unity main thread is blocked during eval; the editor Update loop pauses for the duration. This is consistent with how Unity processes all editor commands and ensures serialization safety.
 
 ## Human Interface: TUI & Keybindings
 
