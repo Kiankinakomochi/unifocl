@@ -130,6 +130,11 @@ These commands manage your session, project loading, and configuration. In the i
 | `/upm install <target>` | `/upm add`, `/upm i` | Install a package by package ID, Git URL, or `file:` target. |
 | `/upm remove <id>` | `/upm rm`, `/upm uninstall` | Remove a package by package ID. |
 | `/upm update <id> [version]` | `/upm u` | Update a package to latest or a specified version. |
+| `/prefab create <idx\|name> <asset-path>` |  | Convert a scene GameObject into a new Prefab Asset on disk. |
+| `/prefab apply <idx>` |  | Push instance overrides back to the source Prefab Asset. |
+| `/prefab revert <idx>` |  | Discard local overrides, revert to the source Prefab Asset. |
+| `/prefab unpack <idx> [--completely]` |  | Break the prefab connection, turning the instance into a regular GameObject. |
+| `/prefab variant <source-path> <new-path>` |  | Create a Prefab Variant inheriting from a base prefab. |
 | `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
 | `/version` |  | Show CLI and protocol version. |
@@ -232,6 +237,11 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `build cancel` |  | Request cancellation for active build in project mode. |
 | `build targets` |  | List Unity build support targets in project mode. |
 | `build logs` |  | Open restartable build log tail in project mode. |
+| `prefab create <idx\|name> <asset-path>` |  | Convert scene GameObject to new Prefab Asset on disk in project mode. |
+| `prefab apply <idx>` |  | Push instance overrides back to source Prefab Asset in project mode. |
+| `prefab revert <idx>` |  | Discard local overrides, revert to source Prefab Asset in project mode. |
+| `prefab unpack <idx> [--completely]` |  | Break prefab connection in project mode. |
+| `prefab variant <source-path> <new-path>` |  | Create Prefab Variant from base prefab in project mode. |
 
 ### 5. Safe Mutation: Dry-Run Previews
 
@@ -239,7 +249,7 @@ Both human operators and AI agents can validate mutations safely before executio
 
 - `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`)
 - `Inspector` mutations (`set`, `toggle`, `component add/remove`, `make`, `remove`, `rename`, `move`)
-- `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`)
+- `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`, `prefab-create`, `prefab-apply`, `prefab-revert`, `prefab-unpack`, `prefab-variant`)
 - **Custom `[UnifoclCommand]` tools** — pass `dryRun: true` in the tool arguments; unifocl wraps the call in a Unity Undo group and reverts all in-memory and AssetDatabase changes automatically (see [`docs/custom-commands.md`](docs/custom-commands.md))
 
 Behavior:
@@ -457,6 +467,11 @@ Endpoint list:
 | `build.exec` | PrivilegedExec | `method` |
 | `build.scenes.set` | SafeWrite | `scenes` (array of paths) |
 | `upm.remove` | DestructiveWrite | `packageId` |
+| `prefab.create` | SafeWrite | `nodeSelector`, `assetPath` |
+| `prefab.apply` | SafeWrite | `nodeSelector` |
+| `prefab.revert` | SafeWrite | `nodeSelector` |
+| `prefab.unpack` | DestructiveWrite | `nodeSelector`, `completely?` |
+| `prefab.variant` | SafeWrite | `sourcePath`, `newPath` |
 | `hierarchy.snapshot` | SafeRead | _(none)_ |
 | `session.open` | SafeRead | _(none)_ |
 | `session.close` | SafeRead | _(none)_ |
