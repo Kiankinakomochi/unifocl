@@ -1,0 +1,1341 @@
+{
+  "$schema": "../.codex/testcase.schema.json",
+  "suite": "explore-mk-hierarchy",
+  "runner": "dotnet run --project {suite_dir}/../src/unifocl/unifocl.csproj --no-build --",
+  "project": "{suite_dir}/../.local/compatcheck-benchmark",
+  "mode": "hierarchy",
+  "cases": [
+    {
+      "id": "open-project-for-hierarchy",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "version-protocol-v12",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/version",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".meta.protocol": "v12"
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "mk-empty-at-scene-root",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name RootLevelObject",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mk-emptychild-at-scene-root",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name SceneRootChild",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mk-emptychild-under-parent",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name ParentForChild",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "cd ParentForChild",
+          "assert": {
+            ".status": "success"
+          }
+        },
+        {
+          "cmd": "mk EmptyChild --name NestedChild",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 2",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mk-emptychild-deep-nesting",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name DeepRoot",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd DeepRoot",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name Level1",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd Level1",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name Level2",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd Level2",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name Level3",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "mk-type-aliases-cube",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Cube --name TestCube",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "mk-type-aliases-light",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Light --name TestLight",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "mk-type-aliases-canvas",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Canvas --name TestCanvas",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "mutate-create-returns-assigned-name",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"MutateCreateObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true,
+            ".data.results[0].createdId": { "$exists": true },
+            ".data.results[0].assignedName": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-batch-create-and-rename",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"BatchRenameTarget\"},{\"op\":\"rename\",\"target\":\"/BatchRenameTarget\",\"name\":\"RenamedBatch\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true,
+            ".data.results[1].ok": true,
+            ".data.results[1].assignedName": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-create-and-toggle-active",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"ToggleTarget\"},{\"op\":\"toggle_active\",\"target\":\"/ToggleTarget\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true,
+            ".data.results[1].ok": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-create-and-add-component",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"CompTarget\"},{\"op\":\"add_component\",\"target\":\"/CompTarget\",\"component\":\"BoxCollider\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[1].ok": true,
+            ".data.results[1].componentIndex": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-create-and-set-field",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"FieldTarget\"},{\"op\":\"set_field\",\"target\":\"/FieldTarget\",\"component\":\"Transform\",\"field\":\"m_LocalPosition.x\",\"value\":\"5\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[1].ok": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-create-and-remove",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"RemoveMe\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"remove\",\"target\":\"/RemoveMe\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "mutate-create-and-move",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"MoveParent\"},{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"MoveChild\"},{\"op\":\"move\",\"target\":\"/MoveChild\",\"parent\":\"/MoveParent\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true,
+            ".data.results[1].ok": true,
+            ".data.results[2].ok": true
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "dryrun-create-returns-preview",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"DryRunObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.dryRun": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-toggle-returns-preview",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"DryToggle\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/DryToggle\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.dryRun": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-then-real-mutation",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"DryThenReal\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/DryThenReal\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"toggle_active\",\"target\":\"/DryThenReal\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-setfield-then-real",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"DryFieldObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"set_field\",\"target\":\"/DryFieldObj\",\"component\":\"Transform\",\"field\":\"m_LocalPosition.x\",\"value\":\"10\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"set_field\",\"target\":\"/DryFieldObj\",\"component\":\"Transform\",\"field\":\"m_LocalPosition.x\",\"value\":\"10\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "repeated-dryrun-hierarchy-stable",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"StableObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/StableObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"set_field\",\"target\":\"/StableObj\",\"component\":\"Transform\",\"field\":\"m_LocalPosition.y\",\"value\":\"99\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"rename\",\"target\":\"/StableObj\",\"name\":\"ShouldNotPersist\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-does-not-corrupt-snapshot-hash",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"HashCheck\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/HashCheck\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "compile-request-and-status",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "compile request",
+          "mode": "project",
+          "assert": {
+            ".meta.exitCode": { "$gte": 0 }
+          }
+        },
+        {
+          "cmd": "compile status",
+          "mode": "project",
+          "assert": {
+            ".meta.exitCode": { "$gte": 0 }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "prefab-bare-shows-usage",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-unknown-subcommand-error",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab nonexistent",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "unknown" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-create-missing-args",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab create",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-apply-missing-args",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab apply",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-revert-missing-args",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab revert",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-unpack-missing-args",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab unpack",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-variant-missing-args",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab variant",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs | length": { "$gt": 0 },
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-create-no-daemon",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab create Player Assets/Prefabs/Test.prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "error",
+            ".errors | length": { "$gt": 0 },
+            ".errors[0].message": { "$contains": "daemon is not attached" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-apply-no-daemon",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab apply 3",
+          "mode": "project",
+          "assert": {
+            ".status": "error",
+            ".errors[0].message": { "$contains": "daemon is not attached" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-revert-no-daemon",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab revert 5",
+          "mode": "project",
+          "assert": {
+            ".status": "error",
+            ".errors[0].message": { "$contains": "daemon is not attached" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-unpack-no-daemon",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab unpack 2",
+          "mode": "project",
+          "assert": {
+            ".status": "error",
+            ".errors[0].message": { "$contains": "daemon is not attached" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-variant-no-daemon",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab variant Assets/Base.prefab Assets/Variant.prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "error",
+            ".errors[0].message": { "$contains": "daemon is not attached" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-create-auto-appends-ext",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "prefab create Player Assets/Prefabs/Test",
+          "mode": "project",
+          "assert": {
+            ".status": "error",
+            ".errors[0].message": { "$contains": "daemon is not attached" }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "prefab-create-live-e2e",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name PrefabE2E",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "prefab create PrefabE2E Assets/Prefabs/PrefabE2E.prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "PrefabE2E" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-create-nested-hierarchy",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name NestPrefabRoot",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd NestPrefabRoot",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name NestChild1",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name NestChild2",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "up",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create NestPrefabRoot Assets/Prefabs/NestPrefabRoot.prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "NestPrefabRoot" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-variant-live",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name VariantBase",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create VariantBase Assets/Prefabs/VariantBase.prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".data.logs[-1]": { "$contains": "VariantBase" }
+          }
+        },
+        {
+          "cmd": "prefab variant Assets/Prefabs/VariantBase.prefab Assets/Prefabs/VariantDerived.prefab",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "VariantDerived" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-apply-live",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name ApplyTarget",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create ApplyTarget Assets/Prefabs/ApplyTarget.prefab",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab apply ApplyTarget",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "applied" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-revert-live",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name RevertTarget",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create RevertTarget Assets/Prefabs/RevertTarget.prefab",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab revert RevertTarget",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "reverted" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-unpack-outermost-live",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name UnpackOuter",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create UnpackOuter Assets/Prefabs/UnpackOuter.prefab",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab unpack UnpackOuter",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "unpacked" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prefab-unpack-completely-live",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name UnpackFull",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab create UnpackFull Assets/Prefabs/UnpackFull.prefab",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "prefab unpack UnpackFull --completely",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[-1]": { "$contains": "completely" }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "dryrun-create-then-verify-no-side-effects",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"GhostObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-rename-preserves-original-name",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"KeepMyName\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"rename\",\"target\":\"/KeepMyName\",\"name\":\"ShouldNotStick\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-remove-preserves-object",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"DontRemoveMe\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"remove\",\"target\":\"/DontRemoveMe\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dryrun-add-component-no-side-effects",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"DryCompObj\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"add_component\",\"target\":\"/DryCompObj\",\"component\":\"Rigidbody\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"add_component\",\"target\":\"/DryCompObj\",\"component\":\"Rigidbody\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "session-open-close-roundtrip",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".meta.extra.sessionSeed": { "$exists": true }
+          }
+        },
+        {
+          "cmd": "/dump project",
+          "mode": "project",
+          "assert": {
+            ".meta.extra.sessionRestored": true
+          }
+        },
+        {
+          "cmd": "/close",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "hierarchy-navigation-cd-up",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name NavParent",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd NavParent",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name NavChild",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "cd NavChild",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "up",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "up",
+          "assert": { ".status": "success" }
+        }
+      ]
+    },
+    {
+      "id": "hierarchy-rename-interactive",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name BeforeRename",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "rename BeforeRename AfterRename",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "hierarchy-toggle-interactive",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk Empty --name ToggleInteractive",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "toggle ToggleInteractive",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        },
+        {
+          "cmd": "toggle ToggleInteractive",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "multi-dryrun-then-real-batch",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"BatchA\"},{\"op\":\"create\",\"parent\":\"/\",\"type\":\"empty\",\"name\":\"BatchB\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true,
+            ".data.results[0].ok": true,
+            ".data.results[1].ok": true
+          }
+        },
+        {
+          "cmd": "/mutate --dry-run [{\"op\":\"toggle_active\",\"target\":\"/BatchA\"},{\"op\":\"toggle_active\",\"target\":\"/BatchB\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.dryRun": true
+          }
+        },
+        {
+          "cmd": "/mutate [{\"op\":\"toggle_active\",\"target\":\"/BatchA\"},{\"op\":\"toggle_active\",\"target\":\"/BatchB\"}]",
+          "assert": {
+            ".status": "success",
+            ".data.allOk": true
+          }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "emptychild-multiple-siblings-at-root",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name SiblingA",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name SiblingB",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "mk EmptyChild --name SiblingC",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/dump hierarchy --format json --depth 1",
+          "assert": {
+            ".status": "success",
+            ".data.root": { "$exists": true }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "close-session-final",
+      "predict": "pass",
+      "steps": [
+        {
+          "cmd": "/open .local/compatcheck-benchmark",
+          "mode": "project",
+          "assert": { ".status": "success" }
+        },
+        {
+          "cmd": "/close",
+          "mode": "project",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0
+          }
+        }
+      ]
+    }
+  ]
+}
