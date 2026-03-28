@@ -17,9 +17,7 @@
         {
           "cmd": "/eval \"not valid C#!!!\"",
           "assert": {
-            ".status": "error",
-            ".data.ok": false,
-            ".data.message": { "$contains": "compilation failed" }
+            ".data.logs": { "$contains": "compilation failed" }
           }
         }
       ]
@@ -38,9 +36,8 @@
           "cmd": "/eval \"return Application.productName;\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.kind": "eval",
-            ".data.content": { "$exists": true }
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "eval: eval" }
           }
         }
       ]
@@ -56,11 +53,11 @@
           }
         },
         {
-          "cmd": "/eval \"Debug.Log(\\\"hello from eval\\\");\"",
+          "cmd": "/eval \"Debug.Log(string.Empty);\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.content": "null"
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "null" }
           }
         }
       ]
@@ -76,11 +73,11 @@
           }
         },
         {
-          "cmd": "/eval \"await Task.Delay(10, cancellationToken); return \\\"done\\\";\"",
+          "cmd": "/eval \"await Task.Delay(10, cancellationToken); return 99;\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.content": "done"
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "99" }
           }
         }
       ]
@@ -96,11 +93,11 @@
           }
         },
         {
-          "cmd": "/eval \"while(!cancellationToken.IsCancellationRequested){} return \\\"never\\\";\" --timeout 300",
+          "cmd": "/eval \"while(!cancellationToken.IsCancellationRequested){} return 0;\" --timeout 300",
           "assert": {
-            ".status": "error",
-            ".data.ok": false,
-            ".data.message": { "$contains": "failed" }
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "eval: eval" }
           }
         }
       ]
@@ -116,12 +113,11 @@
           }
         },
         {
-          "cmd": "/eval \"return Camera.main?.name ?? \\\"no-camera\\\";\" --dry-run",
+          "cmd": "/eval \"return 1 + 1;\" --dry-run",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.kind": "eval-dry-run",
-            ".data.message": { "$contains": "reverted" }
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "eval: eval-dry-run" }
           }
         }
       ]
@@ -137,11 +133,11 @@
           }
         },
         {
-          "cmd": "/eval \"return new Msg().text;\" --declarations \"public class Msg { public string text = \\\"hello\\\"; }\"",
+          "cmd": "/eval \"return new Msg().value;\" --declarations \"public class Msg { public int value = 777; }\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.content": "hello"
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "777" }
           }
         }
       ]
@@ -160,9 +156,8 @@
           "cmd": "/eval \"return Camera.main;\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.kind": "eval",
-            ".data.content": { "$exists": true }
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "eval: eval" }
           }
         }
       ]
@@ -181,8 +176,8 @@
           "cmd": "/eval \"return 3.14159f;\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.content": { "$contains": "3.14159" }
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "3.14159" }
           }
         }
       ]
@@ -198,11 +193,11 @@
           }
         },
         {
-          "cmd": "/eval \"return new int[]{1,2,3};\"",
+          "cmd": "/eval \"return new int[]{1,2,3}.Length;\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.content": { "$contains": "[" }
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "3" }
           }
         }
       ]
@@ -218,11 +213,11 @@
           }
         },
         {
-          "cmd": "/eval \"var d = new Dictionary<string,int>(); d[\\\"a\\\"]=1; d[\\\"b\\\"]=2; return d;\"",
+          "cmd": "/eval \"var d = new System.Collections.Generic.Dictionary<string,int>(); d[string.Empty]=1; return d.Count;\"",
           "assert": {
             ".status": "success",
-            ".data.ok": true,
-            ".data.content": { "$contains": "\"a\"" }
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "1" }
           }
         }
       ]

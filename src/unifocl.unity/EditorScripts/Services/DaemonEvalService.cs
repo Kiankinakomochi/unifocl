@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace UniFocl.EditorBridge
 {
@@ -27,7 +29,7 @@ namespace UniFocl.EditorBridge
 
         private static int _sequence;
 
-        public static string Execute(ProjectCommandRequest request, bool isDryRun)
+        public static async Task<string> ExecuteAsync(ProjectCommandRequest request, bool isDryRun)
         {
             EvalRequestPayload payload;
             try
@@ -45,7 +47,7 @@ namespace UniFocl.EditorBridge
                 return ErrorResponse("eval requires a code expression");
             }
 
-            var (method, compileError) = CompileToMethod(payload.code, payload.declarations);
+            var (method, compileError) = await CompileToMethodAsync(payload.code, payload.declarations);
             if (method is null)
             {
                 return ErrorResponse("compilation failed:\n" + compileError);
@@ -56,17 +58,17 @@ namespace UniFocl.EditorBridge
                 : new CancellationTokenSource();
 
             return isDryRun
-                ? InvokeWithDryRun(method, cts.Token)
-                : InvokeDirect(method, cts.Token);
+                ? await InvokeWithDryRunAsync(method, cts.Token)
+                : await InvokeDirectAsync(method, cts.Token);
         }
 
         // ── Invocation ──────────────────────────────────────────────────────────
 
-        private static string InvokeDirect(MethodInfo method, CancellationToken ct)
+        private static async Task<string> InvokeDirectAsync(MethodInfo method, CancellationToken ct)
         {
             try
             {
-                var result = RunAndAwait(method, ct);
+                var result = await RunAndAwaitAsync(method, ct);
                 return SuccessResponse("eval", Serialize(result));
             }
             catch (TargetInvocationException tie)
@@ -86,7 +88,7 @@ namespace UniFocl.EditorBridge
         /// <see cref="DaemonCustomToolService"/> InvokeWithDryRun.
         /// Raw <c>System.IO</c> writes are NOT reverted (documented limitation).
         /// </summary>
-        private static string InvokeWithDryRun(MethodInfo method, CancellationToken ct)
+        private static async Task<string> InvokeWithDryRunAsync(MethodInfo method, CancellationToken ct)
         {
             var undoGroupBefore = Undo.GetCurrentGroup();
             Undo.IncrementCurrentGroup();
@@ -97,7 +99,7 @@ namespace UniFocl.EditorBridge
 
             try
             {
-                var result = RunAndAwait(method, ct);
+                var result = await RunAndAwaitAsync(method, ct);
                 serialized = Serialize(result);
             }
             catch (TargetInvocationException tie)
@@ -139,22 +141,37 @@ namespace UniFocl.EditorBridge
 
         /// <summary>
         /// Invoke the compiled method and transparently await if it returns a Task.
+        /// Uses <c>ConfigureAwait(false)</c> to avoid posting the continuation
+        /// back to the <c>UnitySynchronizationContext</c>, which would deadlock
+        /// if the main thread is occupied by the drain loop.
         /// </summary>
-        private static object RunAndAwait(MethodInfo method, CancellationToken ct)
+        private static async Task<object> RunAndAwaitAsync(MethodInfo method, CancellationToken ct)
         {
-            var rv = method.Invoke(null, new object[] { ct });
-
-            // The entry point is always async Task<object>, but handle edge cases
-            // where user code somehow returns a plain Task or a non-task value.
-            if (rv is Task<object> typed)
-                return typed.GetAwaiter().GetResult();
-            if (rv is Task bare)
+            // Temporarily clear the SynchronizationContext so that any await
+            // inside the user's async code does NOT capture the Unity main-thread
+            // context. Without this, user awaits (e.g. Task.Delay) try to post
+            // their continuation back to the main thread, which is occupied by
+            // the durable mutation dispatcher — causing a deadlock.
+            var prevCtx = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(null);
+            try
             {
-                bare.GetAwaiter().GetResult();
-                return null;
-            }
+                var rv = method.Invoke(null, new object[] { ct });
 
-            return rv;
+                if (rv is Task<object> typed)
+                    return await typed.ConfigureAwait(false);
+                if (rv is Task bare)
+                {
+                    await bare.ConfigureAwait(false);
+                    return null;
+                }
+
+                return rv;
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(prevCtx);
+            }
         }
 
         // ── Compilation ─────────────────────────────────────────────────────────
@@ -164,7 +181,7 @@ namespace UniFocl.EditorBridge
         /// loads the resulting assembly from bytes, and returns the entry-point
         /// <see cref="MethodInfo"/>. Temp artefacts are always cleaned up.
         /// </summary>
-        private static (MethodInfo method, string error) CompileToMethod(string code, string declarations)
+        private static async Task<(MethodInfo method, string error)> CompileToMethodAsync(string code, string declarations)
         {
             var seq = ++_sequence;
             var typeName = $"_UnifoclEval{seq}_";
@@ -178,7 +195,7 @@ namespace UniFocl.EditorBridge
             {
                 File.WriteAllText(srcPath, BuildSource(typeName, code, declarations));
 
-                var compileErr = CompileSource(srcPath, dllPath);
+                var compileErr = await CompileSourceAsync(srcPath, dllPath);
                 if (compileErr is not null)
                     return (null, compileErr);
 
@@ -242,12 +259,25 @@ namespace UniFocl.EditorBridge
         }
 
         /// <summary>
-        /// Compile via Unity's <see cref="AssemblyBuilder"/> (supports the same
-        /// C# language version as the project). Uses a 30-second timeout to handle
-        /// batchmode where the main thread may be blocked.
+        /// Dispatch to the appropriate compiler backend.
+        /// Bridge mode (GUI editor) uses <see cref="AssemblyBuilder"/> with an async
+        /// await so the main thread yields and Unity can fire <c>buildFinished</c>
+        /// on its next update tick.
+        /// Host mode (batchmode) shells out to Unity's bundled Roslyn <c>csc</c>
+        /// via <see cref="Process"/> because the batchmode main-thread loop does
+        /// not pump Unity's internal update and <c>buildFinished</c> never fires.
         /// Returns null on success or a newline-joined error string.
         /// </summary>
-        private static string CompileSource(string srcPath, string dllPath)
+        private static Task<string> CompileSourceAsync(string srcPath, string dllPath)
+        {
+            return Application.isBatchMode
+                ? CompileViaProcessAsync(srcPath, dllPath)
+                : CompileViaAssemblyBuilderAsync(srcPath, dllPath);
+        }
+
+        // ── AssemblyBuilder path (bridge mode) ─────────────────────────────────
+
+        private static async Task<string> CompileViaAssemblyBuilderAsync(string srcPath, string dllPath)
         {
             try
             {
@@ -262,8 +292,10 @@ namespace UniFocl.EditorBridge
                 if (!builder.Build())
                     return "AssemblyBuilder failed to start — is the editor compiling?";
 
-                if (!done.Task.Wait(TimeSpan.FromSeconds(30)))
-                    return "compilation timed out (AssemblyBuilder requires the Unity main thread; eval is not supported in headless/batchmode)";
+                var timeout = Task.Delay(TimeSpan.FromSeconds(30));
+                var winner = await Task.WhenAny(done.Task, timeout);
+                if (winner == timeout)
+                    return "compilation timed out (30 s) — AssemblyBuilder.buildFinished was never invoked";
 
                 var messages = done.Task.Result;
                 StringBuilder errors = null;
@@ -281,6 +313,87 @@ namespace UniFocl.EditorBridge
             {
                 return $"AssemblyBuilder error: {ex.Message}";
             }
+        }
+
+        // ── Process-based path (host / batchmode) ──────────────────────────────
+
+        private static Task<string> CompileViaProcessAsync(string srcPath, string dllPath)
+        {
+            try
+            {
+                var (dotnetPath, cscPath) = ResolveBundledCompiler();
+                if (dotnetPath is null)
+                    return Task.FromResult("cannot locate Unity's bundled dotnet/csc — eval is unavailable in batchmode");
+
+                var refs = CollectReferences();
+                var sb = new StringBuilder();
+                sb.Append("exec ").Append(Quote(cscPath));
+                sb.Append(" -target:library");
+                sb.Append(" -out:").Append(Quote(Path.GetFullPath(dllPath)));
+                sb.Append(" -nologo -nowarn:CS0162,CS1998");
+                foreach (var r in refs)
+                    sb.Append(" -reference:").Append(Quote(r));
+                sb.Append(' ').Append(Quote(Path.GetFullPath(srcPath)));
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = dotnetPath,
+                    Arguments = sb.ToString(),
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                using var proc = Process.Start(psi);
+                if (proc is null)
+                    return Task.FromResult("failed to start compiler process");
+
+                var stdout = proc.StandardOutput.ReadToEnd();
+                var stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(30_000);
+
+                if (!proc.HasExited)
+                {
+                    try { proc.Kill(); } catch { }
+                    return Task.FromResult("compiler process timed out (30 s)");
+                }
+
+                if (proc.ExitCode != 0)
+                {
+                    var output = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                    return Task.FromResult($"compilation failed (exit {proc.ExitCode}):\n{output.Trim()}");
+                }
+
+                return Task.FromResult<string>(null);
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult($"process compiler error: {ex.Message}");
+            }
+        }
+
+        private static (string dotnet, string csc) ResolveBundledCompiler()
+        {
+            var contentsPath = EditorApplication.applicationContentsPath; // .../Unity.app/Contents
+            var scriptingRoot = Path.Combine(contentsPath, "Resources", "Scripting");
+
+            var dotnet = Path.Combine(scriptingRoot, "NetCoreRuntime", "dotnet");
+            var csc = Path.Combine(scriptingRoot, "DotNetSdkRoslyn", "csc.dll");
+
+            // Windows: dotnet.exe
+            if (!File.Exists(dotnet) && File.Exists(dotnet + ".exe"))
+                dotnet += ".exe";
+
+            if (File.Exists(dotnet) && File.Exists(csc))
+                return (dotnet, csc);
+
+            return (null, null);
+        }
+
+        private static string Quote(string path)
+        {
+            return '"' + path.Replace("\"", "\\\"") + '"';
         }
 
         /// <summary>
@@ -328,21 +441,44 @@ namespace UniFocl.EditorBridge
             if (obj is null) return "null";
             if (obj is string s) return s;
 
+            // Primitives and simple value types — go straight to the reflection walker
+            // which handles int, float, bool, enum, etc. correctly.
+            // Must come before the [Serializable] check because System.Int32 et al.
+            // are [Serializable] but JsonUtility.ToJson produces "{}" for them.
+            var type = obj.GetType();
+            if (type.IsPrimitive || type.IsEnum || obj is decimal)
+            {
+                var sb = new StringBuilder(32);
+                WriteValue(sb, obj, 0);
+                return sb.ToString();
+            }
+
+            // Collections and dictionaries — use reflection walker which handles
+            // them as JSON arrays/objects. Must come before [Serializable] because
+            // System.Int32[], List<T>, Dictionary<K,V> etc. are [Serializable] but
+            // JsonUtility.ToJson produces "{}" for them.
+            if (obj is IDictionary || obj is IEnumerable)
+            {
+                var sb = new StringBuilder(256);
+                WriteValue(sb, obj, 0);
+                return sb.ToString();
+            }
+
             // Unity objects get full editor serialization (components, assets, etc.)
             if (obj is UnityEngine.Object uo)
                 return EditorJsonUtility.ToJson(uo, prettyPrint: true);
 
             // Types marked [Serializable] — use Unity's fast JsonUtility path
-            if (obj.GetType().IsDefined(typeof(SerializableAttribute), false))
+            if (type.IsDefined(typeof(SerializableAttribute), false))
             {
                 try { return JsonUtility.ToJson(obj, prettyPrint: true); }
                 catch { /* fall through to reflection */ }
             }
 
             // Structured reflection walk for everything else
-            var sb = new StringBuilder(256);
-            WriteValue(sb, obj, 0);
-            return sb.ToString();
+            var sb2 = new StringBuilder(256);
+            WriteValue(sb2, obj, 0);
+            return sb2.ToString();
         }
 
         private static void WriteValue(StringBuilder sb, object obj, int depth)

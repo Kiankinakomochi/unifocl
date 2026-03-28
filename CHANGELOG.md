@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.8.0 - 2026-03-28
+
+### Added
+- **`/eval` command for dynamic C# execution**: compile and execute arbitrary C# code in the Unity Editor context. Supports `--dry-run` (Undo sandbox), `--timeout` (CancellationToken), `--declarations` (custom types), and async `await` in user code. Registered as `eval.run` (PrivilegedExec) in the ExecV2 API.
+- **Dual-compiler backend**: bridge mode (GUI editor) uses Unity's `AssemblyBuilder` with async `buildFinished` await; host mode (batchmode) shells out to Unity's bundled Roslyn `csc.dll` via `Process.Start`, avoiding the `AssemblyBuilder` deadlock where the batchmode main-thread loop does not pump Unity's internal update callbacks.
+- **Durable mutation dispatch for eval**: eval now routes through the same submit/poll protocol as all other project-mutating commands, eliminating the main-thread deadlock that occurred when eval tried to return synchronously within a single HTTP round-trip.
+- **Multi-tier result serialization**: primitives, enums, collections, dictionaries, `UnityEngine.Object`, `[Serializable]` types, and arbitrary objects are each serialized through the most appropriate strategy with depth-limited reflection (max 8 levels).
+
+### Fixed
+- **`AssemblyBuilder` deadlock in both host and bridge modes**: `buildFinished` fires on the main thread during Unity's update loop, but eval was blocking the main thread with synchronous `Task.Wait()`. Compilation is now fully async — bridge mode yields via `await`, host mode uses an out-of-process compiler.
+- **Sync-over-async deadlock on user `await` expressions**: `await` inside eval code captured the `UnitySynchronizationContext`, posting continuations to the blocked main thread. The `SynchronizationContext` is now temporarily cleared before invoking user code.
+- **Primitives and collections serialized as `"{}"`**: `int`, `int[]`, `List<T>`, and `Dictionary<K,V>` are `[Serializable]`, causing `JsonUtility.ToJson` to produce `"{}"`. Primitives and collections are now checked before the `[Serializable]` path and routed to the reflection walker.
+
+### Tests
+- **`suite-eval-command`**: 11-case integration test suite covering compilation errors, simple returns, void expressions, async/await, timeout cancellation, dry-run revert, custom declarations, Unity object serialization, numeric precision, collection serialization, and dictionary serialization.
+
 ## 2.7.1 - 2026-03-28
 
 ### Fixed

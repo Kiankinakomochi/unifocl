@@ -310,8 +310,7 @@ namespace UniFocl.EditorBridge
         private static Task<string> ExecuteCommandCoreAsync(ProjectCommandRequest request, bool durableDispatch)
         {
             var isDryRun = request.intent is not null && request.intent.flags is not null && request.intent.flags.dryRun;
-            var isEvalCode = request.action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
-            if (durableDispatch && !isDryRun && !isEvalCode)
+            if (durableDispatch && !isDryRun)
             {
                 return Task.FromResult(SubmitMutationPayload(JsonUtility.ToJson(request)));
             }
@@ -340,7 +339,7 @@ namespace UniFocl.EditorBridge
                 "prefab-revert" => Task.FromResult(ExecutePrefabRevert(request)),
                 "prefab-unpack" => Task.FromResult(ExecutePrefabUnpack(request)),
                 "prefab-variant" => Task.FromResult(ExecutePrefabVariant(request)),
-                "eval-code" => Task.FromResult(DaemonEvalService.Execute(request, isDryRun)),
+                "eval-code" => DaemonEvalService.ExecuteAsync(request, isDryRun),
                 _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
             };
         }

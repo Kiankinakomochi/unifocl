@@ -125,20 +125,14 @@ internal sealed class HierarchyDaemonClient
         var isUpmMutation = request.Action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
                             || request.Action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase);
         var isProjectMutation = DaemonMutationActionCatalog.IsProjectMutation(request.Action);
-        var isEval = request.Action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
         var timeout = isSceneLoad
             ? SceneLoadTimeout
             : (isBuildDispatch ? TimeSpan.FromSeconds(20) : (isUpmMutation ? UpmMutationTimeout : TimeSpan.FromSeconds(90)));
 
-        // eval-code executes synchronously and returns the result directly;
-        // skip the durable mutation transport which would queue it instead.
-        if (!isEval)
+        var durable = await MutationTransport.ExecuteProjectCommandAsync(port, requestWithId, timeout, onStatus);
+        if (durable is not null)
         {
-            var durable = await MutationTransport.ExecuteProjectCommandAsync(port, requestWithId, timeout, onStatus);
-            if (durable is not null)
-            {
-                return durable;
-            }
+            return durable;
         }
 
         onStatus?.Invoke("durable project command endpoints unavailable; falling back to legacy project command transport");

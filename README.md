@@ -321,26 +321,38 @@ unifocl eval 'return Camera.main;'
 
 **Compilation:**
 
-Code is compiled through Unity's own `AssemblyBuilder` pipeline rather than the legacy `CSharpCodeProvider`. This means eval code targets the same C# language version your project uses — modern pattern matching, nullable reference types, records, and other recent C# features work out of the box.
+Eval uses a dual-compiler strategy that selects the best backend for the current environment:
+
+| Mode | Compiler | Detail |
+| --- | --- | --- |
+| Bridge (GUI editor) | Unity `AssemblyBuilder` | Async — yields to the editor update loop while `buildFinished` fires on the next tick. Same C# language version as the project. |
+| Host (batchmode) | Unity-bundled Roslyn `csc` | Out-of-process via `Process.Start` using the `dotnet` and `csc.dll` shipped inside the Unity editor install. No dependency on the editor update loop. |
+
+Both paths resolve assembly references from `AppDomain.CurrentDomain.GetAssemblies()`, so project scripts, packages, and plugins are available. Temporary eval DLLs are self-filtered to avoid stale references.
 
 - The entry point is always `async Task<object>`, so `await` works naturally without special flags or detection heuristics.
 - A `CancellationToken cancellationToken` parameter is available inside eval code, wired to the `--timeout` value.
 - Default usings cover the most common scenarios: `System`, `System.IO`, `System.Linq`, `System.Collections.Generic`, `System.Text.RegularExpressions`, `System.Threading.Tasks`, `UnityEngine`, and `UnityEditor`.
-- All assemblies loaded in the current editor session are available as references (project scripts, packages, plugins). Temporary eval artefacts are automatically excluded.
+
+**Execution model:**
+
+Eval is dispatched through the same durable mutation protocol as all other project-mutating commands (submit → poll → result). This avoids blocking the main thread during compilation and allows the editor update loop to continue processing internal callbacks.
+
+The `SynchronizationContext` is temporarily cleared before invoking user code, so `await` expressions inside eval do not deadlock by posting continuations back to the occupied main thread — they resume on the thread pool instead.
 
 **Result serialization:**
 
-unifocl uses a three-tier serialization strategy to produce the most informative output for each return type:
+unifocl uses a multi-tier serialization strategy to produce the most informative output for each return type:
 
 | Return type | Serialization strategy |
 | --- | --- |
 | `null` / void | `"null"` |
 | `string` | Raw string value |
 | Primitives (`int`, `float`, `bool`, ...) | Literal value with full numeric precision (`float` G9, `double` G17) |
-| `UnityEngine.Object` | Full editor serialization via `EditorJsonUtility.ToJson` |
-| `[Serializable]` types | Unity's fast `JsonUtility.ToJson` path |
 | `IDictionary` | JSON object with string keys |
 | `IEnumerable` (arrays, lists, sets, ...) | JSON array |
+| `UnityEngine.Object` | Full editor serialization via `EditorJsonUtility.ToJson` |
+| `[Serializable]` types | Unity's fast `JsonUtility.ToJson` path |
 | Structured objects | Depth-limited reflection walk over public fields and readable properties |
 | Other | `obj.ToString()` |
 
@@ -351,7 +363,6 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 - `eval.run` is classified as `PrivilegedExec` in the ExecV2 API. Like `build.run` and `build.exec`, it requires two-step approval before execution — agents cannot silently evaluate code without explicit confirmation.
 - `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
 - The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
-- The Unity main thread is blocked during eval; the editor Update loop pauses for the duration. This is consistent with how Unity processes all editor commands and ensures serialization safety.
 
 ## Human Interface: TUI & Keybindings
 
