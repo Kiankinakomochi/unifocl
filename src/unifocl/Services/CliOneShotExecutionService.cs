@@ -667,7 +667,7 @@ internal static class CliOneShotExecutionService
             }
 
             await AwaitWithCancellationAsync(
-                () => HandleEvalCommandAsync(input, session, streamLog),
+                () => HandleEvalCommandAsync(input, session, daemonControlService, daemonRuntime, streamLog),
                 cancellationToken);
             return;
         }
@@ -751,7 +751,12 @@ internal static class CliOneShotExecutionService
         CliLogService.AppendLog(streamLog, "[grey]hint[/]: run /help for available commands and mode-specific workflows");
     }
 
-    private static async Task HandleEvalCommandAsync(string input, CliSessionState session, List<string> streamLog)
+    private static async Task HandleEvalCommandAsync(
+        string input,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        List<string> streamLog)
     {
         var tokens = CliCommandParsingService.TokenizeComposerInput(input);
         if (tokens.Count < 2)
@@ -799,9 +804,29 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        // Ensure daemon is attached (re-attach/start if session has a persisted project)
+        if (DaemonControlService.GetPort(session) is not int)
+        {
+            if (!await daemonControlService.TouchAttachedDaemonAsync(session)
+                && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                if (DaemonControlService.IsUnityClientActiveForProject(session.CurrentProjectPath))
+                {
+                    await daemonControlService.TryAttachProjectDaemonAsync(session.CurrentProjectPath, session);
+                }
+                else
+                {
+                    await daemonControlService.EnsureProjectDaemonAsync(
+                        session.CurrentProjectPath, daemonRuntime, session,
+                        line => CliLogService.AppendLog(streamLog, line),
+                        requireBridgeMode: true);
+                }
+            }
+        }
+
         if (DaemonControlService.GetPort(session) is not int port)
         {
-            CliLogService.AppendLog(streamLog, "[yellow]eval[/]: daemon is not attached");
+            CliLogService.AppendLog(streamLog, "[yellow]eval[/]: daemon is not attached — open a project first with /open");
             return;
         }
 

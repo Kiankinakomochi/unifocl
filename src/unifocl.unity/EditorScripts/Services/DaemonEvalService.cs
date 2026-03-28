@@ -178,11 +178,11 @@ namespace UniFocl.EditorBridge
             {
                 File.WriteAllText(srcPath, BuildSource(typeName, code, declarations));
 
-                var compileErr = RunAssemblyBuilder(srcPath, dllPath);
+                var compileErr = CompileSource(srcPath, dllPath);
                 if (compileErr is not null)
                     return (null, compileErr);
 
-                var asm = Assembly.Load(File.ReadAllBytes(dllPath));
+                var asm = System.Reflection.Assembly.Load(File.ReadAllBytes(dllPath));
                 var type = asm.GetType(typeName);
                 var mi = type?.GetMethod(MethodName, BindingFlags.Public | BindingFlags.Static);
                 return mi is not null
@@ -242,34 +242,45 @@ namespace UniFocl.EditorBridge
         }
 
         /// <summary>
-        /// Invoke Unity's <see cref="AssemblyBuilder"/> synchronously.
+        /// Compile via Unity's <see cref="AssemblyBuilder"/> (supports the same
+        /// C# language version as the project). Uses a 30-second timeout to handle
+        /// batchmode where the main thread may be blocked.
         /// Returns null on success or a newline-joined error string.
         /// </summary>
-        private static string RunAssemblyBuilder(string srcPath, string dllPath)
+        private static string CompileSource(string srcPath, string dllPath)
         {
-            var done = new TaskCompletionSource<CompilerMessage[]>();
-            var builder = new AssemblyBuilder(dllPath, srcPath)
+            try
             {
-                referencesOptions = ReferencesOptions.UseEngineModules,
-                additionalReferences = CollectReferences()
-            };
-            builder.buildFinished += (_, msgs) => done.TrySetResult(msgs);
+                var done = new TaskCompletionSource<CompilerMessage[]>();
+                var builder = new AssemblyBuilder(dllPath, srcPath)
+                {
+                    referencesOptions = ReferencesOptions.UseEngineModules,
+                    additionalReferences = CollectReferences()
+                };
+                builder.buildFinished += (_, msgs) => done.TrySetResult(msgs);
 
-            if (!builder.Build())
-                return "AssemblyBuilder failed to start — is the editor compiling?";
+                if (!builder.Build())
+                    return "AssemblyBuilder failed to start — is the editor compiling?";
 
-            var messages = done.Task.GetAwaiter().GetResult();
+                if (!done.Task.Wait(TimeSpan.FromSeconds(30)))
+                    return "compilation timed out (AssemblyBuilder requires the Unity main thread; eval is not supported in headless/batchmode)";
 
-            StringBuilder errors = null;
-            foreach (var m in messages)
-            {
-                if (m.type != CompilerMessageType.Error) continue;
-                errors ??= new StringBuilder();
-                if (errors.Length > 0) errors.AppendLine();
-                errors.Append(m.message);
+                var messages = done.Task.Result;
+                StringBuilder errors = null;
+                foreach (var m in messages)
+                {
+                    if (m.type != CompilerMessageType.Error) continue;
+                    errors ??= new StringBuilder();
+                    if (errors.Length > 0) errors.AppendLine();
+                    errors.Append(m.message);
+                }
+
+                return errors?.ToString();
             }
-
-            return errors?.ToString();
+            catch (Exception ex)
+            {
+                return $"AssemblyBuilder error: {ex.Message}";
+            }
         }
 
         /// <summary>

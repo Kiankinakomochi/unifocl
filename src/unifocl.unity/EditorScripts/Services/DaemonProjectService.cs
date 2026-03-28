@@ -310,7 +310,8 @@ namespace UniFocl.EditorBridge
         private static Task<string> ExecuteCommandCoreAsync(ProjectCommandRequest request, bool durableDispatch)
         {
             var isDryRun = request.intent is not null && request.intent.flags is not null && request.intent.flags.dryRun;
-            if (durableDispatch && !isDryRun)
+            var isEvalCode = request.action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
+            if (durableDispatch && !isDryRun && !isEvalCode)
             {
                 return Task.FromResult(SubmitMutationPayload(JsonUtility.ToJson(request)));
             }

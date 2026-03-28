@@ -24,6 +24,7 @@ internal sealed class EditorDependencyInitializerService
     private const string UnifoclManifestGeneratorResource = "Payload/EditorScripts/UnifoclManifestGenerator.cs";
     private const string UnifoclEditorConfigResource = "Payload/EditorScripts/Models/UnifoclEditorConfig.cs";
     private const string DaemonCustomToolServiceResource = "Payload/EditorScripts/Services/DaemonCustomToolService.cs";
+    private const string DaemonEvalServiceResource = "Payload/EditorScripts/Services/DaemonEvalService.cs";
     private const string UnifoclCompilationServiceResource = "Payload/EditorScripts/Services/UnifoclCompilationService.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
 
@@ -134,6 +135,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "UnifoclManifestGenerator.cs"),
             Path.Combine(packagePath, "Editor", "Models", "UnifoclEditorConfig.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonCustomToolService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonEvalService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "UnifoclCompilationService.cs")
         };
         foreach (var requiredFile in requiredFiles)
@@ -248,6 +250,7 @@ internal sealed class EditorDependencyInitializerService
                 (UnifoclManifestGeneratorResource,      Path.Combine("Editor", "UnifoclManifestGenerator.cs")),
                 (UnifoclEditorConfigResource,           Path.Combine("Editor", "Models", "UnifoclEditorConfig.cs")),
                 (DaemonCustomToolServiceResource,       Path.Combine("Editor", "Services", "DaemonCustomToolService.cs")),
+                (DaemonEvalServiceResource,             Path.Combine("Editor", "Services", "DaemonEvalService.cs")),
                 (UnifoclCompilationServiceResource,     Path.Combine("Editor", "Services", "UnifoclCompilationService.cs"))
             };
 
