@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.9.0 - 2026-03-29
+
+### Refactor
+- **Sunset protobuf from CLI build**: removed `Unifocl.Shared` project reference from `unifocl.csproj` and the `using Unifocl.Contracts` import from `HierarchyTui.cs`. The `HierarchyMkType` proto enum is replaced by a CLI-local string catalog (`BuildMkTypeLookup`) using the same `Add(canonical, aliases...)` pattern as `ProjectMkCatalog`. All 30 mk types and their aliases are preserved verbatim; the `TryNormalizeMkType` return path now yields the canonical string directly.
+- **Updated AGENT.md contract strategy**: replaced the "Contract Pipeline Strategy + Plugin Sync" rules (protobuf IDL + `sync-protobuf-unity-plugin.sh`) with the actual contract approach: plain C# records over JSON, TypeCache as the open-ended type discovery mechanism for custom mk types.
+
+### Fixed
+- **`mk AreaLight` created a `ReflectionProbe` instead of a light**: `arealight` was a fall-through case in `DaemonHierarchyService.CreateTypedObject` that silently routed to `CreateReflectionProbe`. It now calls `CreateLight(LightType.Rectangle, ...)` (Unity 6 name for area lights).
+
 ## 2.8.0 - 2026-03-28
 
 ### Added
