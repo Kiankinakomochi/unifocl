@@ -251,9 +251,10 @@ internal sealed partial class ProjectLifecycleService
     }
 
     /// <summary>
-    /// If winget is available, print the managed upgrade command and return true (skip manual download).
+    /// If winget is available, spawns a hidden PowerShell script that waits for this process to exit
+    /// and then runs <c>winget upgrade</c>. Returns true when the deferred job was queued successfully.
     /// </summary>
-    private static async Task<bool> TrySpawnWingetUpgradeAsync(Action<string> log)
+    private static async Task<bool> TrySpawnDeferredWingetUpgradeAsync(Action<string> log)
     {
         try
         {
@@ -282,9 +283,31 @@ internal sealed partial class ProjectLifecycleService
             return false;
         }
 
-        log($"[green]update[/]: winget detected — run the following to upgrade");
-        log($"[white]  winget upgrade {Markup.Escape(WingetPackageId)}[/]");
-        log("[grey]update[/]: winget will handle the binary lock and installs the latest release cleanly");
+        var currentPid = Environment.ProcessId;
+        var script = $$"""
+try { Wait-Process -Id {{currentPid}} -ErrorAction SilentlyContinue } catch {}
+Start-Sleep -Seconds 1
+winget upgrade --id {{WingetPackageId}} --silent
+""";
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"unifocl-winget-upgrade-{currentPid}.ps1");
+        try
+        {
+            File.WriteAllText(scriptPath, script, System.Text.Encoding.UTF8);
+            var launchPsi = new ProcessStartInfo("powershell.exe",
+                $"-ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -File \"{scriptPath}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var _ = Process.Start(launchPsi);
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]update[/]: could not queue winget upgrade ({Markup.Escape(ex.Message)})");
+            return false;
+        }
+
+        log("[green]update[/]: winget upgrade queued — will run automatically when you quit unifocl");
         return true;
     }
 

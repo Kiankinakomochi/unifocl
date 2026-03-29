@@ -172,6 +172,13 @@ internal sealed partial class ProjectLifecycleService
             return true;
         }
 
+        // On Windows, prefer winget for the upgrade — it avoids the binary lock entirely
+        // and we can defer it the same way (wait for this PID to exit, then run winget upgrade).
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && await TrySpawnDeferredWingetUpgradeAsync(log))
+        {
+            return true;
+        }
+
         var asset = release.Assets.FirstOrDefault(candidate =>
             candidate.Name.EndsWith(platformSpec.AssetSuffix, StringComparison.OrdinalIgnoreCase));
         if (asset is null)
@@ -234,16 +241,12 @@ internal sealed partial class ProjectLifecycleService
         var processDirectory = Path.GetDirectoryName(processPath) ?? Directory.GetCurrentDirectory();
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
+            // winget not available — fall back to deferred binary swap
             var stagedPath = StageDownloadedExecutableForManualInstall(
                 extractedExecutablePath,
                 releaseVersion,
                 platformSpec.ExecutableName,
                 processDirectory);
-            if (await TrySpawnWingetUpgradeAsync(log))
-            {
-                return true;
-            }
-
             if (TrySpawnDeferredWindowsSwap(stagedPath, processPath, log))
             {
                 log($"[green]update[/]: downloaded [white]{Markup.Escape(asset.Name)}[/] — swap queued");
