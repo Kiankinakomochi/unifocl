@@ -40,15 +40,19 @@ internal sealed class ExecCommandRegistry
         ["build.artifact-metadata"]  = ExecRiskLevel.SafeRead,
         ["build.failure-classify"]   = ExecRiskLevel.SafeRead,
         ["build.report"]             = ExecRiskLevel.SafeRead,
-        // diag operations (read-only)
-        ["diag.script-defines"]  = ExecRiskLevel.SafeRead,
-        ["diag.compile-errors"]  = ExecRiskLevel.SafeRead,
-        ["diag.assembly-graph"]  = ExecRiskLevel.SafeRead,
-        ["diag.scene-deps"]      = ExecRiskLevel.SafeRead,
-        ["diag.prefab-deps"]     = ExecRiskLevel.SafeRead,
+        // diag operations (structural introspection — sprint 4)
+        ["diag.script-defines"]      = ExecRiskLevel.SafeRead,
+        ["diag.compile-errors"]      = ExecRiskLevel.SafeRead,
+        ["diag.assembly-graph"]      = ExecRiskLevel.SafeRead,
+        ["diag.scene-deps"]          = ExecRiskLevel.SafeRead,
+        ["diag.prefab-deps"]         = ExecRiskLevel.SafeRead,
+        // diag operations (advanced diagnostics — sprint 5)
+        ["diag.asset-size"]          = ExecRiskLevel.SafeRead,
+        ["diag.import-hotspots"]     = ExecRiskLevel.SafeRead,
         // test operations (subprocess, privileged exec)
         ["test.list"]                = ExecRiskLevel.SafeRead,
         ["test.run"]                 = ExecRiskLevel.PrivilegedExec,
+        ["test.flaky-report"]        = ExecRiskLevel.SafeRead,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         // meta
@@ -410,6 +414,18 @@ internal sealed class ExecCommandRegistry
                 return true;
             }
 
+            case "diag.asset-size":
+            {
+                dto = new ProjectCommandRequestDto("diag-asset-size", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "diag.import-hotspots":
+            {
+                dto = new ProjectCommandRequestDto("diag-import-hotspots", null, null, null, req.RequestId);
+                return true;
+            }
+
             // session.* and hierarchy.snapshot are handled by ExecOperationRouter directly
             case "hierarchy.snapshot":
             case "session.open":
@@ -418,6 +434,7 @@ internal sealed class ExecCommandRegistry
             // test.* operations are dispatched as subprocesses by ExecOperationRouter directly
             case "test.list":
             case "test.run":
+            case "test.flaky-report":
             {
                 // These operations do not dispatch through ProjectDaemonBridge
                 validationError = $"operation '{req.Operation}' is handled by the router, not the project bridge";

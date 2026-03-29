@@ -140,6 +140,7 @@ try
     var validateCommandService = new ValidateCommandService();
     var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();
+    var diagCommandService = new DiagCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
@@ -567,6 +568,22 @@ try
                     session,
                     line => CliLogService.AppendLog(streamLog, line),
                     appCancellation.Token),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/diag", StringComparison.Ordinal))
+        {
+            var diagPayload = input.Length > "/diag".Length
+                ? $"diag {input["/diag".Length..].Trim()}"
+                : "diag";
+            await AwaitWithCancellationAsync(
+                () => diagCommandService.HandleDiagCommandAsync(
+                    diagPayload,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
                 appCancellation.Token);
             continue;
         }
