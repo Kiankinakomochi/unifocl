@@ -14,6 +14,7 @@ internal static class CliOneShotExecutionService
         HierarchyTui hierarchyTui,
         BuildCommandService buildCommandService,
         ValidateCommandService validateCommandService,
+        DiagCommandService diagCommandService,
         TestCommandService testCommandService,
         CancellationToken cancellationToken = default)
     {
@@ -217,6 +218,7 @@ internal static class CliOneShotExecutionService
                             hierarchyTui,
                             buildCommandService,
                             validateCommandService,
+                            diagCommandService,
                             testCommandService,
                             cancellationToken).WaitAsync(cancellationToken);
                     }
@@ -423,6 +425,7 @@ internal static class CliOneShotExecutionService
         HierarchyTui hierarchyTui,
         BuildCommandService buildCommandService,
         ValidateCommandService validateCommandService,
+        DiagCommandService diagCommandService,
         TestCommandService testCommandService,
         CancellationToken cancellationToken = default)
     {
@@ -707,6 +710,19 @@ internal static class CliOneShotExecutionService
         {
             await AwaitWithCancellationAsync(
                 () => validateCommandService.HandleValidateCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/diag", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => diagCommandService.HandleDiagCommandAsync(
                     input,
                     session,
                     daemonControlService,

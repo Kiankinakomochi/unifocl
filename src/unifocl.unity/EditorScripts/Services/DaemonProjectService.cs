@@ -348,6 +348,11 @@ namespace UniFocl.EditorBridge
                 "validate-addressables" => Task.FromResult(DaemonValidateService.ExecuteValidateAddressables()),
                 "build-artifact-metadata" => Task.FromResult(DaemonBuildReportService.ExecuteBuildArtifactMetadata()),
                 "build-failure-classify" => Task.FromResult(DaemonBuildReportService.ExecuteBuildFailureClassify()),
+                "diag-script-defines" => Task.FromResult(DaemonDiagService.ExecuteDiagScriptDefines()),
+                "diag-compile-errors" => Task.FromResult(DaemonDiagService.ExecuteDiagCompileErrors()),
+                "diag-assembly-graph" => Task.FromResult(DaemonDiagService.ExecuteDiagAssemblyGraph()),
+                "diag-scene-deps" => Task.FromResult(DaemonDiagService.ExecuteDiagSceneDeps()),
+                "diag-prefab-deps" => Task.FromResult(DaemonDiagService.ExecuteDiagPrefabDeps()),
                 "query-mk-types" => Task.FromResult(ExecuteQueryMkTypes()),
                 "query-hierarchy-mk-types" => Task.FromResult(ExecuteQueryHierarchyMkTypes()),
                 "query-component-types" => Task.FromResult(ExecuteQueryComponentTypes()),
@@ -722,6 +727,18 @@ namespace UniFocl.EditorBridge
                 message = "compile request submitted",
                 kind = "compile-request"
             });
+        }
+
+        /// <summary>
+        /// Returns a snapshot of errors collected during the last compilation pass.
+        /// Thread-safe; reads from the event-based compilation state cache.
+        /// </summary>
+        internal static string[] GetLastCompileErrors()
+        {
+            lock (CompilationStateLock)
+            {
+                return _compilationState.errors ?? Array.Empty<string>();
+            }
         }
 
         private static string ExecuteCompileStatus()

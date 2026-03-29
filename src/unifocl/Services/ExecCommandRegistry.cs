@@ -40,6 +40,12 @@ internal sealed class ExecCommandRegistry
         ["build.artifact-metadata"]  = ExecRiskLevel.SafeRead,
         ["build.failure-classify"]   = ExecRiskLevel.SafeRead,
         ["build.report"]             = ExecRiskLevel.SafeRead,
+        // diag operations (read-only)
+        ["diag.script-defines"]  = ExecRiskLevel.SafeRead,
+        ["diag.compile-errors"]  = ExecRiskLevel.SafeRead,
+        ["diag.assembly-graph"]  = ExecRiskLevel.SafeRead,
+        ["diag.scene-deps"]      = ExecRiskLevel.SafeRead,
+        ["diag.prefab-deps"]     = ExecRiskLevel.SafeRead,
         // test operations (subprocess, privileged exec)
         ["test.list"]                = ExecRiskLevel.SafeRead,
         ["test.run"]                 = ExecRiskLevel.PrivilegedExec,
@@ -371,6 +377,36 @@ internal sealed class ExecCommandRegistry
             case "build.report":
             {
                 dto = new ProjectCommandRequestDto("build-report", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "diag.script-defines":
+            {
+                dto = new ProjectCommandRequestDto("diag-script-defines", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "diag.compile-errors":
+            {
+                dto = new ProjectCommandRequestDto("diag-compile-errors", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "diag.assembly-graph":
+            {
+                dto = new ProjectCommandRequestDto("diag-assembly-graph", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "diag.scene-deps":
+            {
+                dto = new ProjectCommandRequestDto("diag-scene-deps", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "diag.prefab-deps":
+            {
+                dto = new ProjectCommandRequestDto("diag-prefab-deps", null, null, null, req.RequestId);
                 return true;
             }
 

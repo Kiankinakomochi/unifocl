@@ -138,6 +138,7 @@ try
     }
 
     var validateCommandService = new ValidateCommandService();
+    var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
@@ -164,6 +165,7 @@ try
                 hierarchyTui,
                 buildCommandService,
                 validateCommandService,
+                diagCommandService,
                 testCommandService,
                 appCancellation.Token).WaitAsync(appCancellation.Token);
         }
@@ -532,6 +534,19 @@ try
         {
             await AwaitWithCancellationAsync(
                 () => validateCommandService.HandleValidateCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/diag", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => diagCommandService.HandleDiagCommandAsync(
                     input,
                     session,
                     daemonControlService,
