@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.12.0 - 2026-03-29
+
+### Added
+- Officialized `2.12.0` by closing the development cycle suffix.
+- **New agent integration installer command**: added `/agent install <codex|claude>` plus direct CLI support `unifocl agent install <codex|claude>` for one-step MCP/plugin bootstrap.
+- **Codex integration package scaffold**: added `src/unifocl.codex-plugin/` with npm publish metadata, installer CLI (`unifocl-codex-plugin`), and workflow skill references.
+
+### Docs
+- **Plugin setup docs updated for CLI-first flow**: README now documents Codex + Claude support through `unifocl agent install ...` and marks manual npm/plugin management as optional fallback.
+
 ## 2.11.0 - 2026-03-29
 
 ### Fixed
