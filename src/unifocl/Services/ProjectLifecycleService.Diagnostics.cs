@@ -239,9 +239,22 @@ internal sealed partial class ProjectLifecycleService
                 releaseVersion,
                 platformSpec.ExecutableName,
                 processDirectory);
-            log("[yellow]update[/]: Windows locks the running executable; staged update for next swap");
-            log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
-            log($"[grey]update[/]: replace [white]{Markup.Escape(processPath)}[/] with staged binary after quitting unifocl");
+            if (await TrySpawnWingetUpgradeAsync(log))
+            {
+                return true;
+            }
+
+            if (TrySpawnDeferredWindowsSwap(stagedPath, processPath, log))
+            {
+                log($"[green]update[/]: downloaded [white]{Markup.Escape(asset.Name)}[/] — swap queued");
+                log("[grey]update[/]: the binary will be replaced automatically when you quit unifocl");
+            }
+            else
+            {
+                log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
+                log($"[grey]update[/]: replace [white]{Markup.Escape(processPath)}[/] with staged binary after quitting unifocl");
+            }
+
             return true;
         }
 
