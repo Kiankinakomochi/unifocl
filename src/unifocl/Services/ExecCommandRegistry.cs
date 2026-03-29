@@ -40,6 +40,9 @@ internal sealed class ExecCommandRegistry
         ["build.artifact-metadata"]  = ExecRiskLevel.SafeRead,
         ["build.failure-classify"]   = ExecRiskLevel.SafeRead,
         ["build.report"]             = ExecRiskLevel.SafeRead,
+        // test operations (subprocess, privileged exec)
+        ["test.list"]                = ExecRiskLevel.SafeRead,
+        ["test.run"]                 = ExecRiskLevel.PrivilegedExec,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         // meta
@@ -376,6 +379,9 @@ internal sealed class ExecCommandRegistry
             case "session.open":
             case "session.close":
             case "session.status":
+            // test.* operations are dispatched as subprocesses by ExecOperationRouter directly
+            case "test.list":
+            case "test.run":
             {
                 // These operations do not dispatch through ProjectDaemonBridge
                 validationError = $"operation '{req.Operation}' is handled by the router, not the project bridge";
