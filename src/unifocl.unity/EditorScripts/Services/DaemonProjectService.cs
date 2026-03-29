@@ -353,6 +353,8 @@ namespace UniFocl.EditorBridge
                 "diag-assembly-graph" => Task.FromResult(DaemonDiagService.ExecuteDiagAssemblyGraph()),
                 "diag-scene-deps" => Task.FromResult(DaemonDiagService.ExecuteDiagSceneDeps()),
                 "diag-prefab-deps" => Task.FromResult(DaemonDiagService.ExecuteDiagPrefabDeps()),
+                "diag-asset-size" => Task.FromResult(DaemonDiagService.ExecuteDiagAssetSize()),
+                "diag-import-hotspots" => Task.FromResult(DaemonDiagService.ExecuteDiagImportHotspots()),
                 "query-mk-types" => Task.FromResult(ExecuteQueryMkTypes()),
                 "query-hierarchy-mk-types" => Task.FromResult(ExecuteQueryHierarchyMkTypes()),
                 "query-component-types" => Task.FromResult(ExecuteQueryComponentTypes()),

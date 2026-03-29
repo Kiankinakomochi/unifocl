@@ -80,10 +80,11 @@ internal static class CliCommandCatalog
             new("/ba [--clean] [--update]", "Alias for /build addressables", "/ba"),
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev"),
-            new("/test <list|run> [editmode|playmode] [--timeout <seconds>]", "Test orchestration commands (launches Unity subprocess)", "/test"),
+            new("/test <list|run|flaky-report> [editmode|playmode] [--timeout <seconds>]", "Test orchestration commands (launches Unity subprocess)", "/test"),
             new("/test list", "List all tests (EditMode) using Unity -listTests", "/test list"),
             new("/test run editmode [--timeout <seconds>]", "Run EditMode tests, capture NUnit XML results", "/test run editmode"),
             new("/test run playmode [--timeout <seconds>]", "Run PlayMode tests, capture NUnit XML results", "/test run playmode"),
+            new("/test flaky-report", "Show tests with mixed Pass/Fail outcomes across run history", "/test flaky-report"),
             new("/validate <scene-list|missing-scripts|packages|build-settings|asmdef|asset-refs|addressables|all>", "Run project validation checks", "/validate"),
             new("/validate scene-list", "Check that all build-settings scene paths exist", "/validate scene-list"),
             new("/validate missing-scripts", "Scan scenes and prefabs for missing MonoBehaviour scripts", "/validate missing-scripts"),
@@ -99,13 +100,15 @@ internal static class CliCommandCatalog
             new("/build artifact-metadata", "Read last build artifact metadata from cached build report", "/build artifact-metadata"),
             new("/build failure-classify", "Classify failures from last build report", "/build failure-classify"),
             new("/build report", "Full build report: preflight + artifacts + failure classification", "/build report"),
-            new("/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|all>", "Run project diagnostics", "/diag"),
+            new("/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|asset-size|import-hotspots|all>", "Run project diagnostics", "/diag"),
             new("/diag script-defines", "Show scripting define symbols per build target group", "/diag script-defines"),
             new("/diag compile-errors", "Show compiler messages from last compilation pass", "/diag compile-errors"),
             new("/diag assembly-graph", "Show assembly dependency graph (asmdef references)", "/diag assembly-graph"),
             new("/diag scene-deps", "Show asset dependencies per enabled scene", "/diag scene-deps"),
             new("/diag prefab-deps", "Show asset dependencies per prefab (capped at 100)", "/diag prefab-deps"),
-            new("/diag all", "Run all diagnostics", "/diag all")
+            new("/diag all", "Run all diagnostics", "/diag all"),
+            new("/diag asset-size", "List all project assets sorted by file size, with dependency counts", "/diag asset-size"),
+            new("/diag import-hotspots", "Show most-frequently-re-imported assets from recorded import history", "/diag import-hotspots")
         ];
     }
 

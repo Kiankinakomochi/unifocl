@@ -571,6 +571,22 @@ try
             continue;
         }
 
+        if (matched.Trigger.StartsWith("/diag", StringComparison.Ordinal))
+        {
+            var diagPayload = input.Length > "/diag".Length
+                ? $"diag {input["/diag".Length..].Trim()}"
+                : "diag";
+            await AwaitWithCancellationAsync(
+                () => diagCommandService.HandleDiagCommandAsync(
+                    diagPayload,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
         if (matched.Trigger is "/keybinds" or "/shortcuts")
         {
             CliLogService.WriteKeybindsHelp(streamLog, session);

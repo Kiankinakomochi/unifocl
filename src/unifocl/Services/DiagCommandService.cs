@@ -7,7 +7,11 @@ internal sealed class DiagCommandService
 
     private readonly HierarchyDaemonClient _daemonClient = new();
 
-    private static readonly string[] AllOps = ["script-defines", "compile-errors", "assembly-graph", "scene-deps", "prefab-deps"];
+    private static readonly string[] AllOps =
+    [
+        "script-defines", "compile-errors", "assembly-graph", "scene-deps", "prefab-deps",
+        "asset-size", "import-hotspots"
+    ];
 
     public async Task HandleDiagCommandAsync(
         string input,
@@ -25,7 +29,7 @@ internal sealed class DiagCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|all>");
+            log("[x] usage: /diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|asset-size|import-hotspots|all>");
             return;
         }
 
@@ -51,11 +55,13 @@ internal sealed class DiagCommandService
                 case "assembly-graph":
                 case "scene-deps":
                 case "prefab-deps":
+                case "asset-size":
+                case "import-hotspots":
                     await RunDaemonDiagAsync(op, session, log);
                     break;
                 default:
                     log($"[x] unknown diag op: {Markup.Escape(op)}");
-                    log("supported: script-defines | compile-errors | assembly-graph | scene-deps | prefab-deps | all");
+                    log("supported: script-defines | compile-errors | assembly-graph | scene-deps | prefab-deps | asset-size | import-hotspots | all");
                     return;
             }
         }
@@ -93,8 +99,10 @@ internal sealed class DiagCommandService
             case "script-defines": RenderScriptDefines(response.Content, log); break;
             case "compile-errors": RenderCompileErrors(response.Content, log); break;
             case "assembly-graph": RenderAssemblyGraph(response.Content, log); break;
-            case "scene-deps":    RenderSceneDeps(response.Content, log); break;
-            case "prefab-deps":   RenderPrefabDeps(response.Content, log); break;
+            case "scene-deps":     RenderSceneDeps(response.Content, log); break;
+            case "prefab-deps":    RenderPrefabDeps(response.Content, log); break;
+            case "asset-size":     RenderAssetSize(response.Content, log); break;
+            case "import-hotspots": RenderImportHotspots(response.Content, log); break;
         }
     }
 
@@ -210,6 +218,64 @@ internal sealed class DiagCommandService
         }
     }
 
+    private static void RenderAssetSize(string json, Action<string> log)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<AssetSizePayload>(json, ReadJsonOptions);
+            if (payload is null) { log("[red]diag[/]: asset-size — failed to parse response"); return; }
+
+            log($"[bold {CliTheme.TextPrimary}]asset-size[/]  [{CliTheme.TextMuted}]{payload.TotalAssets} asset(s), total {FormatBytes(payload.TotalSizeBytes)}[/]");
+
+            const int MaxShow = 30;
+            var shown = Math.Min(payload.Assets?.Length ?? 0, MaxShow);
+            for (var i = 0; i < shown; i++)
+            {
+                var a = payload.Assets![i];
+                log($"  [{CliTheme.TextPrimary}]{FormatBytes(a.SizeBytes),8}[/]  [{CliTheme.TextMuted}]deps={a.DepCount}[/]  {Markup.Escape(a.Path)}");
+            }
+
+            if ((payload.Assets?.Length ?? 0) > MaxShow)
+                log($"  [{CliTheme.TextMuted}](+ {payload.Assets!.Length - MaxShow} more)[/]");
+        }
+        catch
+        {
+            log("[red]diag[/]: asset-size — failed to parse response");
+        }
+    }
+
+    private static void RenderImportHotspots(string json, Action<string> log)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<ImportHotspotPayload>(json, ReadJsonOptions);
+            if (payload is null) { log("[red]diag[/]: import-hotspots — failed to parse response"); return; }
+
+            log($"[bold {CliTheme.TextPrimary}]import-hotspots[/]  [{CliTheme.TextMuted}]{payload.BatchesRecorded} batch(es) recorded, {payload.UniqueAssetsTracked} unique asset(s) tracked[/]");
+
+            if (payload.Hotspots is null || payload.Hotspots.Length == 0)
+            {
+                log($"  [{CliTheme.TextMuted}](no import data yet — assets must be imported while daemon is running)[/]");
+                return;
+            }
+
+            foreach (var h in payload.Hotspots)
+                log($"  [{CliTheme.TextPrimary}]imports={h.ImportCount,4}[/]  {Markup.Escape(h.AssetPath)}");
+        }
+        catch
+        {
+            log("[red]diag[/]: import-hotspots — failed to parse response");
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1_073_741_824) return $"{bytes / 1_073_741_824.0:0.##} GB";
+        if (bytes >= 1_048_576)     return $"{bytes / 1_048_576.0:0.##} MB";
+        if (bytes >= 1_024)         return $"{bytes / 1_024.0:0.##} KB";
+        return $"{bytes} B";
+    }
+
     private static List<string> Tokenize(string input)
     {
         var tokens = new List<string>();
@@ -235,5 +301,34 @@ internal sealed class DiagCommandService
         }
 
         return tokens;
+    }
+
+    // ── JSON payload contracts ────────────────────────────────────────────────
+
+    private sealed class AssetSizePayload
+    {
+        public int TotalAssets { get; set; }
+        public long TotalSizeBytes { get; set; }
+        public AssetEntry[]? Assets { get; set; }
+
+        public sealed class AssetEntry
+        {
+            public string Path { get; set; } = "";
+            public long SizeBytes { get; set; }
+            public int DepCount { get; set; }
+        }
+    }
+
+    private sealed class ImportHotspotPayload
+    {
+        public int BatchesRecorded { get; set; }
+        public int UniqueAssetsTracked { get; set; }
+        public HotspotEntry[]? Hotspots { get; set; }
+
+        public sealed class HotspotEntry
+        {
+            public string AssetPath { get; set; } = "";
+            public int ImportCount { get; set; }
+        }
     }
 }

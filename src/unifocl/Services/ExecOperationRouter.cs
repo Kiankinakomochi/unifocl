@@ -286,6 +286,14 @@ internal sealed class ExecOperationRouter
                     : new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: error);
             }
 
+            case "test.flaky-report":
+            {
+                var (ok, result, error) = _testService.ExecFlakyReportAsync(projectPath);
+                return ok
+                    ? new ExecV2Response(ExecV2Status.Completed, request.RequestId, Result: result)
+                    : new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: error);
+            }
+
             default:
                 return Rejected(request.RequestId, $"unknown test operation: {request.Operation}");
         }

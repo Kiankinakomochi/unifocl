@@ -87,9 +87,13 @@ internal sealed class TestCommandService
                 await HandleRunAsync(session, testPlatform, TimeSpan.FromSeconds(timeoutSeconds), log, cancellationToken);
                 return;
 
+            case "flaky-report":
+                await HandleFlakyReportAsync(session, log, cancellationToken);
+                return;
+
             default:
                 log($"[x] unknown test subcommand: {Markup.Escape(tokens[1])}");
-                log("supported: test list | test run editmode | test run playmode");
+                log("supported: test list | test run editmode | test run playmode | test flaky-report");
                 return;
         }
     }
@@ -164,7 +168,24 @@ internal sealed class TestCommandService
         stopwatch.Stop();
 
         var result = ParseNUnitResults(resultsFile, stopwatch.Elapsed.TotalMilliseconds, artifactsDir);
+        AppendToHistory(projectPath, platform, result, resultsFile);
         return (exitCode == 0 || result.Failed == 0, result, null);
+    }
+
+    /// <summary>
+    /// ExecV2 entry-point for test.flaky-report. Returns a <see cref="FlakyReportResult"/>.
+    /// </summary>
+    public (bool Ok, object? Result, string? Error) ExecFlakyReportAsync(string projectPath)
+    {
+        var store = new TestHistoryStore(projectPath);
+        var history = store.ReadAll();
+        if (history.Count == 0)
+        {
+            return (false, null, "no test history found — run tests at least once to build history");
+        }
+
+        var result = ComputeFlakyReport(history);
+        return (true, result, null);
     }
 
     // ── Private handlers ─────────────────────────────────────────────────────
@@ -251,6 +272,7 @@ internal sealed class TestCommandService
         stopwatch.Stop();
 
         var result = ParseNUnitResults(resultsFile, stopwatch.Elapsed.TotalMilliseconds, artifactsDir);
+        AppendToHistory(projectPath, platform, result, resultsFile);
 
         var statusColor = result.Failed == 0 ? "green" : "red";
         log($"[{statusColor}]test[/]: {platformLabel} — total={result.Total} passed={result.Passed} failed={result.Failed} skipped={result.Skipped} ({result.DurationMs:0}ms)");
@@ -267,6 +289,155 @@ internal sealed class TestCommandService
                 }
             }
         }
+    }
+
+    // ── Flaky report ─────────────────────────────────────────────────────────
+
+    private static async Task HandleFlakyReportAsync(
+        CliSessionState session,
+        Action<string> log,
+        CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        var projectPath = session.CurrentProjectPath!;
+        var store = new TestHistoryStore(projectPath);
+        var history = store.ReadAll();
+
+        if (history.Count == 0)
+        {
+            log("[yellow]test[/]: no test history found — run tests at least once to build history");
+            return;
+        }
+
+        var report = ComputeFlakyReport(history);
+        log($"[grey]test[/]: analysed [white]{report.RunsAnalyzed}[/] run(s), [white]{report.TotalTests}[/] unique test(s)");
+
+        if (report.FlakyTests.Count == 0)
+        {
+            log("[green]test[/]: no flaky tests detected");
+            return;
+        }
+
+        log($"[yellow]test[/]: [white]{report.FlakyTests.Count}[/] flaky test(s) found:");
+        foreach (var ft in report.FlakyTests)
+        {
+            var scoreBar = $"{ft.FlakyScore:0.00}";
+            log($"  [red]~[/] {Markup.Escape(ft.TestName)}");
+            log($"    pass={ft.PassCount} fail={ft.FailCount} runs={ft.TotalRuns} score={scoreBar}");
+        }
+    }
+
+    private static FlakyReportResult ComputeFlakyReport(List<TestHistoryRecord> history)
+    {
+        // Aggregate per-test outcome across all runs.
+        var passCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var failCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var run in history)
+        {
+            foreach (var entry in run.Results)
+            {
+                if (!passCounts.ContainsKey(entry.TestName)) passCounts[entry.TestName] = 0;
+                if (!failCounts.ContainsKey(entry.TestName)) failCounts[entry.TestName] = 0;
+
+                switch (entry.Outcome)
+                {
+                    case TestOutcome.Passed:
+                        passCounts[entry.TestName]++;
+                        break;
+                    case TestOutcome.Failed:
+                        failCounts[entry.TestName]++;
+                        break;
+                }
+            }
+        }
+
+        var allTests = passCounts.Keys.Union(failCounts.Keys).ToList();
+        var flaky = new List<FlakyTestResult>();
+
+        foreach (var test in allTests)
+        {
+            passCounts.TryGetValue(test, out var p);
+            failCounts.TryGetValue(test, out var f);
+            if (p == 0 || f == 0) continue; // not flaky
+
+            var total = p + f;
+            var score = (double)Math.Min(p, f) / total;
+            flaky.Add(new FlakyTestResult(test, p, f, total, Math.Round(score, 4)));
+        }
+
+        flaky.Sort((a, b) => b.FlakyScore.CompareTo(a.FlakyScore));
+
+        return new FlakyReportResult(history.Count, allTests.Count, flaky);
+    }
+
+    private static void AppendToHistory(
+        string projectPath,
+        TestPlatform platform,
+        TestRunResult result,
+        string resultsFile)
+    {
+        try
+        {
+            var store = new TestHistoryStore(projectPath);
+            var entries = ParseAllTestOutcomes(resultsFile);
+            var record = new TestHistoryRecord(
+                RunId: Guid.NewGuid().ToString("N"),
+                TimestampUtc: DateTime.UtcNow.ToString("O"),
+                Platform: platform.ToString(),
+                Total: result.Total,
+                Passed: result.Passed,
+                Failed: result.Failed,
+                Skipped: result.Skipped,
+                DurationMs: result.DurationMs,
+                Results: entries);
+            store.Append(record);
+        }
+        catch
+        {
+            // History capture is best-effort — never fail a test run due to store errors.
+        }
+    }
+
+    /// <summary>
+    /// Parses all test-case outcomes from NUnit v3 XML (not just failures).
+    /// Required so that flaky detection can observe Pass→Fail and Fail→Pass transitions.
+    /// </summary>
+    private static List<TestResultEntry> ParseAllTestOutcomes(string resultsFile)
+    {
+        var entries = new List<TestResultEntry>();
+        if (!File.Exists(resultsFile))
+        {
+            return entries;
+        }
+
+        try
+        {
+            var doc = XDocument.Load(resultsFile);
+            foreach (var testCase in doc.Root?.Descendants("test-case") ?? Enumerable.Empty<XElement>())
+            {
+                var testName = testCase.Attribute("fullname")?.Value
+                    ?? testCase.Attribute("name")?.Value;
+                if (string.IsNullOrWhiteSpace(testName))
+                {
+                    continue;
+                }
+
+                var resultAttr = testCase.Attribute("result")?.Value ?? string.Empty;
+                var outcome = resultAttr.Equals("Passed", StringComparison.OrdinalIgnoreCase) ? TestOutcome.Passed
+                    : resultAttr.Equals("Failed", StringComparison.OrdinalIgnoreCase) ? TestOutcome.Failed
+                    : TestOutcome.Skipped;
+
+                var durationMs = ParseDoubleAttr(testCase, "duration") * 1000.0;
+                entries.Add(new TestResultEntry(testName, outcome, durationMs));
+            }
+        }
+        catch
+        {
+            // best-effort
+        }
+
+        return entries;
     }
 
     // ── Subprocess helpers ────────────────────────────────────────────────────

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.20.0 - 2026-03-29
+
+### Added
+- **`diag asset-size`** (`/diag asset-size`, ExecV2 `diag.asset-size`): scans all `Assets/` files via `AssetDatabase`, reports `FileInfo.Length` per asset sorted largest-first, with direct dependency counts via `GetDependencies`. Capped at 1 000 assets; dep queries capped at 500. Returns `{ totalAssets, totalSizeBytes, assets[{ path, sizeBytes, depCount }] }`.
+- **`diag import-hotspots`** (`/diag import-hotspots`, ExecV2 `diag.import-hotspots`): reads the persistent import timing store (`Library/unifocl-import-timing.json`) and returns the top-50 most-frequently-re-imported assets by import count. Requires at least one asset import to have occurred while the daemon is running.
+- **`test flaky-report`** (`/test flaky-report`, ExecV2 `test.flaky-report`): reads the persistent test-run history store (`.unifocl-runtime/test-history/<slug>.json`) and identifies tests with mixed Pass/Fail outcomes. Reports `flakyScore = min(passCount, failCount) / totalRuns`, sorted by score descending.
+
+### Infrastructure
+- **TestHistoryStore**: rolling 100-entry JSON store per project at `.unifocl-runtime/test-history/<slug>.json`. Slug derived from last two path segments, sanitised to `[a-z0-9_-]`. Thread-safe via per-file ConcurrentDictionary locks.
+- **DaemonImportTimingStore** (`UnifoclImportTimingCapture`): `AssetPostprocessor` subclass that records every import batch (imported + moved assets, timestamp, asset count) to `Library/unifocl-import-timing.json`. Rolling 500-entry window.
+- `TestCommandService.ExecRunAsync` and `HandleRunAsync` now append a full per-test-outcome record to `TestHistoryStore` after every run. `ParseAllTestOutcomes` parses all NUnit `<test-case>` nodes (not just failures) so flaky detection can observe both Pass→Fail and Fail→Pass transitions.
+
+### Fixes
+- **`unifocl.csproj`**: added missing `EmbeddedResource` entries for all Unity editor payload files introduced in sprints 2–5 (`DaemonBuildReportService`, `DaemonValidateService`, `DaemonDryRunAssetModificationProcessor`, all `DaemonProjectService.*` partials, `DaemonDiagService`, `DaemonImportTimingStore`). Without these entries the files were not included in the `/init` bridge payload — the most visible symptom being `CS0246: The type or namespace name 'BuildRuntimeState' could not be found` in Unity because `DaemonProjectService.Build.cs` (which defines `BuildRuntimeState`) was never deployed. All build, validate, prefab, and diag commands were silently broken after a fresh `/init` until this is fixed.
+
+> **Action required**: re-run `/init` after updating to deploy the corrected bridge payload.
+
+### Protocol
+- Bumped to `v14` (new Unity editor payload files `DaemonImportTimingStore.cs`; run `/init` to deploy updated bridge scripts).
+
+### Officialized
+- Officialized `2.20.0` by closing the development cycle suffix.
+
+
 ## 2.19.0 - 2026-03-29
 
 ### Added
