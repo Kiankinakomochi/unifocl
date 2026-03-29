@@ -140,7 +140,6 @@ try
     var validateCommandService = new ValidateCommandService();
     var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();
-    var diagCommandService = new DiagCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
