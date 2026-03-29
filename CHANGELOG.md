@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.13.0 - 2026-03-29
+
+### Added
+- **New agent integration installer command**: added `/agent install <codex|claude>` plus direct CLI support `unifocl agent install <codex|claude>` for one-step MCP/plugin bootstrap.
+- **Codex integration package scaffold**: added `src/unifocl.codex-plugin/` with npm publish metadata, installer CLI (`unifocl-codex-plugin`), and workflow skill references.
+- **`/validate` command family**: new root command (`/validate`, `/val`) with four sub-validators for project health checks. All validators return a uniform `ValidateResult` envelope with severity-tagged diagnostics.
+  - **`validate scene-list`**: checks that all `EditorBuildSettings.scenes` paths exist on disk, flags disabled and empty-path entries.
+  - **`validate missing-scripts`**: scans all loaded scenes and prefab assets for null `MonoBehaviour` components (missing script references).
+  - **`validate packages`**: CLI-side only (no daemon required) — compares `Packages/manifest.json` against `packages-lock.json`, detects missing lock entries (VPK003), version mismatches (VPK004), and missing files (VPK001/VPK005).
+  - **`validate build-settings`**: checks `PlayerSettings` sanity — bundle ID, product/company name, version format, active build target, enabled scene count, and scripting backend.
+  - **`validate all`**: runs all validators sequentially.
+- **ExecV2 `validate.*` operations**: `validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings` registered as `SafeRead` — no approval gating required.
+- **`DaemonValidateService` (Unity Editor-side)**: handles `validate-scene-list`, `validate-missing-scripts`, and `validate-build-settings` actions dispatched through the project command bridge.
+- **Shared `ValidateModels.cs`**: `ValidateDiagnostic` record (severity, errorCode, message, assetPath, objectPath, sceneContext, fixable) and `ValidateResult` envelope reused by all validators.
+- **Smoke test suite** (`tests/suite-validate-foundation.json`): 7 cases covering packages diagnostics (VPK003, VPK004), usage/error messages, and daemon-required validator behavior.
+
+### Docs
+- **Plugin setup docs updated for CLI-first flow**: README now documents Codex + Claude support through `unifocl agent install ...` and marks manual npm/plugin management as optional fallback.
+
 ## 2.11.0 - 2026-03-29
 
 ### Fixed

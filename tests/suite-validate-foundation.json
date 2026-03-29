@@ -1,0 +1,107 @@
+{
+  "suite": "validate-foundation",
+  "runner": "dotnet run --no-build --project {suite_dir}/../src/unifocl/unifocl.csproj --",
+  "project": "{suite_dir}/../.local/validate-smoke",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "validate-packages-detects-missing-lock-entry",
+      "description": "validate packages detects a package in manifest.json but missing from packages-lock.json (VPK003)",
+      "steps": [
+        {
+          "cmd": "/validate packages",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "1 warning(s)" },
+            ".data.logs": { "$contains": "VPK003" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-packages-reports-version-mismatch",
+      "description": "validate packages reports version mismatch between manifest and lock (VPK004)",
+      "steps": [
+        {
+          "cmd": "/validate packages",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "VPK004" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-unknown-subcommand-rejected",
+      "description": "unknown validator subcommand prints error text",
+      "steps": [
+        {
+          "cmd": "/validate nonexistent",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "unknown validator" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-no-args-shows-usage",
+      "description": "validate with no subcommand shows usage",
+      "steps": [
+        {
+          "cmd": "/validate",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-scene-list-needs-daemon",
+      "description": "scene-list without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/validate scene-list",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-missing-scripts-needs-daemon",
+      "description": "missing-scripts without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/validate missing-scripts",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-build-settings-needs-daemon",
+      "description": "build-settings without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/validate build-settings",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -57,38 +57,31 @@ winget install Kiankinakomochi.unifocl
 
 Download pre-built archives from the [latest GitHub release](https://github.com/Kiankinakomochi/unifocl/releases/latest) and place the binary anywhere in your `PATH`.
 
-### Claude Code Plugin
+### Agent Plugins (Codex + Claude)
 
-`@unifocl/claude-plugin` is an npm package that integrates unifocl natively into Claude Code. Installing it does two things automatically:
-
-1. **Registers the MCP server** — adds `unifocl --mcp-server` to your Claude Code MCP config so the `ListCommands`, `LookupCommand`, `GetMutateSchema`, `GetCategories`, `LoadCategory`, and `GetAgentWorkflowGuide` tools are available in every session without manual JSON editing.
-2. **Installs slash commands** — adds five workflow prompts directly into Claude Code:
-   - `/init` — initialize the unifocl bridge in a Unity project
-   - `/context` — hydrate full scene state (hierarchy, project, inspector)
-   - `/mutate` — guided mutation with schema validation and mandatory dry-run
-   - `/status` — check daemon, project, and editor status
-   - `/workflow` — full agentic workflow reference for multi-step sessions
-
-**Responsibility split:** The plugin handles the Claude Code install experience and narrative workflow prompts. The MCP server (`unifocl --mcp-server`) handles the low-level programmatic Unity bridge. They run as separate processes and have no overlapping responsibilities.
-
-**Prerequisites:** `unifocl` must be installed and on your `PATH` before the plugin's MCP server entry can start.
+unifocl provides a built-in installer for agent integrations. Use this as the default path:
 
 ```sh
-# Install via Claude Code
-claude mcp add @unifocl/claude-plugin
+# Codex
+unifocl agent install codex
 
-# Or install the npm package globally and restart Claude Code
-npm install -g @unifocl/claude-plugin
+# Claude Code
+unifocl agent install claude
 ```
 
-After installation, confirm the MCP server is registered:
+What this replaces:
 
-```sh
-claude mcp list
-# unifocl   unifocl --mcp-server
-```
+1. Manual MCP JSON edits
+2. Manual `codex mcp add ...`
+3. Manual `claude mcp add @unifocl/claude-plugin`
 
-Then use `/init <path-to-unity-project>` in Claude Code to get started.
+Why this is preferred:
+
+1. Same command works for Homebrew, winget, and release-binary users.
+2. Idempotent install/update flow from the unifocl CLI.
+3. Keeps integration setup versioned with the CLI lifecycle.
+
+Manual npm/plugin management is still available as an advanced fallback, but no longer required for standard setup.
 
 ## Command & Feature Guide
 
@@ -116,6 +109,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/examples` |  | Show common operational command flows. |
 | `/update` |  | Show installed CLI version and update guidance. |
 | `/install-hook` |  | Run bridge dependency install flow (`/init`) against current/open project. |
+| `/agent install <codex&#124;claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]` |  | Install/update MCP integration for Codex or Claude. |
 | `/unity detect` |  | List installed Unity editors. |
 | `/unity set <path>` |  | Set default Unity editor path. |
 | `/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]` | `/b` | Trigger a Unity player build. If target is omitted, choose from an interactive target selector. |
@@ -141,6 +135,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
+| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `all`). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -363,6 +358,30 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 - `eval.run` is classified as `PrivilegedExec` in the ExecV2 API. Like `build.run` and `build.exec`, it requires two-step approval before execution — agents cannot silently evaluate code without explicit confirmation.
 - `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
 - The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
+
+### 7. Project Validation
+
+The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
+
+```
+/validate <scene-list|missing-scripts|packages|build-settings|all>
+```
+
+| Subcommand | Requires Daemon | Description |
+| --- | --- | --- |
+| `scene-list` | Yes | Checks that all `EditorBuildSettings.scenes` paths exist on disk. Flags disabled and empty entries. |
+| `missing-scripts` | Yes | Scans loaded scenes and all prefab assets for null `MonoBehaviour` components (missing script references). |
+| `packages` | No | Compares `manifest.json` vs `packages-lock.json` — detects missing lock entries, version mismatches, and missing files. |
+| `build-settings` | Yes | Checks `PlayerSettings` sanity — bundle ID, product/company name, version format, active build target, enabled scenes, scripting backend. |
+| `all` | Mixed | Runs all validators sequentially. |
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/validate packages" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations: `validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings` (all `SafeRead` — no approval required).
 
 ## Human Interface: TUI & Keybindings
 

@@ -13,6 +13,7 @@ internal static class CliOneShotExecutionService
         ProjectCommandRouterService projectCommandRouterService,
         HierarchyTui hierarchyTui,
         BuildCommandService buildCommandService,
+        ValidateCommandService validateCommandService,
         CancellationToken cancellationToken = default)
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
@@ -214,6 +215,7 @@ internal static class CliOneShotExecutionService
                             projectCommandRouterService,
                             hierarchyTui,
                             buildCommandService,
+                            validateCommandService,
                             cancellationToken).WaitAsync(cancellationToken);
                     }
                     var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
@@ -418,6 +420,7 @@ internal static class CliOneShotExecutionService
         ProjectCommandRouterService projectCommandRouterService,
         HierarchyTui hierarchyTui,
         BuildCommandService buildCommandService,
+        ValidateCommandService validateCommandService,
         CancellationToken cancellationToken = default)
     {
         static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken token)
@@ -676,6 +679,19 @@ internal static class CliOneShotExecutionService
         {
             await AwaitWithCancellationAsync(
                 () => buildCommandService.HandleBuildCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/validate", StringComparison.Ordinal) || matched.Trigger == "/val")
+        {
+            await AwaitWithCancellationAsync(
+                () => validateCommandService.HandleValidateCommandAsync(
                     input,
                     session,
                     daemonControlService,

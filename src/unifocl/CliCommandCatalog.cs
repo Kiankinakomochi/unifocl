@@ -47,6 +47,7 @@ internal static class CliCommandCatalog
             new("/unity detect", "List installed Unity editors", "/unity detect"),
             new("/unity set <path>", "Set default Unity editor path", "/unity set"),
             new("/install-hook", "Install/validate Bridge mode integration", "/install-hook"),
+            new("/agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]", "Install/update agent MCP integration for Codex or Claude", "/agent install"),
             new("/examples", "Show common next-step flows", "/examples"),
             new("/keybinds", "Show modal keybinds/shortcuts", "/keybinds"),
             new("/shortcuts", "Alias for keybinds", "/shortcuts"),
@@ -78,7 +79,14 @@ internal static class CliCommandCatalog
             new("/bx <Method>", "Alias for /build exec", "/bx"),
             new("/ba [--clean] [--update]", "Alias for /build addressables", "/ba"),
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval"),
-            new("/ev '<code>'", "Alias for /eval", "/ev")
+            new("/ev '<code>'", "Alias for /eval", "/ev"),
+            new("/validate <scene-list|missing-scripts|packages|build-settings|all>", "Run project validation checks", "/validate"),
+            new("/validate scene-list", "Check that all build-settings scene paths exist", "/validate scene-list"),
+            new("/validate missing-scripts", "Scan scenes and prefabs for missing MonoBehaviour scripts", "/validate missing-scripts"),
+            new("/validate packages", "Validate manifest.json vs packages-lock.json consistency", "/validate packages"),
+            new("/validate build-settings", "Check PlayerSettings/build configuration sanity", "/validate build-settings"),
+            new("/validate all", "Run all validators", "/validate all"),
+            new("/val <subcommand>", "Alias for /validate", "/val")
         ];
     }
 

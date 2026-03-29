@@ -278,19 +278,23 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Publish npm plugin
-        working-directory: src/unifocl.claude-plugin
+      - name: Publish npm plugins
         shell: bash
         run: |
           set -euo pipefail
           version="${{ needs.release.outputs.version }}"
-          VERSION="$version" node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = process.env.VERSION;
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          npm publish --access public --provenance
+          for plugin_dir in src/unifocl.claude-plugin src/unifocl.codex-plugin; do
+            echo "Publishing npm package from ${plugin_dir}"
+            pushd "${plugin_dir}" >/dev/null
+            VERSION="$version" node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              pkg.version = process.env.VERSION;
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+            npm publish --access public --provenance
+            popd >/dev/null
+          done
 
   winget:
     name: Publish to WinGet

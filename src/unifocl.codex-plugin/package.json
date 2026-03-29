@@ -1,0 +1,27 @@
+{
+  "name": "@unifocl/codex-plugin",
+  "version": "0.0.0",
+  "description": "Codex plugin bundle for unifocl: installs MCP server config and unifocl workflow skills.",
+  "keywords": [
+    "unifocl",
+    "codex",
+    "mcp",
+    "unity",
+    "plugin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kiankinakomochi/unifocl.git",
+    "directory": "src/unifocl.codex-plugin"
+  },
+  "bin": {
+    "unifocl-codex-plugin": "./bin/unifocl-codex-plugin.js"
+  },
+  "files": [
+    "bin/",
+    "skills/",
+    "README.md",
+    "package.json"
+  ]
+}

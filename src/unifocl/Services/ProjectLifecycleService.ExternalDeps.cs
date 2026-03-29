@@ -853,4 +853,247 @@ internal sealed partial class ProjectLifecycleService
         parsed = parsedVersion;
         return true;
     }
+
+    private async Task<bool> HandleAgentInstallAsync(
+        string input,
+        CommandSpec matched,
+        Action<string> log)
+    {
+        var args = ParseCommandArgs(input, matched.Trigger);
+        if (!TryParseAgentInstallArgs(
+                args,
+                out var target,
+                out var workspacePathRaw,
+                out var serverName,
+                out var configRootRaw,
+                out var dryRun,
+                out var error))
+        {
+            log($"[red]error[/]: {Markup.Escape(error)}");
+            return true;
+        }
+
+        if (target.Equals("codex", StringComparison.OrdinalIgnoreCase))
+        {
+            return await HandleAgentInstallCodexAsync(workspacePathRaw, serverName, configRootRaw, dryRun, log);
+        }
+
+        return await HandleAgentInstallClaudeAsync(dryRun, log);
+    }
+
+    private static bool TryParseAgentInstallArgs(
+        IReadOnlyList<string> args,
+        out string target,
+        out string? workspacePath,
+        out string serverName,
+        out string? configRootPath,
+        out bool dryRun,
+        out string error)
+    {
+        target = string.Empty;
+        workspacePath = null;
+        serverName = "unifocl";
+        configRootPath = null;
+        dryRun = false;
+        error = string.Empty;
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+            if (arg.Equals("--workspace", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Count)
+                {
+                    error = "missing value for --workspace; usage /agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+                    return false;
+                }
+
+                workspacePath = args[++i];
+                continue;
+            }
+
+            if (arg.Equals("--server-name", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Count)
+                {
+                    error = "missing value for --server-name; usage /agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+                    return false;
+                }
+
+                serverName = args[++i].Trim();
+                continue;
+            }
+
+            if (arg.Equals("--config-root", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Count)
+                {
+                    error = "missing value for --config-root; usage /agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+                    return false;
+                }
+
+                configRootPath = args[++i];
+                continue;
+            }
+
+            if (arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                error = $"unrecognized option {arg}; usage /agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                error = "too many positional arguments; usage /agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+                return false;
+            }
+
+            target = arg.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            error = "usage /agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+            return false;
+        }
+
+        if (!target.Equals("codex", StringComparison.OrdinalIgnoreCase)
+            && !target.Equals("claude", StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"unsupported target '{target}'; use codex or claude";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(serverName))
+        {
+            error = "--server-name cannot be empty";
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<bool> HandleAgentInstallCodexAsync(
+        string? workspacePathRaw,
+        string serverName,
+        string? configRootRaw,
+        bool dryRun,
+        Action<string> log)
+    {
+        var currentDirectory = Directory.GetCurrentDirectory();
+        var workspacePath = ResolveAbsolutePath(
+            string.IsNullOrWhiteSpace(workspacePathRaw) ? currentDirectory : workspacePathRaw,
+            currentDirectory);
+        if (!Directory.Exists(workspacePath))
+        {
+            log($"[red]agent[/]: workspace path does not exist: [white]{Markup.Escape(workspacePath)}[/]");
+            return true;
+        }
+
+        var configRoot = string.IsNullOrWhiteSpace(configRootRaw)
+            ? Path.Combine(workspacePath, ".local", "unifocl-config")
+            : ResolveAbsolutePath(configRootRaw, currentDirectory);
+
+        var removeArgs = BuildProcessArgumentString(["mcp", "remove", serverName]);
+        var addArgs = BuildProcessArgumentString([
+            "mcp",
+            "add",
+            serverName,
+            "--env",
+            $"UNIFOCL_CONFIG_ROOT={configRoot}",
+            "--",
+            "unifocl",
+            "--mcp-server"
+        ]);
+
+        if (dryRun)
+        {
+            log("[grey]agent[/]: dry-run (no changes applied)");
+            log($"[grey]agent[/]: workspace [white]{Markup.Escape(workspacePath)}[/]");
+            log($"[grey]agent[/]: config-root [white]{Markup.Escape(configRoot)}[/]");
+            log($"[grey]agent[/]: would run [white]codex {Markup.Escape(removeArgs)}[/]");
+            log($"[grey]agent[/]: would run [white]codex {Markup.Escape(addArgs)}[/]");
+            return true;
+        }
+
+        if (!await IsCommandAvailableAsync("codex"))
+        {
+            log("[red]agent[/]: codex is not installed or not available on PATH");
+            return true;
+        }
+
+        Directory.CreateDirectory(configRoot);
+        _ = await RunProcessAsync("codex", removeArgs, workspacePath, ExternalDependencyProbeTimeout);
+        var addResult = await RunProcessAsync("codex", addArgs, workspacePath, ExternalDependencyProbeTimeout);
+        if (addResult.ExitCode != 0)
+        {
+            var reason = SummarizeProcessError(addResult);
+            log($"[red]agent[/]: failed to install codex integration ({Markup.Escape(reason)})");
+            return true;
+        }
+
+        log("[green]agent[/]: codex integration installed");
+        log($"[grey]agent[/]: server [white]{Markup.Escape(serverName)}[/] -> [white]unifocl --mcp-server[/]");
+        log($"[grey]agent[/]: config-root [white]{Markup.Escape(configRoot)}[/]");
+        log("[grey]agent[/]: restart Codex session to load the MCP tools");
+        return true;
+    }
+
+    private async Task<bool> HandleAgentInstallClaudeAsync(
+        bool dryRun,
+        Action<string> log)
+    {
+        const string ClaudeInstallArgs = "mcp add @unifocl/claude-plugin";
+        if (dryRun)
+        {
+            log("[grey]agent[/]: dry-run (no changes applied)");
+            log($"[grey]agent[/]: would run [white]claude {Markup.Escape(ClaudeInstallArgs)}[/]");
+            return true;
+        }
+
+        if (!await IsCommandAvailableAsync("claude"))
+        {
+            log("[red]agent[/]: claude CLI is not installed or not available on PATH");
+            return true;
+        }
+
+        var installResult = await RunProcessAsync("claude", ClaudeInstallArgs, Directory.GetCurrentDirectory(), ExternalDependencyProbeTimeout);
+        if (installResult.ExitCode != 0)
+        {
+            var reason = SummarizeProcessError(installResult);
+            log($"[red]agent[/]: failed to install claude integration ({Markup.Escape(reason)})");
+            return true;
+        }
+
+        log("[green]agent[/]: claude integration installed");
+        log("[grey]agent[/]: plugin [white]@unifocl/claude-plugin[/] was registered");
+        log("[grey]agent[/]: restart Claude Code to ensure MCP/tooling refresh");
+        return true;
+    }
+
+    private static string BuildProcessArgumentString(IReadOnlyList<string> tokens)
+    {
+        return string.Join(' ', tokens.Select(QuoteProcessArgument));
+    }
+
+    private static string QuoteProcessArgument(string token)
+    {
+        if (string.IsNullOrEmpty(token))
+        {
+            return "\"\"";
+        }
+
+        if (!token.Any(char.IsWhiteSpace) && !token.Contains('"', StringComparison.Ordinal))
+        {
+            return token;
+        }
+
+        return $"\"{token.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+    }
 }

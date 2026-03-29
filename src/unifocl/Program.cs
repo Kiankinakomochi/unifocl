@@ -109,6 +109,35 @@ try
     var projectCommandRouterService = new ProjectCommandRouterService();
     var hierarchyTui = new HierarchyTui();
     var buildCommandService = new BuildCommandService();
+    if (CliCommandParsingService.TryParseAgentInstallCommandText(launchArgs, out var agentInstallCommandText, out var agentInstallError))
+    {
+        if (!string.IsNullOrWhiteSpace(agentInstallError))
+        {
+            CliTheme.MarkupLine($"[red]{Markup.Escape(agentInstallError)}[/]");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        var matched = CliCommandParsingService.MatchCommand(agentInstallCommandText!, commands);
+        if (matched is null)
+        {
+            CliTheme.MarkupLine("[red]error[/]: internal command routing failed for /agent install");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        var handled = await projectLifecycleService.TryHandleLifecycleCommandAsync(
+            agentInstallCommandText!,
+            matched,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => CliTheme.MarkupLine(line));
+        Environment.ExitCode = handled ? 0 : 2;
+        return;
+    }
+
+    var validateCommandService = new ValidateCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
@@ -133,6 +162,7 @@ try
                 projectCommandRouterService,
                 hierarchyTui,
                 buildCommandService,
+                validateCommandService,
                 appCancellation.Token).WaitAsync(appCancellation.Token);
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
@@ -475,6 +505,19 @@ try
         {
             await AwaitWithCancellationAsync(
                 () => buildCommandService.HandleBuildCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/validate", StringComparison.Ordinal) || matched.Trigger == "/val")
+        {
+            await AwaitWithCancellationAsync(
+                () => validateCommandService.HandleValidateCommandAsync(
                     input,
                     session,
                     daemonControlService,
