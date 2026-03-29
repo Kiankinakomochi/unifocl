@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.21.0 - 2026-03-29
+
+### Added
+- **Addressables CLI Suite documentation**: README command tables now include the full `addressable` lifecycle/profile/group/entry/analyze/bulk command surface, including the new `bulk add` / `bulk label` operations and dry-run applicability.
+
+### Fixes
+- **Addressables default settings resolution (Unity compatibility)**: bridge-side Addressables command handlers no longer hard-fail when `AddressableAssetSettingsDefaultObject` is exposed under different namespace/assembly layouts. Resolution now supports both known namespace forms and a fallback assembly scan for Unity editor environments where reflection lookup shape differs.
+- **`addressable bulk label --dry-run` behavior parity**: dry-run validation now mirrors runtime semantics by evaluating assets (not folders), skipping non-addressable matches, and reporting a count of addressable targets instead of failing immediately on the first non-addressable path.
+
+### Protocol
+- Bumped to `v16` — Addressables bridge handler updates require re-deploying editor payload scripts; re-run `/init` after upgrading.
+
+### Officialized
+- Officialized `2.21.0` by closing the development cycle suffix.
+
 ## 2.20.1 - 2026-03-29
 
 ### Fixes

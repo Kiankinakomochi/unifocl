@@ -32,6 +32,7 @@ namespace UniFocl.EditorBridge
                    || action.Equals("upm-install", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("upm-remove", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("build-scenes-set", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("addressables-cli", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
         }
 

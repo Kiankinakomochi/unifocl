@@ -209,6 +209,7 @@ internal sealed class ProjectCommandRouterService
             "ins" => "inspect",
             "list" => "ls",
             "ref" => "ls",
+            "addressables" => "addressable",
             "enter" => "cd",
             ".." => "up",
             "make" => mode == CliContextMode.Inspector ? "make" : "mk",

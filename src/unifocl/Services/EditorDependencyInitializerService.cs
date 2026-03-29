@@ -20,6 +20,7 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonMutationTransactionCoordinatorResource = "Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs";
     private const string DaemonProjectServiceResource = "Payload/EditorScripts/Services/DaemonProjectService.cs";
     private const string DaemonProjectServiceAssetCreationResource = "Payload/EditorScripts/Services/DaemonProjectService.AssetCreation.cs";
+    private const string DaemonProjectServiceAddressablesResource = "Payload/EditorScripts/Services/DaemonProjectService.Addressables.cs";
     private const string DaemonProjectServiceBuildResource = "Payload/EditorScripts/Services/DaemonProjectService.Build.cs";
     private const string DaemonProjectServiceDryRunResource = "Payload/EditorScripts/Services/DaemonProjectService.DryRun.cs";
     private const string DaemonProjectServicePrefabResource = "Payload/EditorScripts/Services/DaemonProjectService.Prefab.cs";
@@ -142,6 +143,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "DaemonMutationTransactionCoordinator.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.AssetCreation.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Addressables.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Build.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.DryRun.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Prefab.cs"),
@@ -268,6 +270,7 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonMutationTransactionCoordinatorResource, Path.Combine("Editor", "Services", "DaemonMutationTransactionCoordinator.cs")),
                 (DaemonProjectServiceResource, Path.Combine("Editor", "Services", "DaemonProjectService.cs")),
                 (DaemonProjectServiceAssetCreationResource, Path.Combine("Editor", "Services", "DaemonProjectService.AssetCreation.cs")),
+                (DaemonProjectServiceAddressablesResource, Path.Combine("Editor", "Services", "DaemonProjectService.Addressables.cs")),
                 (DaemonProjectServiceBuildResource, Path.Combine("Editor", "Services", "DaemonProjectService.Build.cs")),
                 (DaemonProjectServiceDryRunResource, Path.Combine("Editor", "Services", "DaemonProjectService.DryRun.cs")),
                 (DaemonProjectServicePrefabResource, Path.Combine("Editor", "Services", "DaemonProjectService.Prefab.cs")),

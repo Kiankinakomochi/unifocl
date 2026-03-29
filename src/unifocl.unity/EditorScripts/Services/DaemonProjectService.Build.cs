@@ -295,7 +295,8 @@ namespace UniFocl.EditorBridge
                     });
                 }
 
-                var settingsDefaultType = editorAssembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettingsDefaultObject");
+                var settingsDefaultType = editorAssembly.GetType("UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject")
+                    ?? editorAssembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettingsDefaultObject");
                 var settingsProperty = settingsDefaultType?.GetProperty("Settings", BindingFlags.Public | BindingFlags.Static);
                 var settings = settingsProperty?.GetValue(null);
                 if (settings is null)
