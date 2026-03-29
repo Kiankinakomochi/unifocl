@@ -32,6 +32,17 @@ namespace UniFocl.EditorBridge
             }
 
             var operation = options.operation.Trim().ToLowerInvariant();
+            var isDryRun = request.intent is not null && request.intent.flags is not null && request.intent.flags.dryRun;
+            if (isDryRun && IsAddressablesMutationOperation(operation))
+            {
+                if (!TryBuildAddressablesDryRunResponse(options, out var dryRunResponse, out var dryRunError))
+                {
+                    return BuildAddressablesError(dryRunError ?? "dry-run validation failed");
+                }
+
+                return dryRunResponse;
+            }
+
             switch (operation)
             {
                 case "init":
@@ -63,6 +74,398 @@ namespace UniFocl.EditorBridge
                 default:
                     return BuildAddressablesError($"unsupported addressables operation: {options.operation}");
             }
+        }
+
+        private static bool IsAddressablesMutationOperation(string operation)
+        {
+            return operation is "init"
+                or "profile-set"
+                or "group-create"
+                or "group-remove"
+                or "entry-add"
+                or "entry-remove"
+                or "entry-rename"
+                or "entry-label"
+                or "bulk-add"
+                or "bulk-label";
+        }
+
+        private static bool TryBuildAddressablesDryRunResponse(
+            AddressablesCommandRequest options,
+            out string response,
+            out string? error)
+        {
+            response = string.Empty;
+            error = null;
+            var operation = (options.operation ?? string.Empty).Trim().ToLowerInvariant();
+            var changes = new List<MutationPathChange>();
+
+            static string Normalize(string value) => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+            var assetPath = Normalize(options.assetPath);
+            var folder = Normalize(options.folder);
+            var name = Normalize(options.name);
+            var groupName = Normalize(options.groupName);
+            var label = Normalize(options.label);
+            var typeName = Normalize(options.type);
+            var address = Normalize(options.address);
+            var requiresSettings = operation is not "init";
+
+            object? settings = null;
+            if (requiresSettings)
+            {
+                if (!TryGetAddressableSettings(createIfMissing: false, out settings, out var _, out error))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                if (!TryGetAddressablesEditorAssembly(out var _, out error))
+                {
+                    return false;
+                }
+            }
+
+            switch (operation)
+            {
+                case "init":
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-init",
+                        path = "Assets/AddressableAssetsData/AddressableAssetSettings.asset",
+                        nextPath = "Assets/AddressableAssetsData/AddressableAssetSettings.asset",
+                        metaPath = "Assets/AddressableAssetsData/AddressableAssetSettings.asset.meta"
+                    });
+                    break;
+                case "profile-set":
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        error = "profile name is required";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    var profileSettings = GetPropertyValue(settings, "profileSettings");
+                    if (profileSettings is null)
+                    {
+                        error = "Addressables profile settings are unavailable";
+                        return false;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(ResolveProfileId(profileSettings, name)))
+                    {
+                        error = $"profile not found: {name}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-profile-set",
+                        path = "Assets/AddressableAssetsData/AddressableAssetSettings.asset",
+                        nextPath = string.IsNullOrWhiteSpace(name) ? "(profile)" : name,
+                        metaPath = "Assets/AddressableAssetsData/AddressableAssetSettings.asset.meta"
+                    });
+                    break;
+                case "group-create":
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        error = "group name is required";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    if (FindGroupByName(settings, name) is not null)
+                    {
+                        error = $"group already exists: {name}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-group-create",
+                        path = "Assets/AddressableAssetsData/AssetGroups",
+                        nextPath = string.IsNullOrWhiteSpace(name) ? "(group)" : name,
+                        metaPath = "Assets/AddressableAssetsData/AssetGroups.meta"
+                    });
+                    break;
+                case "group-remove":
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        error = "group name is required";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    if (FindGroupByName(settings, name) is null)
+                    {
+                        error = $"group not found: {name}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-group-remove",
+                        path = string.IsNullOrWhiteSpace(name) ? "AddressablesGroup" : name,
+                        nextPath = "(removed)",
+                        metaPath = string.Empty
+                    });
+                    break;
+                case "entry-add":
+                    if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(groupName))
+                    {
+                        error = "entry add requires assetPath and groupName";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(AssetDatabase.AssetPathToGUID(assetPath)))
+                    {
+                        error = $"asset was not found: {assetPath}";
+                        return false;
+                    }
+
+                    if (FindGroupByName(settings, groupName) is null)
+                    {
+                        error = $"group not found: {groupName}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-entry-add",
+                        path = assetPath,
+                        nextPath = string.IsNullOrWhiteSpace(groupName) ? "(group)" : groupName,
+                        metaPath = string.IsNullOrWhiteSpace(assetPath) ? string.Empty : assetPath + ".meta"
+                    });
+                    break;
+                case "entry-remove":
+                    if (string.IsNullOrWhiteSpace(assetPath))
+                    {
+                        error = "entry remove requires assetPath";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    var removeGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                    if (string.IsNullOrWhiteSpace(removeGuid))
+                    {
+                        error = $"asset was not found: {assetPath}";
+                        return false;
+                    }
+
+                    if (TryFindAssetEntry(settings, removeGuid) is null)
+                    {
+                        error = $"Addressables entry not found: {assetPath}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-entry-remove",
+                        path = assetPath,
+                        nextPath = "(unaddressable)",
+                        metaPath = string.IsNullOrWhiteSpace(assetPath) ? string.Empty : assetPath + ".meta"
+                    });
+                    break;
+                case "entry-rename":
+                    if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(address))
+                    {
+                        error = "entry rename requires assetPath and address";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    var renameGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                    if (string.IsNullOrWhiteSpace(renameGuid))
+                    {
+                        error = $"asset was not found: {assetPath}";
+                        return false;
+                    }
+
+                    if (TryFindAssetEntry(settings, renameGuid) is null)
+                    {
+                        error = $"Addressables entry not found: {assetPath}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-entry-rename",
+                        path = assetPath,
+                        nextPath = string.IsNullOrWhiteSpace(address) ? "(address)" : address,
+                        metaPath = string.IsNullOrWhiteSpace(assetPath) ? string.Empty : assetPath + ".meta"
+                    });
+                    break;
+                case "entry-label":
+                    if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(label))
+                    {
+                        error = "entry label requires assetPath and label";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    var labelGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                    if (string.IsNullOrWhiteSpace(labelGuid))
+                    {
+                        error = $"asset was not found: {assetPath}";
+                        return false;
+                    }
+
+                    if (TryFindAssetEntry(settings, labelGuid) is null)
+                    {
+                        error = $"Addressables entry not found: {assetPath}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = options.remove ? "addressables-entry-label-remove" : "addressables-entry-label-add",
+                        path = assetPath,
+                        nextPath = string.IsNullOrWhiteSpace(label) ? "(label)" : label,
+                        metaPath = string.IsNullOrWhiteSpace(assetPath) ? string.Empty : assetPath + ".meta"
+                    });
+                    break;
+                case "bulk-add":
+                    if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(groupName))
+                    {
+                        error = "bulk add requires folder and groupName";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    if (FindGroupByName(settings, groupName) is null)
+                    {
+                        error = $"group not found: {groupName}";
+                        return false;
+                    }
+
+                    var bulkAddAssets = FindAssetsInFolder(folder, typeName, includeFolders: false, out error);
+                    if (!string.IsNullOrWhiteSpace(error))
+                    {
+                        return false;
+                    }
+
+                    if (bulkAddAssets.Count == 0)
+                    {
+                        error = $"no assets matched in {folder}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = "addressables-bulk-add",
+                        path = folder,
+                        nextPath = $"{groupName} (count:{bulkAddAssets.Count})",
+                        metaPath = string.Empty
+                    });
+                    break;
+                case "bulk-label":
+                    if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(label))
+                    {
+                        error = "bulk label requires folder and label";
+                        return false;
+                    }
+
+                    if (settings is null)
+                    {
+                        error = "Addressables settings are unavailable";
+                        return false;
+                    }
+
+                    var bulkLabelAssets = FindAssetsInFolder(folder, typeName, includeFolders: false, out error);
+                    if (!string.IsNullOrWhiteSpace(error))
+                    {
+                        return false;
+                    }
+
+                    if (bulkLabelAssets.Count == 0)
+                    {
+                        error = $"no assets matched in {folder}";
+                        return false;
+                    }
+
+                    var bulkLabelAddressableCount = 0;
+                    foreach (var path in bulkLabelAssets)
+                    {
+                        var guid = AssetDatabase.AssetPathToGUID(path);
+                        if (!string.IsNullOrWhiteSpace(guid) && TryFindAssetEntry(settings, guid) is not null)
+                        {
+                            bulkLabelAddressableCount++;
+                        }
+                    }
+
+                    if (bulkLabelAddressableCount == 0)
+                    {
+                        error = $"no Addressable assets matched in {folder}";
+                        return false;
+                    }
+
+                    changes.Add(new MutationPathChange
+                    {
+                        action = options.remove ? "addressables-bulk-label-remove" : "addressables-bulk-label-add",
+                        path = folder,
+                        nextPath = string.IsNullOrWhiteSpace(typeName)
+                            ? $"{label} (count:{bulkLabelAddressableCount})"
+                            : $"{label} (type:{typeName}, count:{bulkLabelAddressableCount})",
+                        metaPath = string.Empty
+                    });
+                    break;
+                default:
+                    error = $"unsupported addressables dry-run operation: {operation}";
+                    return false;
+            }
+
+            var payload = DaemonDryRunDiffService.BuildFileDiffPayload(
+                $"addressables {operation} preview",
+                changes.ToArray());
+            response = JsonUtility.ToJson(new ProjectCommandResponse
+            {
+                ok = true,
+                message = "dry-run preview",
+                kind = "dry-run",
+                content = payload
+            });
+            return true;
         }
 
         private static string ExecuteAddressablesInit()
@@ -295,7 +698,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteAddressablesEntryAdd(string? assetPath, string? groupName)
         {
-            var normalizedAssetPath = NormalizeAssetPath(assetPath);
+            var normalizedAssetPath = NormalizeAddressablesPath(assetPath);
             var normalizedGroup = (groupName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalizedAssetPath) || string.IsNullOrWhiteSpace(normalizedGroup))
             {
@@ -331,7 +734,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteAddressablesEntryRemove(string? assetPath)
         {
-            var normalizedAssetPath = NormalizeAssetPath(assetPath);
+            var normalizedAssetPath = NormalizeAddressablesPath(assetPath);
             if (string.IsNullOrWhiteSpace(normalizedAssetPath))
             {
                 return BuildAddressablesError("entry remove requires assetPath");
@@ -359,7 +762,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteAddressablesEntryRename(string? assetPath, string? newAddress)
         {
-            var normalizedAssetPath = NormalizeAssetPath(assetPath);
+            var normalizedAssetPath = NormalizeAddressablesPath(assetPath);
             var normalizedAddress = (newAddress ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalizedAssetPath) || string.IsNullOrWhiteSpace(normalizedAddress))
             {
@@ -394,7 +797,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteAddressablesEntryLabel(string? assetPath, string? label, bool remove)
         {
-            var normalizedAssetPath = NormalizeAssetPath(assetPath);
+            var normalizedAssetPath = NormalizeAddressablesPath(assetPath);
             var normalizedLabel = (label ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalizedAssetPath) || string.IsNullOrWhiteSpace(normalizedLabel))
             {
@@ -438,7 +841,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteAddressablesBulkAdd(string? folder, string? groupName, string? typeName)
         {
-            var normalizedFolder = NormalizeAssetPath(folder);
+            var normalizedFolder = NormalizeAddressablesPath(folder);
             var normalizedGroupName = (groupName ?? string.Empty).Trim();
             var normalizedType = (typeName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalizedFolder) || string.IsNullOrWhiteSpace(normalizedGroupName))
@@ -518,7 +921,7 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteAddressablesBulkLabel(string? folder, string? label, string? typeName, bool remove)
         {
-            var normalizedFolder = NormalizeAssetPath(folder);
+            var normalizedFolder = NormalizeAddressablesPath(folder);
             var normalizedLabel = (label ?? string.Empty).Trim();
             var normalizedType = (typeName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalizedFolder) || string.IsNullOrWhiteSpace(normalizedLabel))
@@ -531,7 +934,7 @@ namespace UniFocl.EditorBridge
                 return BuildAddressablesError(error ?? "failed to load Addressables settings");
             }
 
-            var assets = FindAssetsInFolder(normalizedFolder, normalizedType, includeFolders: true, out error);
+            var assets = FindAssetsInFolder(normalizedFolder, normalizedType, includeFolders: false, out error);
             if (!string.IsNullOrWhiteSpace(error))
             {
                 return BuildAddressablesError(error!);
@@ -552,12 +955,15 @@ namespace UniFocl.EditorBridge
                 }
 
                 var existing = TryFindAssetEntry(settings!, guid);
-                if (existing is null)
+                if (existing is not null)
                 {
-                    return BuildAddressablesError($"asset is not marked Addressable: {assetPath}");
+                    snapshot.Add(CaptureEntrySnapshot(settings!, guid, existing));
                 }
+            }
 
-                snapshot.Add(CaptureEntrySnapshot(settings!, guid, existing));
+            if (snapshot.Count == 0)
+            {
+                return BuildAddressablesError($"no Addressable assets matched in {normalizedFolder}");
             }
 
             if (!remove)
@@ -787,7 +1193,7 @@ namespace UniFocl.EditorBridge
                 return false;
             }
 
-            var defaultObjectType = addressablesAssembly!.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettingsDefaultObject");
+            var defaultObjectType = ResolveAddressablesDefaultSettingsType(addressablesAssembly!);
             if (defaultObjectType is null)
             {
                 error = "Addressables default settings API was not found in this Unity version";
@@ -850,6 +1256,55 @@ namespace UniFocl.EditorBridge
             }
 
             return true;
+        }
+
+        private static Type? ResolveAddressablesDefaultSettingsType(Assembly addressablesAssembly)
+        {
+            var resolved = addressablesAssembly.GetType("UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject")
+                ?? addressablesAssembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettingsDefaultObject");
+            if (resolved is not null)
+            {
+                return resolved;
+            }
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(type => type is not null).ToArray()!;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    if (type is null)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(type.Name, "AddressableAssetSettingsDefaultObject", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (type.Namespace is null || !type.Namespace.StartsWith("UnityEditor.AddressableAssets", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    return type;
+                }
+            }
+
+            return null;
         }
 
         private static bool TryGetAddressablesEditorAssembly(out Assembly? addressablesAssembly, out string? error)
@@ -1437,7 +1892,7 @@ namespace UniFocl.EditorBridge
             });
         }
 
-        private static string NormalizeAssetPath(string? assetPath)
+        private static string NormalizeAddressablesPath(string? assetPath)
         {
             return (assetPath ?? string.Empty).Trim().Replace('\\', '/');
         }
