@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -139,6 +140,17 @@ namespace UniFocl.EditorBridge
                     case "remove-component":
                         return JsonUtility.ToJson(BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError));
 
+                    case "duplicate-component":
+                    {
+                        var duplicateOk = TryDuplicateComponent(request.targetPath, request.componentIndex, request.componentName, out var duplicateError, out var duplicateIndex);
+                        return JsonUtility.ToJson(new InspectorMutationResponse
+                        {
+                            ok = duplicateOk,
+                            message = duplicateOk ? string.Empty : (duplicateError ?? "duplicate component failed"),
+                            assignedIndex = duplicateIndex
+                        });
+                    }
+
                     case "toggle-component":
                         return JsonUtility.ToJson(BuildMutationResponse(
                             ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
@@ -251,6 +263,7 @@ namespace UniFocl.EditorBridge
             {
                 "add-component" => ExecuteAddComponent(request.targetPath, request.componentName),
                 "remove-component" => BuildMutationResponse(TryRemoveComponent(request.targetPath, request.componentIndex, request.componentName, out var removeError), removeError),
+                "duplicate-component" => ExecuteDuplicateComponent(request.targetPath, request.componentIndex, request.componentName),
                 "toggle-component" => BuildMutationResponse(
                     ToggleComponent(request.targetPath, request.componentIndex, request.componentName, out var toggleComponentError),
                     toggleComponentError),
@@ -279,10 +292,22 @@ namespace UniFocl.EditorBridge
             };
         }
 
+        private static InspectorMutationResponse ExecuteDuplicateComponent(string targetPath, int componentIndex, string componentName)
+        {
+            var duplicated = TryDuplicateComponent(targetPath, componentIndex, componentName, out var error, out var assignedIndex);
+            return new InspectorMutationResponse
+            {
+                ok = duplicated,
+                message = duplicated ? string.Empty : (error ?? "duplicate component failed"),
+                assignedIndex = assignedIndex
+            };
+        }
+
         private static bool RequiresLoadedMutationContext(string action)
         {
             return action.Equals("add-component", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("remove-component", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("duplicate-component", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("toggle-component", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("toggle-field", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("set-field", StringComparison.OrdinalIgnoreCase);
@@ -759,6 +784,58 @@ namespace UniFocl.EditorBridge
             DaemonScenePersistenceService.RecordPrefabInstanceMutation(component.gameObject);
             DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", scene);
             return true;
+        }
+
+        private static bool TryDuplicateComponent(string? targetPath, int componentIndex, string? componentName, out string? error, out int assignedIndex)
+        {
+            error = null;
+            assignedIndex = -1;
+            var component = ResolveComponent(targetPath, componentIndex, componentName);
+            if (component is null)
+            {
+                error = "component was not found";
+                return false;
+            }
+
+            if (component is Transform)
+            {
+                error = "Transform cannot be duplicated";
+                return false;
+            }
+
+            var owner = component.gameObject;
+            try
+            {
+                if (!ComponentUtility.CopyComponent(component))
+                {
+                    error = "failed to copy source component";
+                    return false;
+                }
+
+                var duplicated = Undo.AddComponent(owner, component.GetType());
+                if (duplicated is null)
+                {
+                    error = "failed to add duplicated component";
+                    return false;
+                }
+
+                if (!ComponentUtility.PasteComponentValues(duplicated))
+                {
+                    Undo.DestroyObjectImmediate(duplicated);
+                    error = "failed to paste duplicated component values";
+                    return false;
+                }
+
+                var components = owner.GetComponents<Component>();
+                assignedIndex = Array.IndexOf(components, duplicated);
+                DaemonScenePersistenceService.PersistMutationScenes("inspector mutation", owner.scene);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
 
         private static bool ToggleField(string? targetPath, int componentIndex, string? componentName, string? fieldName, out string? error)

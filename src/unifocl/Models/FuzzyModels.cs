@@ -10,7 +10,10 @@ internal sealed record AssetIndexSyncResponseDto(
 internal sealed record HierarchySearchRequestDto(
     string Query,
     int Limit,
-    int? ParentId);
+    int? ParentId,
+    string? Tag = null,
+    string? Layer = null,
+    string? Component = null);
 
 internal sealed record HierarchySearchResultDto(
     int NodeId,
