@@ -172,11 +172,9 @@ internal sealed partial class ProjectLifecycleService
             return true;
         }
 
-        // On Windows, prefer winget for the upgrade — it avoids the binary lock entirely
-        // and we can defer it the same way (wait for this PID to exit, then run winget upgrade).
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && await TrySpawnDeferredWingetUpgradeAsync(log))
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            return true;
+            return await HandleWindowsUpdateAsync(release, releaseVersion, platformSpec, log);
         }
 
         var asset = release.Assets.FirstOrDefault(candidate =>
@@ -239,28 +237,6 @@ internal sealed partial class ProjectLifecycleService
         }
 
         var processDirectory = Path.GetDirectoryName(processPath) ?? Directory.GetCurrentDirectory();
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            // winget not available — fall back to deferred binary swap
-            var stagedPath = StageDownloadedExecutableForManualInstall(
-                extractedExecutablePath,
-                releaseVersion,
-                platformSpec.ExecutableName,
-                processDirectory);
-            if (TrySpawnDeferredWindowsSwap(stagedPath, processPath, log))
-            {
-                log($"[green]update[/]: downloaded [white]{Markup.Escape(asset.Name)}[/] — swap queued");
-                log("[grey]update[/]: the binary will be replaced automatically when you quit unifocl");
-            }
-            else
-            {
-                log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
-                log($"[grey]update[/]: replace [white]{Markup.Escape(processPath)}[/] with staged binary after quitting unifocl");
-            }
-
-            return true;
-        }
-
         try
         {
             File.Copy(extractedExecutablePath, processPath, overwrite: true);
@@ -282,6 +258,147 @@ internal sealed partial class ProjectLifecycleService
             return true;
         }
     }
+
+    private static async Task<bool> HandleWindowsUpdateAsync(
+        ReleaseInfo release,
+        string releaseVersion,
+        PlatformUpdateSpec platformSpec,
+        Action<string> log)
+    {
+        var wingetVersion = await TryFetchWingetVersionAsync();
+
+        // If winget has the same version as GitHub, no need to prompt — just queue the managed upgrade.
+        if (wingetVersion is not null
+            && TryParseComparableSemVer(wingetVersion, out var wv)
+            && TryParseComparableSemVer(releaseVersion, out var rv)
+            && rv <= wv)
+        {
+            log($"[grey]update[/]: winget version matches GitHub ({Markup.Escape(wingetVersion)}) — using managed upgrade");
+            if (TrySpawnDeferredWingetUpgrade(log))
+            {
+                return true;
+            }
+        }
+
+        // Determine which install method to use.
+        WindowsInstallMethod method;
+        if (wingetVersion is null)
+        {
+            // winget not available — go straight to manual
+            method = WindowsInstallMethod.Manual;
+        }
+        else if (Console.IsInputRedirected)
+        {
+            // Non-interactive: default to latest (manual), matches previous behaviour
+            log($"[grey]update[/]: non-interactive mode — defaulting to manual install (v{Markup.Escape(releaseVersion)} vs winget v{Markup.Escape(wingetVersion)})");
+            method = WindowsInstallMethod.Manual;
+        }
+        else
+        {
+            log($"[yellow]update[/]: GitHub has a newer release than winget (GitHub v{Markup.Escape(releaseVersion)}, winget v{Markup.Escape(wingetVersion)})");
+            var choices = new[]
+            {
+                new WindowsInstallChoice(
+                    WindowsInstallMethod.Manual,
+                    $"manual  v{releaseVersion} — latest; replaces binary in same location (PATH remains valid)",
+                    "github"),
+                new WindowsInstallChoice(
+                    WindowsInstallMethod.Winget,
+                    $"winget  v{wingetVersion} — managed; recommended if you installed via winget",
+                    "winget"),
+            };
+            var selected = CliTheme.PromptWithDividers(() =>
+                AnsiConsole.Prompt(
+                    new SelectionPrompt<WindowsInstallChoice>()
+                        .Title("Choose update method")
+                        .UseConverter(c => $"{c.Label}")
+                        .AddChoices(choices)));
+            method = selected.Method;
+        }
+
+        if (method == WindowsInstallMethod.Winget)
+        {
+            if (!TrySpawnDeferredWingetUpgrade(log))
+            {
+                log("[red]error[/]: failed to queue winget upgrade");
+            }
+
+            return true;
+        }
+
+        // Manual install path: download, extract, deferred binary swap.
+        var asset = release.Assets.FirstOrDefault(candidate =>
+            candidate.Name.EndsWith(platformSpec.AssetSuffix, StringComparison.OrdinalIgnoreCase));
+        if (asset is null)
+        {
+            log($"[red]error[/]: no release asset found for {Markup.Escape(platformSpec.Label)}");
+            return true;
+        }
+
+        var tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "unifocl-update",
+            releaseVersion,
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var archivePath = Path.Combine(tempRoot, asset.Name);
+        var extractDirectory = Path.Combine(tempRoot, "extracted");
+        Directory.CreateDirectory(extractDirectory);
+
+        log($"[grey]update[/]: downloading [white]{Markup.Escape(asset.Name)}[/]");
+        var downloadResult = await DownloadReleaseAssetAsync(asset.DownloadUrl, archivePath);
+        if (!downloadResult.Ok)
+        {
+            log($"[red]error[/]: failed to download release asset ({Markup.Escape(downloadResult.Error)})");
+            return true;
+        }
+
+        var extractResult = await ExtractReleaseArchiveAsync(archivePath, extractDirectory, platformSpec.ArchiveType);
+        if (!extractResult.Ok)
+        {
+            log($"[red]error[/]: failed to extract release asset ({Markup.Escape(extractResult.Error)})");
+            return true;
+        }
+
+        var extractedExecutablePath = FindExtractedExecutablePath(extractDirectory, platformSpec.ExecutableName);
+        if (string.IsNullOrWhiteSpace(extractedExecutablePath))
+        {
+            log("[red]error[/]: extracted archive did not include an executable payload");
+            return true;
+        }
+
+        var processPath = Environment.ProcessPath;
+        var processDirectory = string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath)
+            ? Directory.GetCurrentDirectory()
+            : Path.GetDirectoryName(processPath) ?? Directory.GetCurrentDirectory();
+
+        if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+        {
+            var stagedPath = StageDownloadedExecutableForManualInstall(
+                extractedExecutablePath, releaseVersion, platformSpec.ExecutableName, processDirectory);
+            log("[yellow]update[/]: current executable path is unavailable (likely dotnet run/dev mode)");
+            log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(stagedPath)}[/]");
+            return true;
+        }
+
+        var staged = StageDownloadedExecutableForManualInstall(
+            extractedExecutablePath, releaseVersion, platformSpec.ExecutableName, processDirectory);
+        if (TrySpawnDeferredWindowsSwap(staged, processPath, log))
+        {
+            log($"[green]update[/]: downloaded [white]{Markup.Escape(asset.Name)}[/] — swap queued");
+            log("[grey]update[/]: the binary will be replaced automatically when you quit unifocl");
+        }
+        else
+        {
+            log($"[green]update[/]: downloaded latest binary -> [white]{Markup.Escape(staged)}[/]");
+            log($"[grey]update[/]: replace [white]{Markup.Escape(processPath)}[/] with staged binary after quitting unifocl");
+        }
+
+        return true;
+    }
+
+    private enum WindowsInstallMethod { Manual, Winget }
+    private sealed record WindowsInstallChoice(WindowsInstallMethod Method, string Label, string Source);
 
     private Task<bool> HandleInstallHookAsync(
         CliSessionState session,

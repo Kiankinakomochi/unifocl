@@ -251,43 +251,53 @@ internal sealed partial class ProjectLifecycleService
     }
 
     /// <summary>
-    /// If winget is available, spawns a hidden PowerShell script that waits for this process to exit
-    /// and then runs <c>winget upgrade</c>. Returns true when the deferred job was queued successfully.
+    /// Runs <c>winget show</c> for this package and returns the version string reported by winget,
+    /// or <see langword="null"/> if winget is unavailable or the package is not found.
     /// </summary>
-    private static async Task<bool> TrySpawnDeferredWingetUpgradeAsync(Action<string> log)
+    private static async Task<string?> TryFetchWingetVersionAsync()
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var psi = new ProcessStartInfo("winget", "--version")
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var psi = new ProcessStartInfo(
+                "winget",
+                $"show --id {WingetPackageId} --accept-source-agreements --disable-interactivity")
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
             };
-            using var probe = Process.Start(psi);
-            if (probe is null)
+            using var process = Process.Start(psi);
+            if (process is null)
             {
-                return false;
+                return null;
             }
 
-            await probe.WaitForExitAsync(cts.Token);
-            if (probe.ExitCode != 0)
-            {
-                return false;
-            }
+            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token);
+            await process.WaitForExitAsync(cts.Token);
+
+            // Output contains a line like: "Version: 2.13.0"
+            var match = Regex.Match(stdout, @"^Version:\s*(\S+)", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+            return match.Success ? match.Groups[1].Value.Trim() : null;
         }
         catch
         {
-            return false;
+            return null;
         }
+    }
 
+    /// <summary>
+    /// Spawns a hidden PowerShell script that waits for this process to exit and then runs
+    /// <c>winget upgrade</c>. Returns true when the deferred job was queued successfully.
+    /// </summary>
+    private static bool TrySpawnDeferredWingetUpgrade(Action<string> log)
+    {
         var currentPid = Environment.ProcessId;
         var script = $$"""
 try { Wait-Process -Id {{currentPid}} -ErrorAction SilentlyContinue } catch {}
 Start-Sleep -Seconds 1
-winget upgrade --id {{WingetPackageId}} --silent
+winget upgrade --id {{WingetPackageId}} --silent --accept-source-agreements
 """;
         var scriptPath = Path.Combine(Path.GetTempPath(), $"unifocl-winget-upgrade-{currentPid}.ps1");
         try
