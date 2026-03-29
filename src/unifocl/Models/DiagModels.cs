@@ -18,7 +18,9 @@ internal sealed record DiagCompileErrorsResult(
     int WarningCount,
     List<DiagCompilerMessage> Messages);
 
-internal sealed record DiagCompilerMessage(string Assembly, string File, int Line, string Message, string Type);
+/// Message text from Unity includes file/line context inline
+/// (e.g. "Assets/Foo.cs(42,5): error CS0246: ...").
+internal sealed record DiagCompilerMessage(string Message, string Type);
 
 /// <summary>
 /// Assembly dependency graph (asmdef references).

@@ -7,6 +7,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Compilation;
+using UnityEngine;
 
 namespace UniFocl.EditorBridge
 {
@@ -63,35 +64,27 @@ namespace UniFocl.EditorBridge
         public static string ExecuteDiagCompileErrors()
         {
             var assemblies = CompilationPipeline.GetAssemblies();
-            var messages = new List<DiagCompilerMessage>();
 
-            foreach (var assembly in assemblies)
+            // Read errors from the event-based compilation state cache.
+            // Unity surfaces per-message file/line context inside the message string
+            // (e.g. "Assets/Foo.cs(42,5): error CS0246: ..."), so we preserve the
+            // full text and let consumers parse as needed.
+            var errorTexts = DaemonProjectService.GetLastCompileErrors();
+            var messages = errorTexts.Select(e => new DiagCompilerMessage
             {
-                if (assembly.compilerMessages == null) continue;
-                foreach (var msg in assembly.compilerMessages)
-                {
-                    messages.Add(new DiagCompilerMessage
-                    {
-                        assembly = assembly.name,
-                        file = msg.file ?? string.Empty,
-                        line = msg.line,
-                        message = msg.message ?? string.Empty,
-                        type = msg.type.ToString()
-                    });
-                }
-            }
+                message = e,
+                type = "Error"
+            }).ToArray();
 
-            var errorCount = messages.Count(m => m.type == "Error");
-            var warningCount = messages.Count(m => m.type == "Warning");
             var result = new DiagCompileErrorsResult
             {
                 assemblyCount = assemblies.Length,
-                errorCount = errorCount,
-                warningCount = warningCount,
-                messages = messages.ToArray()
+                errorCount = messages.Length,
+                warningCount = 0,
+                messages = messages
             };
             return BuildDiagResponse("compile-errors", JsonUtility.ToJson(result),
-                $"{assemblies.Length} assembl(ies), {errorCount} error(s), {warningCount} warning(s)");
+                $"{assemblies.Length} assembl(ies), {messages.Length} error(s)");
         }
 
         // ── diag-assembly-graph ─────────────────────────────────────────
@@ -249,9 +242,6 @@ namespace UniFocl.EditorBridge
         [Serializable]
         internal sealed class DiagCompilerMessage
         {
-            public string assembly = "";
-            public string file = "";
-            public int line;
             public string message = "";
             public string type = "";
         }

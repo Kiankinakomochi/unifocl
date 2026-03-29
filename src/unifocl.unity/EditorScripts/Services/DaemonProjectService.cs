@@ -729,6 +729,18 @@ namespace UniFocl.EditorBridge
             });
         }
 
+        /// <summary>
+        /// Returns a snapshot of errors collected during the last compilation pass.
+        /// Thread-safe; reads from the event-based compilation state cache.
+        /// </summary>
+        internal static string[] GetLastCompileErrors()
+        {
+            lock (CompilationStateLock)
+            {
+                return _compilationState.errors ?? Array.Empty<string>();
+            }
+        }
+
         private static string ExecuteCompileStatus()
         {
             return JsonUtility.ToJson(new ProjectCommandResponse

@@ -135,21 +135,14 @@ internal sealed class DiagCommandService
             $"[{CliTheme.Error}]{result.ErrorCount} error(s)[/]  " +
             $"[{CliTheme.Warning}]{result.WarningCount} warning(s)[/]");
 
-        var ordered = result.Messages
-            .OrderBy(m => m.Type switch { "Error" => 0, "Warning" => 1, _ => 2 })
-            .ToList();
-
-        foreach (var msg in ordered)
+        foreach (var msg in result.Messages)
         {
             var (color, icon) = msg.Type switch
             {
-                "Error"       => (CliTheme.Error, "✗"),
-                "Warning"     => (CliTheme.Warning, "⚠"),
-                _             => (CliTheme.Info, "i")
+                "Warning" => (CliTheme.Warning, "⚠"),
+                _         => (CliTheme.Error, "✗")
             };
-            var location = string.IsNullOrEmpty(msg.File) ? string.Empty
-                : $" [{CliTheme.TextMuted}]@ {Markup.Escape(msg.File)}:{msg.Line}[/]";
-            log($"  [{color}]{icon}[/] [{CliTheme.TextMuted}]{Markup.Escape(msg.Assembly)}[/] {Markup.Escape(msg.Message)}{location}");
+            log($"  [{color}]{icon}[/] {Markup.Escape(msg.Message)}");
         }
     }
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.19.0 - 2026-03-29
+
+### Added
+- **`/diag` command family**: five new read-only daemon-dispatched diagnostics for structural project introspection.
+  - **`diag script-defines`**: reads `PlayerSettings.GetScriptingDefineSymbolsForGroup()` for 9 major build target groups and returns the define symbols per platform. Useful for auditing platform-specific define drift.
+  - **`diag compile-errors`**: returns the error messages captured by the event-based compilation pipeline cache (`assemblyCompilationFinished`). Reports the assembly count from `CompilationPipeline.GetAssemblies()` and the list of error strings from the last compile pass.
+  - **`diag assembly-graph`**: reads `CompilationPipeline.GetAssemblies()` and maps each assembly's direct `assemblyReferences` (asmdef-level dependencies, not all compiled `.dll` references). Output is an alphabetically sorted adjacency list.
+  - **`diag scene-deps`**: calls `AssetDatabase.GetDependencies(scenePath, recursive: true)` for every enabled scene in `EditorBuildSettings.scenes`. Returns per-scene dependency count and the first 20 dependency paths.
+  - **`diag prefab-deps`**: same as scene-deps but for all prefabs under `Assets/`, capped at 100 prefabs to avoid timeout on large projects.
+- **ExecV2 `diag.*` operations**: all five registered as `SafeRead` — no approval gating required. Available via `POST /agent/exec` with operations `diag.script-defines`, `diag.compile-errors`, `diag.assembly-graph`, `diag.scene-deps`, `diag.prefab-deps`.
+- **`DaemonProjectService.GetLastCompileErrors()`**: new internal static accessor exposing the event-cached compile error list to other daemon services in a thread-safe way.
+
+### Daemon / Protocol
+- Protocol bumped to `v13` — `DaemonDiagService` is a new editor-side script; users must re-run `/init` to install the updated bridge payload.
+
+### Docs
+- **`docs/project-diagnostics.md`** (new): full reference for all five `diag` subcommands covering output schemas, field descriptions, performance characteristics, and ExecV2 operation index.
+- **README updated**: `/diag <sub>` added to slash-command table; `diag *` subcommands added to contextual-operations table; new Section 9 "Project Diagnostics" with usage examples and ExecV2 operation table.
+
+### Officialized
+- Officialized `2.19.0` by closing the development cycle suffix.
+
+
 ## 2.18.0 - 2026-03-29
 
 ### Added
