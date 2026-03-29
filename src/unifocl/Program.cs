@@ -139,6 +139,7 @@ try
 
     var validateCommandService = new ValidateCommandService();
     var diagCommandService = new DiagCommandService();
+    var testCommandService = new TestCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
@@ -164,6 +165,8 @@ try
                 hierarchyTui,
                 buildCommandService,
                 validateCommandService,
+                diagCommandService,
+                testCommandService,
                 appCancellation.Token).WaitAsync(appCancellation.Token);
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
@@ -276,6 +279,18 @@ try
                         daemonControlService,
                         daemonRuntime,
                         line => CliLogService.AppendLog(streamLog, line)),
+                    appCancellation.Token);
+                continue;
+            }
+
+            if (CliCommandParsingService.IsTestCommand(input))
+            {
+                await AwaitWithCancellationAsync(
+                    () => testCommandService.HandleTestCommandAsync(
+                        input,
+                        session,
+                        line => CliLogService.AppendLog(streamLog, line),
+                        appCancellation.Token),
                     appCancellation.Token);
                 continue;
             }
@@ -537,6 +552,21 @@ try
                     daemonControlService,
                     daemonRuntime,
                     line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/test", StringComparison.Ordinal))
+        {
+            var testPayload = input.Length > "/test".Length
+                ? $"test {input["/test".Length..].Trim()}"
+                : "test";
+            await AwaitWithCancellationAsync(
+                () => testCommandService.HandleTestCommandAsync(
+                    testPayload,
+                    session,
+                    line => CliLogService.AppendLog(streamLog, line),
+                    appCancellation.Token),
                 appCancellation.Token);
             continue;
         }

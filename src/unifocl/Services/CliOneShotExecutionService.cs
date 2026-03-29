@@ -14,6 +14,8 @@ internal static class CliOneShotExecutionService
         HierarchyTui hierarchyTui,
         BuildCommandService buildCommandService,
         ValidateCommandService validateCommandService,
+        DiagCommandService diagCommandService,
+        TestCommandService testCommandService,
         CancellationToken cancellationToken = default)
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
@@ -216,6 +218,8 @@ internal static class CliOneShotExecutionService
                             hierarchyTui,
                             buildCommandService,
                             validateCommandService,
+                            diagCommandService,
+                            testCommandService,
                             cancellationToken).WaitAsync(cancellationToken);
                     }
                     var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
@@ -421,6 +425,8 @@ internal static class CliOneShotExecutionService
         HierarchyTui hierarchyTui,
         BuildCommandService buildCommandService,
         ValidateCommandService validateCommandService,
+        DiagCommandService diagCommandService,
+        TestCommandService testCommandService,
         CancellationToken cancellationToken = default)
     {
         static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken token)
@@ -501,6 +507,18 @@ internal static class CliOneShotExecutionService
                         daemonControlService,
                         daemonRuntime,
                         line => CliLogService.AppendLog(streamLog, line)),
+                    cancellationToken);
+                return;
+            }
+
+            if (CliCommandParsingService.IsTestCommand(input))
+            {
+                await AwaitWithCancellationAsync(
+                    () => testCommandService.HandleTestCommandAsync(
+                        input,
+                        session,
+                        line => CliLogService.AppendLog(streamLog, line),
+                        cancellationToken),
                     cancellationToken);
                 return;
             }
@@ -697,6 +715,35 @@ internal static class CliOneShotExecutionService
                     daemonControlService,
                     daemonRuntime,
                     line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/diag", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => diagCommandService.HandleDiagCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/test", StringComparison.Ordinal))
+        {
+            // Strip leading /test and rewrite as "test <sub>" for the service
+            var testPayload = input.Length > "/test".Length
+                ? $"test {input["/test".Length..].Trim()}"
+                : "test";
+            await AwaitWithCancellationAsync(
+                () => testCommandService.HandleTestCommandAsync(
+                    testPayload,
+                    session,
+                    line => CliLogService.AppendLog(streamLog, line),
+                    cancellationToken),
                 cancellationToken);
             return;
         }

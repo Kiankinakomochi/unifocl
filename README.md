@@ -141,6 +141,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
 | `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `all`). |
+| `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`). No daemon required. |
 | `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `all`). All ops are read-only and require the daemon. See [`docs/project-diagnostics.md`](docs/project-diagnostics.md). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
@@ -244,6 +245,9 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `build artifact-metadata` |  | Show last build artifact files and sizes in project mode. |
 | `build failure-classify` |  | Classify last build errors by category in project mode. |
 | `build report` |  | Consolidated build report in project mode. |
+| `test list` |  | List all available edit-mode tests (name + assembly). No daemon required. |
+| `test run editmode [--timeout <s>]` |  | Run all EditMode tests via Unity subprocess; returns structured JSON results. Default timeout 600s. |
+| `test run playmode [--timeout <s>]` |  | Run all PlayMode tests via Unity subprocess. May trigger player build. Default timeout 1800s. |
 | `diag script-defines` |  | Show scripting define symbols per build target group in project mode. |
 | `diag compile-errors` |  | Show compiler messages from last compilation pass in project mode. |
 | `diag assembly-graph` |  | Show asmdef-level assembly dependency graph in project mode. |
@@ -437,6 +441,56 @@ ExecV2 operations (all `SafeRead` — no approval required):
 `build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report`
 
 Full reference: [`docs/validate-build-workflow.md`](docs/validate-build-workflow.md)
+
+### 8. Test Orchestration
+
+The `test` commands run Unity's built-in test runner as a **direct subprocess** — no daemon, no running editor required. This makes them safe to call from CI, parallel agent sessions, or any headless environment.
+
+```
+/test list
+/test run <editmode|playmode> [--timeout <seconds>]
+```
+
+| Subcommand | Platform flag | Default timeout | Description |
+| --- | --- | --- | --- |
+| `list` | EditMode | 5 min | Lists all available tests. Output: `[{ testName, assembly }]`. |
+| `run editmode` | EditMode | 10 min | Runs all EditMode tests. |
+| `run playmode` | PlayMode | 30 min | Runs all PlayMode tests. May trigger a player build. |
+
+**Output contract (`test run`):**
+
+```json
+{
+  "total": 42,
+  "passed": 40,
+  "failed": 2,
+  "skipped": 0,
+  "durationMs": 8340,
+  "artifactsPath": "<project>/Logs/unifocl-test",
+  "failures": [
+    { "testName": "MyTests.SomeTest", "message": "Expected 1 but was 2", "stackTrace": "...", "durationMs": 12 }
+  ]
+}
+```
+
+Results come from the NUnit v3 XML file Unity writes to `Logs/unifocl-test/`. If Unity crashes before writing results, the envelope still returns with all counters at zero and an empty failures array.
+
+**Agentic usage:**
+
+```sh
+# List tests (no project open required)
+unifocl exec "test list" --agentic --format json --project ./my-project
+
+# Run EditMode suite
+unifocl exec "test run editmode" --agentic --format json --project ./my-project --session-seed my-seed
+
+# Run PlayMode suite with extended timeout
+unifocl exec "test run playmode --timeout 3600" --agentic --format json --project ./my-project
+```
+
+ExecV2 operations: `test.list` (`SafeRead`) and `test.run` (`PrivilegedExec` — requires approval on first call).
+
+Full reference: [`docs/test-orchestration.md`](docs/test-orchestration.md)
 
 ### 9. Project Diagnostics
 
@@ -668,6 +722,8 @@ Endpoint list:
 | `prefab.unpack` | DestructiveWrite | `nodeSelector`, `completely?` |
 | `prefab.variant` | SafeWrite | `sourcePath`, `newPath` |
 | `eval.run` | PrivilegedExec | `code`, `declarations?`, `timeoutMs?` |
+| `test.list` | SafeRead | _(none)_ |
+| `test.run` | PrivilegedExec | `platform` (`EditMode`\|`PlayMode`), `timeoutSeconds?` |
 | `hierarchy.snapshot` | SafeRead | _(none)_ |
 | `session.open` | SafeRead | _(none)_ |
 | `session.close` | SafeRead | _(none)_ |
