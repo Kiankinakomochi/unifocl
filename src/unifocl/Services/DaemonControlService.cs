@@ -843,7 +843,8 @@ internal sealed class DaemonControlService
                || line.Contains("Failed to start secondary listening socket", StringComparison.OrdinalIgnoreCase)
                || line.Contains("Failed to start the Unity Package Manager local server process", StringComparison.OrdinalIgnoreCase)
                || line.Contains("Error: listen EPERM", StringComparison.OrdinalIgnoreCase)
-               || line.Contains("Licensing initialization failed", StringComparison.OrdinalIgnoreCase);
+               || line.Contains("Licensing initialization failed", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("another Unity instance is running", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task CleanupRecoverableStartupFailureAsync(

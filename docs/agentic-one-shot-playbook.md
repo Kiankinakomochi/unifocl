@@ -75,6 +75,25 @@ This note captures the current, post-fix behavior for `unifocl` one-shot agentic
    - one daemon port per worktree
    - never share mutable worktree state across parallel agents
 
+## Session-Seed Stability Rules
+
+1. **Never rotate `--session-seed` mid-workflow.** Changing the seed drops the daemon attachment and forces a new `/open` cycle.
+2. **Derive seeds deterministically** from suite/case identity:
+   - Test suites: `{suite}-{case-id}` (auto-derived by `run-testcases.sh`)
+   - Manual workflows: human-readable stable identifier (e.g., `mission-console-001`)
+3. **Session snapshots persist across process exits** at `.unifocl-runtime/agentic/sessions/{seed}.json`. A resumed seed skips `/open` and reuses the attached daemon port.
+4. **If you get `E_PROJECT_LOCKED` (exit code 5):**
+   - Another agent/process holds the project lock.
+   - Do not retry — provision an isolated worktree instead:
+     ```bash
+     agent-worktree.sh provision --repo-root <repo> --worktree-path <dir> \
+       --branch <name>/<task> --source-project <project> --seed-library
+     ```
+5. **If the daemon dies mid-session** (stale session, crash):
+   - Run `/close` with the same seed to detach cleanly.
+   - Run `/open` again with the same seed to restart the daemon.
+   - The session-seed ensures the new daemon binds to the same session context.
+
 ## Residual Risks / Caveats
 
 1. Daemon warmup/attach latency still exists right after `/open`; immediate follow-up commands may need retry logic in scripts.

@@ -19,6 +19,7 @@ internal sealed class ProjectLifecycleService
     private static readonly TimeSpan GitCloneTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan CompileRecoveryRetryDelay = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan DefaultOpenDaemonStartupTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan ProjectOpenLockTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CliUpdateDownloadTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ExternalDependencyProbeTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ExternalDependencyInstallTimeout = TimeSpan.FromMinutes(5);
@@ -2738,6 +2739,50 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
+        // Acquire cross-process file lock to prevent concurrent opens on the same project.
+        // Agents working concurrently should clone the project (with Library/) to their own worktree.
+        var lockDir = Path.Combine(projectPath, ".unifocl");
+        Directory.CreateDirectory(lockDir);
+        var lockPath = Path.Combine(lockDir, "open.lock");
+        FileStream? projectLock = null;
+        try
+        {
+            projectLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException)
+        {
+            log($"[red]error[/]: another process is already opening this project");
+            log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated worktree before opening");
+            log($"[yellow]hint[/]: use [white]agent-worktree.sh provision --seed-library[/] to clone with pre-compiled Library cache");
+            return false;
+        }
+
+        try
+        {
+            return await TryOpenProjectLockedAsync(
+                projectPath, session, daemonControlService, daemonRuntime,
+                editorDependencyInitializerService, promptForInitialization,
+                ensureMcpHostDependencyCheck, allowUnsafe, daemonStartupTimeout, log);
+        }
+        finally
+        {
+            projectLock.Dispose();
+            TryDeleteLockFile(lockPath);
+        }
+    }
+
+    private async Task<bool> TryOpenProjectLockedAsync(
+        string projectPath,
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        EditorDependencyInitializerService editorDependencyInitializerService,
+        bool promptForInitialization,
+        bool ensureMcpHostDependencyCheck,
+        bool allowUnsafe,
+        TimeSpan daemonStartupTimeout,
+        Action<string> log)
+    {
         var hasProtocolMismatch = TryGetProjectBridgeProtocol(projectPath, out var configuredProtocol)
                                   && !string.Equals(configuredProtocol, CliVersion.Protocol, StringComparison.Ordinal);
 
@@ -3041,6 +3086,16 @@ internal sealed class ProjectLifecycleService
             return false;
         }
 
+        var allText = string.Join("\n", new[] { failure.Summary }.Concat(failure.Lines));
+        if (allText.Contains("another Unity instance", StringComparison.OrdinalIgnoreCase)
+            || allText.Contains("Multiple Unity instances cannot open", StringComparison.OrdinalIgnoreCase))
+        {
+            log($"[red]daemon[/]: startup failed — another Unity instance is already running for this project");
+            log("[yellow]hint[/]: concurrent agents must clone the project to an isolated worktree before opening");
+            log("[yellow]hint[/]: use [white]agent-worktree.sh provision --seed-library[/] to clone with pre-compiled Library cache");
+            return false;
+        }
+
         if (!failure.IsCompileError)
         {
             log($"[red]daemon[/]: startup failed ({Markup.Escape(failure.Summary)})");
@@ -3060,6 +3115,11 @@ internal sealed class ProjectLifecycleService
         DaemonControlService.ClearAttachedPort(session);
         log("[yellow]open[/]: compile errors blocked daemon startup; fix errors and retry /open");
         return false;
+    }
+
+    private static void TryDeleteLockFile(string lockPath)
+    {
+        try { File.Delete(lockPath); } catch { /* best-effort cleanup */ }
     }
 
     private static void SaveDaemonSession(string projectPath, DaemonSessionInfo session)

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.11.0 - 2026-03-29
+
+### Fixed
+- **Cross-process file lock for concurrent agentic opens**: `TryOpenProjectAsync` now acquires an exclusive `.unifocl/open.lock` before embedded package install and daemon startup. Concurrent agents that race for the same project receive `E_PROJECT_LOCKED` (exit code 5) with guidance to clone via `agent-worktree.sh provision --seed-library`.
+- **"Another Unity instance" is now a recoverable startup failure**: the existing cleanup+retry path in `DaemonControlService` now handles the Unity project lock collision if it slips past the file lock.
+- **Concurrent file-lock errors reclassified**: package.json "being used by another process" errors are reclassified from `E_UNITY_API` to `E_PROJECT_LOCKED` with the worktree clone hint.
+
+### Added
+- **`E_PROJECT_LOCKED` agentic error code**: new structured error (exit code 5) for concurrent project access, with actionable hint directing agents to worktree isolation.
+- **Daemon session lifecycle guide in AGENT.md**: covers `--session-seed` rules, daemon reuse across exec calls, `E_PROJECT_LOCKED` handling, concurrent agent isolation, and lost daemon recovery.
+- **Test suite writing guide in AGENT.md**: schema reference, step ordering, assert operators, predict mode, and runner invocation patterns.
+- **Session-seed stability rules in agentic playbook**: deterministic seed derivation, mid-workflow rotation prohibition, dead daemon recovery sequence.
+
 ## 2.10.0 - 2026-03-29
 
 ### Refactor

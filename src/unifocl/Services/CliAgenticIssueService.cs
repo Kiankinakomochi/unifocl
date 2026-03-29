@@ -33,7 +33,14 @@ internal static class CliAgenticIssueService
 
             if (lower.StartsWith("error") || lower.Contains("failed") || lower.StartsWith("x "))
             {
-                errors.Add(new AgenticError(GuessErrorCode(lower), line));
+                var code = GuessErrorCode(lower);
+                if (code == "E_UNITY_API" && lower.Contains("being used by another process"))
+                {
+                    code = "E_PROJECT_LOCKED";
+                    errors.Add(new AgenticError(code, line, "concurrent agents must clone the project to an isolated worktree; use agent-worktree.sh provision --seed-library"));
+                    continue;
+                }
+                errors.Add(new AgenticError(code, line));
                 continue;
             }
 
@@ -79,6 +86,11 @@ internal static class CliAgenticIssueService
             return 6;
         }
 
+        if (errors.Any(error => error.Code is "E_PROJECT_LOCKED"))
+        {
+            return 5;
+        }
+
         if (errors.Any(error => error.Code is "E_PARSE" or "E_VALIDATION" or "E_MODE_INVALID" or "E_NOT_FOUND" or "E_VCS_SETUP_REQUIRED"))
         {
             return 2;
@@ -111,6 +123,13 @@ internal static class CliAgenticIssueService
 
     private static string GuessErrorCode(string normalizedLine)
     {
+        if (normalizedLine.Contains("another process is already opening")
+            || normalizedLine.Contains("another unity instance")
+            || normalizedLine.Contains("concurrent agents must clone"))
+        {
+            return "E_PROJECT_LOCKED";
+        }
+
         if (normalizedLine.Contains("usage") || normalizedLine.Contains("invalid"))
         {
             return "E_PARSE";

@@ -232,6 +232,131 @@ At task start:
 
 ---
 
+# Daemon Session Lifecycle (Critical for Agentic Workflows)
+
+## Session Seed Rules
+
+- **Always pass `--session-seed <id>` when calling `unifocl exec`**. This reuses the daemon connection and project context across multiple exec calls, avoiding redundant `/open` overhead.
+- Session seeds are derived as `{suite}-{case-id}` in test suites, or a stable human-readable identifier in manual workflows (e.g., `mission-console-001`).
+- All steps within a single test case **share the same session seed**. This means `/open` only runs once (first step), and subsequent steps reuse the attached daemon.
+- Session state is persisted at `.unifocl-runtime/agentic/sessions/{sessionSeed}.json` and survives process exit.
+
+## Daemon Lifecycle Across Exec Calls
+
+```
+Agent exec "/open <project>" --session-seed MY-SEED
+  ↓  daemon starts (Host mode), registers on computed port
+  ↓  session snapshot saved with attached port + project path
+
+Agent exec "/dump hierarchy" --session-seed MY-SEED
+  ↓  session restored → daemon already running → reuses port
+  ↓  no /open needed, no daemon restart
+
+Agent exec "/hierarchy mk Canvas" --session-seed MY-SEED
+  ↓  same daemon, same session → mutation executed
+```
+
+**Key rule:** Never change the `--session-seed` mid-workflow unless you intend to start a fresh session. A different seed will trigger a new `/open` cycle and may spawn a competing daemon.
+
+## Concurrent Agent Isolation (E_PROJECT_LOCKED)
+
+- **One daemon per project path.** Two agents opening the same project will race for the Unity process lock.
+- When this happens, the losing agent receives `E_PROJECT_LOCKED` (exit code 5) with a hint:
+  ```
+  error: another process is already opening this project
+  hint: concurrent agents must clone the project to an isolated worktree before opening
+  hint: use agent-worktree.sh provision --seed-library to clone with pre-compiled Library cache
+  ```
+- **Fix:** Each concurrent agent must provision its own worktree:
+  ```bash
+  agent-worktree.sh provision --repo-root <repo> --worktree-path <agent-dir> \
+    --branch <agent-name>/<task> --source-project <project> --seed-library
+  ```
+  The `--seed-library` flag copies the pre-compiled Library/ to avoid recompilation.
+- After provisioning, each agent uses its own project path and gets its own daemon port (computed from the path hash).
+
+## Recovering from Lost Daemons
+
+If an agent loses its daemon (timeout, crash, stale session), the recovery sequence is:
+
+1. Run `/close` to detach the stale session:
+   ```
+   unifocl exec "/close" --agentic --session-seed MY-SEED --format json
+   ```
+2. Re-open:
+   ```
+   unifocl exec "/open <project>" --agentic --session-seed MY-SEED --format json
+   ```
+3. If `/open` fails with `E_PROJECT_LOCKED`, another process holds the project lock. Either wait for it to finish or provision a new worktree.
+
+If the daemon process is truly dead but leftover processes linger:
+```bash
+pkill -f "Unity.*<project-name>"  # kill orphaned Unity editor
+pkill -f "Unity.Licensing.Client"  # kill orphaned licensing clients
+```
+
+---
+
+# Writing Test Suites (Agentic Test Harness)
+
+## Schema Reference
+
+Test suites follow `.codex/testcase.schema.json`. Key structure:
+
+```json
+{
+  "suite": "my-feature-tests",
+  "runner": "dotnet run --no-build --project {suite_dir}/../src/unifocl/unifocl.csproj --",
+  "project": "{suite_dir}/../.local/compatcheck-benchmark",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "case-name",
+      "predict": "pass",
+      "steps": [
+        { "cmd": "/open {suite_dir}/../.local/compatcheck-benchmark", "assert": { ".status": "success" } },
+        { "cmd": "/dump hierarchy", "assert": { ".status": "success", ".data.logs": { "$contains": "SampleScene" } } }
+      ]
+    }
+  ]
+}
+```
+
+## Step Ordering Rules
+
+1. **First step must be `/open <project>`** — this starts the daemon and attaches the session.
+2. All subsequent steps share the same session seed (`{suite}-{case-id}`), so the daemon stays attached.
+3. Group operations by intent: hierarchy creates → inspector mutations → verification dumps.
+4. Use `/dump hierarchy` and `/dump inspector` after mutation batches to verify state.
+
+## Assert Operators
+
+| Operator | Example | Meaning |
+|----------|---------|---------|
+| (literal) | `".status": "success"` | Exact match |
+| `$exists` | `".data": { "$exists": true }` | Non-null |
+| `$ne` | `".status": { "$ne": "error" }` | Not equal |
+| `$gt` / `$gte` | `".meta.exitCode": { "$gte": 0 }` | Numeric comparison |
+| `$contains` | `".data.logs": { "$contains": "ready" }` | String/array containment |
+
+## Predict Mode
+
+- `"predict": "pass"` (default) — all assertions must hold.
+- `"predict": "fail"` — regression guard; at least one step must fail. Use this for known broken paths so the suite catches when they start passing unexpectedly.
+
+## Running Suites
+
+```bash
+scripts/run-testcases.sh tests/suite-my-feature.json [--no-build] [--force-restart-daemon]
+```
+
+Override project or seed:
+```bash
+scripts/run-testcases.sh tests/suite-my-feature.json --project /path/to/project --seed my-fixed-seed
+```
+
+---
+
 # Known Sandbox Problems (Important)
 
 ## 1) Home-directory write blocked (`workspace-write` scope)
