@@ -16,6 +16,7 @@ namespace UniFocl.EditorBridge
     internal static class DaemonHierarchyService
     {
         private static readonly object Sync = new();
+        private static readonly Lazy<Dictionary<string, Type>> ComponentTypeLookup = new(BuildComponentTypeLookup);
         private const int SceneRootNodeId = int.MaxValue;
         private static int _snapshotVersion = 1;
         private static int _lastSnapshotHash;
@@ -608,8 +609,7 @@ namespace UniFocl.EditorBridge
                 case "emptyparent":
                     return CreateEmptyParent(request.targetId, activeScene, explicitName, out error);
                 default:
-                    error = $"unsupported mk type: {rawType}";
-                    return null;
+                    return CreateViaTypeCache(rawType, parentTransform, parentScene, activeScene, explicitName, out error);
             }
         }
 
@@ -1394,6 +1394,104 @@ namespace UniFocl.EditorBridge
 
                 return hash;
             }
+        }
+        private static GameObject? CreateViaTypeCache(
+            string rawType,
+            Transform? parentTransform,
+            Scene parentScene,
+            Scene activeScene,
+            string? explicitName,
+            out string? error)
+        {
+            error = null;
+            if (!TryResolveComponentType(rawType, out var componentType))
+            {
+                error = $"unsupported mk type: {rawType} (not found in catalog or TypeCache)";
+                return null;
+            }
+
+            var displayName = explicitName ?? componentType.Name;
+            var go = new GameObject(displayName);
+            go.AddComponent(componentType);
+            return CreateAndParent(go, parentTransform, parentScene, activeScene, explicitName);
+        }
+
+        private static bool TryResolveComponentType(string token, out Type resolvedType)
+        {
+            resolvedType = typeof(Component);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return false;
+            }
+
+            var lookup = ComponentTypeLookup.Value;
+
+            if (lookup.TryGetValue(token.Trim(), out var exact))
+            {
+                resolvedType = exact;
+                return true;
+            }
+
+            var normalized = NormalizeTypeLookupKey(token);
+            if (lookup.TryGetValue(normalized, out var matched))
+            {
+                resolvedType = matched;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static Dictionary<string, Type> BuildComponentTypeLookup()
+        {
+            var lookup = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (System.Reflection.ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    if (type.IsAbstract || !typeof(Component).IsAssignableFrom(type))
+                    {
+                        continue;
+                    }
+
+                    lookup[type.FullName ?? type.Name] = type;
+                    lookup[type.Name] = type;
+                    lookup[NormalizeTypeLookupKey(type.Name)] = type;
+                    if (!string.IsNullOrWhiteSpace(type.FullName))
+                    {
+                        lookup[NormalizeTypeLookupKey(type.FullName)] = type;
+                    }
+                }
+            }
+
+            return lookup;
+        }
+
+        private static string NormalizeTypeLookupKey(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var chars = value.Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray();
+            return new string(chars);
         }
     }
 }

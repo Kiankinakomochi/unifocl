@@ -16,11 +16,10 @@ internal sealed partial class ProjectViewService
             return true;
         }
 
-        if (!ProjectMkCatalog.TryNormalizeType(mkTypeRaw, out var canonicalType, out var typeError))
+        var catalogResolved = ProjectMkCatalog.TryNormalizeType(mkTypeRaw, out var canonicalType, out var typeError);
+        if (!catalogResolved)
         {
-            outputs.Add($"[x] {typeError}");
-            outputs.Add($"[i] supported mk types: {string.Join(", ", ProjectMkCatalog.KnownTypes)}");
-            return true;
+            canonicalType = mkTypeRaw.Trim();
         }
 
         if (!ProjectViewMkCommandUtils.TryResolveMkParentPath(session, parentSelector, out var parentPath, out var parentError))
@@ -33,6 +32,11 @@ internal sealed partial class ProjectViewService
             || canonicalType.Equals("ScriptableObjectScript", StringComparison.OrdinalIgnoreCase))
         {
             return await HandleScriptMkViaBridgeAsync(canonicalType, count, name, parentPath, session, outputs);
+        }
+
+        if (!catalogResolved)
+        {
+            outputs.Add($"[*] '{canonicalType}' is not a built-in type; resolving via TypeCache");
         }
 
         var state = session.ProjectView;

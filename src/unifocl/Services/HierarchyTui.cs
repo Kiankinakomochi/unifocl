@@ -105,6 +105,8 @@ internal sealed class HierarchyTui
             return;
         }
 
+        _ = SyncHierarchyMkTypeCacheAsync(port, session);
+
         var snapshot = await _daemonClient.GetSnapshotAsync(port);
         if (snapshot is null)
         {
@@ -413,10 +415,15 @@ internal sealed class HierarchyTui
                 return true;
             }
 
-            if (!TryNormalizeMkType(makeType, out var normalizedMakeType, out makeError))
+            if (!TryNormalizeMkType(makeType, out var normalizedMakeType, out var makeCatalogResolved, out makeError))
             {
                 commandLog.Add($"[!] {makeError}");
                 return true;
+            }
+
+            if (!makeCatalogResolved)
+            {
+                commandLog.Add($"[*] '{normalizedMakeType}' is not a built-in type; resolving via TypeCache");
             }
 
             var targetId = normalizedMakeType.Equals("EmptyParent", StringComparison.OrdinalIgnoreCase) ? cwdId : (int?)null;
@@ -455,10 +462,15 @@ internal sealed class HierarchyTui
                 return true;
             }
 
-            if (!TryNormalizeMkType(mkType, out var normalizedMkType, out mkError))
+            if (!TryNormalizeMkType(mkType, out var normalizedMkType, out var mkCatalogResolved, out mkError))
             {
                 commandLog.Add($"[!] {mkError}");
                 return true;
+            }
+
+            if (!mkCatalogResolved)
+            {
+                commandLog.Add($"[*] '{normalizedMkType}' is not a built-in type; resolving via TypeCache");
             }
 
             if (!TryResolveMkParentId(snapshot, cwdId, normalizedMkType, mkParentSelector, out var parentId, out mkError))
@@ -2173,9 +2185,10 @@ internal sealed class HierarchyTui
         return lookup;
     }
 
-    private static bool TryNormalizeMkType(string raw, out string canonical, out string error)
+    private static bool TryNormalizeMkType(string raw, out string canonical, out bool catalogResolved, out string error)
     {
         canonical = string.Empty;
+        catalogResolved = false;
         error = string.Empty;
         if (string.IsNullOrWhiteSpace(raw))
         {
@@ -2184,14 +2197,15 @@ internal sealed class HierarchyTui
         }
 
         var key = NormalizeMkTypeKey(raw);
-        if (!MkTypeLookup.TryGetValue(key, out var resolved))
+        if (MkTypeLookup.TryGetValue(key, out var resolved))
         {
-            var known = string.Join(", ", MkTypeLookup.Values.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
-            error = $"unsupported mk type: {raw}. supported types: {known}";
-            return false;
+            canonical = resolved;
+            catalogResolved = true;
+            return true;
         }
 
-        canonical = resolved;
+        // Pass through to daemon for TypeCache resolution
+        canonical = raw.Trim();
         return true;
     }
 
@@ -2399,4 +2413,36 @@ internal sealed class HierarchyTui
         var resolved = Math.Max(minimumRowsThatFit, intendedDynamicRows - excessRows);
         return Math.Min(availableDynamicRows, resolved);
     }
+
+    private async Task SyncHierarchyMkTypeCacheAsync(int port, CliSessionState session)
+    {
+        try
+        {
+            var response = await _daemonClient.ExecuteProjectCommandAsync(
+                port,
+                new ProjectCommandRequestDto("query-hierarchy-mk-types", null, null, null));
+            if (!response.Ok || string.IsNullOrWhiteSpace(response.Content))
+            {
+                return;
+            }
+
+            var payload = System.Text.Json.JsonSerializer.Deserialize<QueryMkTypesPayload>(
+                response.Content,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (payload?.Types is null || payload.Types.Count == 0)
+            {
+                return;
+            }
+
+            var state = session.ProjectView;
+            state.CachedHierarchyMkTypes.Clear();
+            state.CachedHierarchyMkTypes.AddRange(payload.Types);
+        }
+        catch
+        {
+            // Non-critical — intellisense falls back to static catalog
+        }
+    }
+
+    private sealed record QueryMkTypesPayload(List<string> Types);
 }

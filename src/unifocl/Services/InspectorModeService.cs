@@ -1169,13 +1169,18 @@ internal sealed class InspectorModeService
         }
 
         var rawType = string.Join(' ', tokens.Skip(2)).Trim();
-        if (!InspectorComponentCatalog.TryResolve(rawType, out var displayName, out var typeReference, out var error))
+        string displayName;
+        string typeReference;
+        if (InspectorComponentCatalog.TryResolve(rawType, out displayName, out typeReference, out _))
         {
-            AddStream(context, $"{context.PromptLabel} > {input}");
-            AddStream(context, $"[!] {error}");
-            AddStream(context, "[i] use fuzzy suggestions: component add <partial-name>");
-            _renderer.Render(context);
-            return;
+            // Resolved from static catalog
+        }
+        else
+        {
+            // Pass through to daemon for TypeCache resolution
+            displayName = rawType;
+            typeReference = rawType;
+            AddStream(context, $"[*] '{rawType}' is not a built-in type; resolving via TypeCache");
         }
 
         AddStream(context, $"{context.PromptLabel} > {input}");

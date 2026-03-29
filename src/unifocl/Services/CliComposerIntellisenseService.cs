@@ -33,6 +33,12 @@ internal static class CliComposerIntellisenseService
             return true;
         }
 
+        if (TryGetHierarchyMkTypeComposerCandidates(input, session, out var hierarchyMkCandidates))
+        {
+            candidates = hierarchyMkCandidates;
+            return true;
+        }
+
         if (TryGetInspectorComponentComposerCandidates(input, session, out var componentCandidates))
         {
             candidates = componentCandidates;
@@ -246,8 +252,11 @@ internal static class CliComposerIntellisenseService
         }
 
         var mkTypeQuery = ResolveProjectMkTypeQuery(tokens, isMake);
+        var knownTypes = session.ProjectView.CachedMkTypes.Count > 0
+            ? (IReadOnlyList<string>)session.ProjectView.CachedMkTypes
+            : ProjectMkCatalog.KnownTypes;
         var matches = new List<(string Type, double Score)>();
-        foreach (var type in ProjectMkCatalog.KnownTypes)
+        foreach (var type in knownTypes)
         {
             var display = FormatMkTypeDisplay(type);
             if (string.IsNullOrWhiteSpace(mkTypeQuery))
@@ -299,6 +308,104 @@ internal static class CliComposerIntellisenseService
         return true;
     }
 
+    private static bool TryGetHierarchyMkTypeComposerCandidates(
+        string input,
+        CliSessionState session,
+        out List<(string Label, string? CommitCommand)> candidates)
+    {
+        candidates = [];
+        if (session.Inspector is not null
+            || session.ContextMode != CliContextMode.Hierarchy)
+        {
+            return false;
+        }
+
+        var trimmed = input.TrimStart();
+        if (trimmed.StartsWith('/'))
+        {
+            return false;
+        }
+
+        var tokens = CliCommandParsingService.TokenizeComposerInput(trimmed);
+        if (tokens.Count == 0)
+        {
+            return false;
+        }
+
+        var isMk = tokens[0].Equals("mk", StringComparison.OrdinalIgnoreCase);
+        var isMake = tokens[0].Equals("make", StringComparison.OrdinalIgnoreCase);
+        if (!isMk && !isMake)
+        {
+            return false;
+        }
+
+        var mkTypeQuery = ResolveProjectMkTypeQuery(tokens, isMake);
+        var knownTypes = session.ProjectView.CachedHierarchyMkTypes.Count > 0
+            ? (IReadOnlyList<string>)session.ProjectView.CachedHierarchyMkTypes
+            : HierarchyMkFallbackTypes;
+        var matches = new List<(string Type, double Score)>();
+        foreach (var type in knownTypes)
+        {
+            var display = FormatMkTypeDisplay(type);
+            if (string.IsNullOrWhiteSpace(mkTypeQuery))
+            {
+                matches.Add((type, 1d));
+                continue;
+            }
+
+            if (display.Contains(mkTypeQuery, StringComparison.OrdinalIgnoreCase)
+                || type.Contains(mkTypeQuery, StringComparison.OrdinalIgnoreCase))
+            {
+                matches.Add((type, 0.9d));
+                continue;
+            }
+
+            if (FuzzyMatcher.TryScore(mkTypeQuery, display, out var displayScore)
+                || FuzzyMatcher.TryScore(mkTypeQuery, type, out displayScore))
+            {
+                matches.Add((type, displayScore));
+            }
+        }
+
+        var ranked = matches
+            .OrderByDescending(match => match.Score)
+            .ThenBy(match => match.Type, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (ranked.Count == 0)
+        {
+            return true;
+        }
+
+        foreach (var match in ranked)
+        {
+            var display = FormatMkTypeDisplay(match.Type);
+            if (isMake)
+            {
+                candidates.Add((
+                    $"make --type {display}",
+                    $"make --type {match.Type} "));
+            }
+            else
+            {
+                candidates.Add((
+                    $"mk {display}",
+                    $"mk {match.Type} "));
+            }
+        }
+
+        return true;
+    }
+
+    private static readonly IReadOnlyList<string> HierarchyMkFallbackTypes =
+    [
+        "Canvas", "Panel", "Text", "Tmp", "Image", "Button", "Toggle", "Slider",
+        "Scrollbar", "ScrollView", "EventSystem",
+        "Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Quad",
+        "DirLight", "DirectionalLight", "PointLight", "SpotLight", "AreaLight", "ReflectionProbe",
+        "Sprite", "SpriteMask",
+        "Camera", "AudioSource", "Empty", "EmptyParent", "EmptyChild"
+    ];
+
     private static bool TryGetInspectorComponentComposerCandidates(
         string input,
         CliSessionState session,
@@ -339,8 +446,11 @@ internal static class CliComposerIntellisenseService
             ? string.Join(' ', tokens.Skip(2))
             : string.Empty;
 
+        var knownComponents = session.ProjectView.CachedComponentTypes.Count > 0
+            ? (IReadOnlyList<string>)session.ProjectView.CachedComponentTypes
+            : InspectorComponentCatalog.KnownDisplayNames;
         var matches = new List<(string DisplayName, double Score)>();
-        foreach (var displayName in InspectorComponentCatalog.KnownDisplayNames)
+        foreach (var displayName in knownComponents)
         {
             if (string.IsNullOrWhiteSpace(query))
             {

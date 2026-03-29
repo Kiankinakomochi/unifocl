@@ -378,4 +378,76 @@ internal sealed partial class ProjectViewService
             state.AssetPathByInstanceId[entry.InstanceId] = entry.Path;
         }
     }
+
+    public async Task SyncMkTypeCacheAsync(CliSessionState session)
+    {
+        if (DaemonControlService.GetPort(session) is not int port)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await _daemonClient.ExecuteProjectCommandAsync(
+                port,
+                new ProjectCommandRequestDto("query-mk-types", null, null, null));
+            if (!response.Ok || string.IsNullOrWhiteSpace(response.Content))
+            {
+                return;
+            }
+
+            var payload = System.Text.Json.JsonSerializer.Deserialize<QueryMkTypesPayload>(
+                response.Content,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (payload?.Types is null || payload.Types.Count == 0)
+            {
+                return;
+            }
+
+            var state = session.ProjectView;
+            state.CachedMkTypes.Clear();
+            state.CachedMkTypes.AddRange(payload.Types);
+        }
+        catch
+        {
+            // Non-critical — intellisense falls back to static catalog
+        }
+    }
+
+    public async Task SyncComponentTypeCacheAsync(CliSessionState session)
+    {
+        if (DaemonControlService.GetPort(session) is not int port)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await _daemonClient.ExecuteProjectCommandAsync(
+                port,
+                new ProjectCommandRequestDto("query-component-types", null, null, null));
+            if (!response.Ok || string.IsNullOrWhiteSpace(response.Content))
+            {
+                return;
+            }
+
+            var payload = System.Text.Json.JsonSerializer.Deserialize<QueryMkTypesPayload>(
+                response.Content,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (payload?.Types is null || payload.Types.Count == 0)
+            {
+                return;
+            }
+
+            var state = session.ProjectView;
+            state.CachedComponentTypes.Clear();
+            state.CachedComponentTypes.AddRange(payload.Types);
+        }
+        catch
+        {
+            // Non-critical — intellisense falls back to static catalog
+        }
+    }
+
+    private sealed record QueryMkTypesPayload(List<string> Types);
 }

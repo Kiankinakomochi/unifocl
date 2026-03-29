@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.10.0 - 2026-03-29
+
+### Refactor
+- **Unified TypeCache-based type resolution across all modes**: project `mk`, hierarchy `mk`, and inspector `component add` now resolve types via daemon-side assembly scan (`AppDomain.GetAssemblies`) as the single source of truth, with static CLI catalogs demoted to offline intellisense fallbacks.
+- **Project mode `mk` supports ScriptableObject asset instances**: `mk MyCustomSO` creates `.asset` files for any concrete `ScriptableObject` subclass discovered at runtime. Types not in the built-in catalog are passed through to the daemon for TypeCache resolution.
+- **Hierarchy mode `mk` supports custom Component types**: `mk PlayerController` creates a GameObject with the resolved `Component` attached. The daemon scans all loaded assemblies for concrete `Component` subclasses.
+- **Inspector `component add` passes unknown types to daemon**: types not in `InspectorComponentCatalog` are forwarded to the daemon for runtime resolution instead of being rejected.
+
+### Added
+- **Daemon `query-mk-types` endpoint**: returns all built-in asset types plus every concrete `ScriptableObject` subclass from the project's loaded assemblies.
+- **Daemon `query-hierarchy-mk-types` endpoint**: returns built-in hierarchy object types plus every concrete `Component` subclass.
+- **Daemon `query-component-types` endpoint**: returns all concrete `Component` subclasses for inspector intellisense.
+- **Cached intellisense for all modes**: `CachedMkTypes`, `CachedHierarchyMkTypes`, and `CachedComponentTypes` are populated on project/hierarchy entry via fire-and-forget daemon queries, enabling tab-completion for custom project types.
+
 ## 2.9.0 - 2026-03-29
 
 ### Refactor
