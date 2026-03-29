@@ -57,6 +57,9 @@ internal sealed class CliSessionState
         ProjectView.AssetPathByInstanceId.Clear();
         ProjectView.LastFuzzyMatches.Clear();
         ProjectView.LastUpmPackages.Clear();
+        ProjectView.CachedMkTypes.Clear();
+        ProjectView.CachedHierarchyMkTypes.Clear();
+        ProjectView.CachedComponentTypes.Clear();
         ProjectView.ExpandTranscriptForUpmList = false;
         ProjectView.UpmFocusModeEnabled = false;
         ProjectView.UpmFocusSelectedIndex = 0;

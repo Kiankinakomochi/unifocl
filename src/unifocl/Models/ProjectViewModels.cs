@@ -17,6 +17,9 @@ internal sealed class ProjectViewState
     public Dictionary<int, string> AssetPathByInstanceId { get; } = [];
     public List<ProjectFuzzyMatch> LastFuzzyMatches { get; } = [];
     public List<UpmPackageEntry> LastUpmPackages { get; } = [];
+    public List<string> CachedMkTypes { get; } = [];
+    public List<string> CachedHierarchyMkTypes { get; } = [];
+    public List<string> CachedComponentTypes { get; } = [];
     public bool ExpandTranscriptForUpmList { get; set; }
     public bool UpmFocusModeEnabled { get; set; }
     public int UpmFocusSelectedIndex { get; set; }

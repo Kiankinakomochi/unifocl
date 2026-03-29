@@ -2874,6 +2874,8 @@ internal sealed class ProjectLifecycleService
         }
 
         _projectViewService.OpenInitialView(session);
+        _ = _projectViewService.SyncMkTypeCacheAsync(session);
+        _ = _projectViewService.SyncComponentTypeCacheAsync(session);
         return true;
     }
 
