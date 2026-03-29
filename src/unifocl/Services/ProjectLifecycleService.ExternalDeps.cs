@@ -71,6 +71,7 @@ internal sealed partial class ProjectLifecycleService
                         new SelectionPrompt<DependencyInstallOption>()
                             .Title($"Choose installation method for [yellow]{Markup.Escape(requirement.DisplayName)}[/]")
                             .PageSize(ResolvePromptPageSize(installOptions.Count, 10))
+                            .HighlightStyle(CliTheme.SelectionHighlightStyle)
                             .UseConverter(option => $"{option.Label} ({option.Source})")
                             .AddChoices(installOptions)));
             }
