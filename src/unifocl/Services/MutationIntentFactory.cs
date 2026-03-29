@@ -112,6 +112,7 @@ internal static class DaemonMutationActionCatalog
                || action.Equals("prefab-revert", StringComparison.OrdinalIgnoreCase)
                || action.Equals("prefab-unpack", StringComparison.OrdinalIgnoreCase)
                || action.Equals("prefab-variant", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("addressables-cli", StringComparison.OrdinalIgnoreCase)
                || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
     }
 }

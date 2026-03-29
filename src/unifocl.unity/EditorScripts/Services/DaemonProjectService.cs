@@ -358,6 +358,7 @@ namespace UniFocl.EditorBridge
                 "build-scenes-get" => Task.FromResult(ExecuteBuildScenesGet()),
                 "build-scenes-set" => Task.FromResult(ExecuteBuildScenesSet(request)),
                 "build-addressables" => Task.FromResult(ExecuteBuildAddressables(request)),
+                "addressables-cli" => Task.FromResult(ExecuteAddressablesCommand(request)),
                 "build-cancel" => Task.FromResult(ExecuteBuildCancel()),
                 "build-targets" => Task.FromResult(ExecuteBuildTargets()),
                 "compile-request" => Task.FromResult(ExecuteCompileRequest()),

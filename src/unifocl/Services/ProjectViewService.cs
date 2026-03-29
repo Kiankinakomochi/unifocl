@@ -166,6 +166,19 @@ internal sealed partial class ProjectViewService
         {
             handled = await HandleUpmCommandAsync(session, tokens, outputs, daemonControlService, daemonRuntime);
         }
+        else if (tokens[0].Equals("addressable", StringComparison.OrdinalIgnoreCase))
+        {
+            if (IsAddressableMutationCommand(tokens) && !EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+            handled = await HandleAddressableCommandAsync(session, tokens, outputs, daemonControlService, daemonRuntime);
+        }
         else if (tokens[0].Equals("prefab", StringComparison.OrdinalIgnoreCase))
         {
             if (!EnsureVcsSetupForMutation(session, outputs))

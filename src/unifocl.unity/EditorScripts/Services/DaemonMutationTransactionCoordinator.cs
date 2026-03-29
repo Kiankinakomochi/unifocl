@@ -42,6 +42,7 @@ namespace UniFocl.EditorBridge
                    || action.Equals("scene-remove", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("console-clear", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("hierarchy-duplicate", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("addressables-cli", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
         }
 

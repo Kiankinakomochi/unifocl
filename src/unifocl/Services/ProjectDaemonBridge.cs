@@ -73,6 +73,7 @@ internal sealed class ProjectDaemonBridge
             "build-scenes-get" => RequireBridgeMode("build-scenes-get"),
             "build-scenes-set" => RequireBridgeMode("build-scenes-set"),
             "build-addressables" => RequireBridgeMode("build-addressables"),
+            "addressables-cli" => RequireBridgeMode("addressables-cli"),
             "build-targets" => HandleBuildTargetsStub(),
             "build-cancel" => HandleBuildCancelStub(),
             "hierarchy-find" => RequireBridgeMode("hierarchy-find"),

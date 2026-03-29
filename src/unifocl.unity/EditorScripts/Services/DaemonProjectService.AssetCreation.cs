@@ -594,7 +594,8 @@ namespace UniFocl.EditorBridge
         {
             createdPath = null;
             error = null;
-            var settingsType = ResolveType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettingsDefaultObject");
+            var settingsType = ResolveType("UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject")
+                ?? ResolveType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettingsDefaultObject");
             var settingsProperty = settingsType?.GetProperty("Settings", BindingFlags.Public | BindingFlags.Static);
             var settings = settingsProperty?.GetValue(null);
             if (settings is null)
