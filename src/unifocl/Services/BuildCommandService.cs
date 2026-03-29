@@ -333,7 +333,8 @@ internal sealed class BuildCommandService
         var prompt = new MultiSelectionPrompt<string>()
             .Title("Select scenes to [green]enable[/] in [grey]EditorBuildSettings[/]")
             .NotRequired()
-            .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to save)[/]");
+            .HighlightStyle(CliTheme.SelectionHighlightStyle)
+            .InstructionsText($"[grey](Press [#60a5fa]<space>[/] to toggle, [green]<enter>[/] to save)[/]");
         foreach (var scene in scenes)
         {
             prompt.AddChoice(scene.Path!);
@@ -564,6 +565,7 @@ internal sealed class BuildCommandService
         var prompt = new SelectionPrompt<BuildTargetCandidate>()
             .Title("Select build target")
             .PageSize(Math.Min(12, ordered.Count))
+            .HighlightStyle(CliTheme.SelectionHighlightStyle)
             .UseConverter(target => target.Installed
                 ? $"[white]{Markup.Escape(target.DisplayName)}[/] [green](installed)[/]"
                 : $"[grey]{Markup.Escape(target.DisplayName)}[/] [dim](not installed, will install)[/]")

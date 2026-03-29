@@ -24,6 +24,7 @@ internal sealed partial class ProjectLifecycleService
     private const string ExternalDependencyAutoInstallEnv = "UNIFOCL_AUTO_INSTALL_EXTERNAL_DEPS";
     private const string GitHubReleaseOwner = "Kiankinakomochi";
     private const string GitHubReleaseRepository = "unifocl";
+    private const string WingetPackageId = "KinichiAnjuMakino.unifocl";
     private const string RequiredMcpPackageId = "com.coplaydev.unity-mcp";
     private const string RequiredMcpPackageTarget = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main";
     private const string DefaultSampleSceneAssetPath = "Assets/SampleScene.unity";
@@ -247,6 +248,7 @@ internal sealed partial class ProjectLifecycleService
                     new SelectionPrompt<UnityEditorPathService.UnityEditorInstallation>()
                         .Title("Choose Unity editor version")
                         .PageSize(ResolvePromptPageSize(availableEditors.Count, 12))
+                        .HighlightStyle(CliTheme.SelectionHighlightStyle)
                         .UseConverter(editor => $"{editor.Version} ({editor.EditorPath})")
                         .AddChoices(availableEditors)));
         }

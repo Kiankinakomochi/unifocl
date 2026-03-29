@@ -95,6 +95,23 @@ internal static class CliTheme
         return $"[{CursorForeground} on {CursorBackground}]{escapedContent}[/]";
     }
 
+    /// <summary>
+    /// Style to apply to Spectre.Console SelectionPrompt and MultiSelectionPrompt so
+    /// the selected-item highlight uses the brand cursor palette instead of the default blue.
+    /// </summary>
+    public static Style SelectionHighlightStyle => new Style(
+        foreground: ParseHexColor(CursorForegroundColor),
+        background: ParseHexColor(CursorBackgroundColor));
+
+    private static Color ParseHexColor(string hex)
+    {
+        var h = hex.TrimStart('#');
+        return new Color(
+            Convert.ToByte(h[0..2], 16),
+            Convert.ToByte(h[2..4], 16),
+            Convert.ToByte(h[4..6], 16));
+    }
+
     public static string PromptDividerMarkup => BuildPromptDividerMarkup();
 
     public static T PromptWithDividers<T>(Func<T> prompt)

@@ -1,3 +1,5 @@
+using Spectre.Console;
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net.Http;
@@ -246,6 +248,120 @@ internal sealed partial class ProjectLifecycleService
         File.Copy(sourcePath, stagedPath, overwrite: true);
         TryApplyUnixExecutableMode(stagedPath);
         return stagedPath;
+    }
+
+    /// <summary>
+    /// Runs <c>winget show</c> for this package and returns the version string reported by winget,
+    /// or <see langword="null"/> if winget is unavailable or the package is not found.
+    /// </summary>
+    private static async Task<string?> TryFetchWingetVersionAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var psi = new ProcessStartInfo(
+                "winget",
+                $"show --id {WingetPackageId} --accept-source-agreements --disable-interactivity")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return null;
+            }
+
+            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token);
+            await process.WaitForExitAsync(cts.Token);
+
+            // Output contains a line like: "Version: 2.13.0"
+            var match = Regex.Match(stdout, @"^Version:\s*(\S+)", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+            return match.Success ? match.Groups[1].Value.Trim() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Spawns a hidden PowerShell script that waits for this process to exit and then runs
+    /// <c>winget upgrade</c>. Returns true when the deferred job was queued successfully.
+    /// </summary>
+    private static bool TrySpawnDeferredWingetUpgrade(Action<string> log)
+    {
+        var currentPid = Environment.ProcessId;
+        var script = $$"""
+try { Wait-Process -Id {{currentPid}} -ErrorAction SilentlyContinue } catch {}
+Start-Sleep -Seconds 1
+winget upgrade --id {{WingetPackageId}} --silent --accept-source-agreements
+""";
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"unifocl-winget-upgrade-{currentPid}.ps1");
+        try
+        {
+            File.WriteAllText(scriptPath, script, System.Text.Encoding.UTF8);
+            var launchPsi = new ProcessStartInfo("powershell.exe",
+                $"-ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -File \"{scriptPath}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var _ = Process.Start(launchPsi);
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]update[/]: could not queue winget upgrade ({Markup.Escape(ex.Message)})");
+            return false;
+        }
+
+        log("[green]update[/]: winget upgrade queued — will run automatically when you quit unifocl");
+        return true;
+    }
+
+    /// <summary>
+    /// Spawns a hidden PowerShell script that waits for this process to exit, then swaps
+    /// <paramref name="stagedPath"/> into <paramref name="processPath"/> automatically.
+    /// Returns true if the script was launched successfully.
+    /// </summary>
+    private static bool TrySpawnDeferredWindowsSwap(string stagedPath, string processPath, Action<string> log)
+    {
+        try
+        {
+            var currentPid = Environment.ProcessId;
+            var escapedSource = stagedPath.Replace("'", "''");
+            var escapedTarget = processPath.Replace("'", "''");
+
+            var script = $$"""
+$source = '{{escapedSource}}'
+$target = '{{escapedTarget}}'
+try { Wait-Process -Id {{currentPid}} -ErrorAction SilentlyContinue } catch {}
+Start-Sleep -Seconds 1
+try {
+    Copy-Item -Path $source -Destination $target -Force
+} catch {
+    exit 1
+}
+""";
+            var scriptPath = Path.Combine(Path.GetTempPath(), $"unifocl-swap-{currentPid}.ps1");
+            File.WriteAllText(scriptPath, script, System.Text.Encoding.UTF8);
+
+            var psi = new ProcessStartInfo("powershell.exe",
+                $"-ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -File \"{scriptPath}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var _ = Process.Start(psi);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log($"[yellow]update[/]: could not spawn deferred swap ({Markup.Escape(ex.Message)})");
+            return false;
+        }
     }
 
     private static void TryApplyUnixExecutableMode(string executablePath)

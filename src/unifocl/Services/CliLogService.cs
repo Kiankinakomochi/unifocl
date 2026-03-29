@@ -19,6 +19,11 @@ internal static class CliLogService
         }
     }
 
+    public static void AppendMarkdown(List<string> streamLog, string markdown)
+    {
+        MarkdownRenderer.RenderToLog(markdown, line => AppendLog(streamLog, line));
+    }
+
     public static void LogUnhandledException(List<string> streamLog, Exception ex, string phase)
     {
         var typeName = ex.GetType().Name;

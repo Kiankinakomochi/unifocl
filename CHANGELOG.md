@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.15.0 - 2026-03-29
+## 2.17.0 - 2026-03-29
 
 ### Added
 
@@ -27,6 +27,35 @@
 
 - **README** updated with new `/validate` and `/build` subcommand tables and expanded Sections 7–8.
 - **`docs/validate-build-workflow.md`** (new): full reference for all validate and build workflow commands, including diagnostic code tables, output schemas, and ExecV2 operation index.
+
+## 2.16.0 - 2026-03-29
+
+### Added
+- **`MarkdownRenderer` service**: new static renderer (`Services/MarkdownRenderer.cs`) that converts markdown text to Spectre.Console markup lines emitted via the standard `Action<string> log` pipeline — no new NuGet dependencies.
+  - **Block elements**: H1 (flanking `━━━` rule in brand color), H2 (leading `──` rule), H3 (bold text), fenced code blocks (Unicode box border with language label, dynamic terminal width), bullet lists (`● item`), ordered lists, blockquotes (`▎ text`), horizontal rules, paragraphs.
+  - **Inline elements**: `` `inline code` `` (surface-background highlight), `**bold**`, `*italic*`.
+  - **Syntax highlighting** for C#, JavaScript/TypeScript, JSON, and shell — keyword coloring (Info blue), strings (Success green), comments (TextMuted italic), JSON numbers/booleans (Warning orange).
+  - **`CliLogService.AppendMarkdown`**: convenience wrapper for agentic accumulator call sites.
+- **`CliTheme.SelectionHighlightStyle`**: new `Style` property (black text on brand `#ffb300` background) derived from the existing cursor constants. Applied to all `SelectionPrompt` / `MultiSelectionPrompt` instances so selected items render with the brand palette instead of Spectre's default blue.
+
+### Fixed
+- **`CliDryRunDiffService`**: `AppendUnifiedDiffToLog` now renders diff lines with per-line color — added lines in Success green, removed lines in Error red, hunk headers (`@@`) in Info blue, file headers (`+++`/`---`) in bold TextMuted. Removes the `[i]` prefix which was an invalid Spectre tag silently hitting the error fallback path.
+- **`ValidateCommandService`**: `RenderResult` now uses `✓`/`✗` icons (replacing `PASS`/`FAIL` text), colors error/warning counts by severity, sorts diagnostics with errors first, adds per-diagnostic severity icons (`✗`, `⚠`, `i`), and inserts visual separators between validators in `/validate all` mode.
+- **`BuildCommandService` `[blue]` tag**: replaced with `[#60a5fa]` (Info blue) in `MultiSelectionPrompt.InstructionsText` — `[blue]` is not in `ApplyMarkupPalette` and was rendering as the terminal's raw blue.
+
+### Officialized
+- **Officialized `2.16.0`** by closing the development cycle suffix.
+
+## 2.15.0 - 2026-03-29
+
+### Fixed
+- **`/update` Windows binary lock**: the running `.exe` can no longer be replaced in-place on Windows. The command now uses one of two fully hands-free deferred paths — the user simply quits unifocl and the update applies automatically on exit.
+  - **winget path** (preferred): probes `winget show` to retrieve the version available in winget, compares it with the latest GitHub release, and either queues a silent `winget upgrade` automatically (versions match) or presents a `SelectionPrompt` so the user can choose between the managed winget version and the newer GitHub binary.
+  - **manual path** (fallback / user choice): downloads the GitHub release asset and spawns a hidden PowerShell script that waits for the current PID to exit, then copies the new binary over the old one. The binary is replaced in the same directory, so any existing PATH entry remains valid.
+  - Non-interactive environments (`Console.IsInputRedirected`) skip the prompt and default to the manual/latest path.
+
+### Added
+- **Officialized `2.15.0`** by closing the development cycle suffix.
 
 ## 2.14.0 - 2026-03-29
 
