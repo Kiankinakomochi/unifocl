@@ -136,6 +136,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
 | `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `all`). |
+| `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`). No daemon required. |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -233,6 +234,9 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `build cancel` |  | Request cancellation for active build in project mode. |
 | `build targets` |  | List Unity build support targets in project mode. |
 | `build logs` |  | Open restartable build log tail in project mode. |
+| `test list` |  | List all available edit-mode tests (name + assembly). No daemon required. |
+| `test run editmode [--timeout <s>]` |  | Run all EditMode tests via Unity subprocess; returns structured JSON results. Default timeout 600s. |
+| `test run playmode [--timeout <s>]` |  | Run all PlayMode tests via Unity subprocess. May trigger player build. Default timeout 1800s. |
 | `prefab create <idx\|name> <asset-path>` |  | Convert scene GameObject to new Prefab Asset on disk in project mode. |
 | `prefab apply <idx>` |  | Push instance overrides back to source Prefab Asset in project mode. |
 | `prefab revert <idx>` |  | Discard local overrides, revert to source Prefab Asset in project mode. |
@@ -382,6 +386,56 @@ unifocl exec "/validate packages" --agentic --format json --project ./my-project
 ```
 
 ExecV2 operations: `validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings` (all `SafeRead` — no approval required).
+
+### 8. Test Orchestration
+
+The `test` commands run Unity's built-in test runner as a **direct subprocess** — no daemon, no running editor required. This makes them safe to call from CI, parallel agent sessions, or any headless environment.
+
+```
+/test list
+/test run <editmode|playmode> [--timeout <seconds>]
+```
+
+| Subcommand | Platform flag | Default timeout | Description |
+| --- | --- | --- | --- |
+| `list` | EditMode | 5 min | Lists all available tests. Output: `[{ testName, assembly }]`. |
+| `run editmode` | EditMode | 10 min | Runs all EditMode tests. |
+| `run playmode` | PlayMode | 30 min | Runs all PlayMode tests. May trigger a player build. |
+
+**Output contract (`test run`):**
+
+```json
+{
+  "total": 42,
+  "passed": 40,
+  "failed": 2,
+  "skipped": 0,
+  "durationMs": 8340,
+  "artifactsPath": "<project>/Logs/unifocl-test",
+  "failures": [
+    { "testName": "MyTests.SomeTest", "message": "Expected 1 but was 2", "stackTrace": "...", "durationMs": 12 }
+  ]
+}
+```
+
+Results come from the NUnit v3 XML file Unity writes to `Logs/unifocl-test/`. If Unity crashes before writing results, the envelope still returns with all counters at zero and an empty failures array.
+
+**Agentic usage:**
+
+```sh
+# List tests (no project open required)
+unifocl exec "test list" --agentic --format json --project ./my-project
+
+# Run EditMode suite
+unifocl exec "test run editmode" --agentic --format json --project ./my-project --session-seed my-seed
+
+# Run PlayMode suite with extended timeout
+unifocl exec "test run playmode --timeout 3600" --agentic --format json --project ./my-project
+```
+
+ExecV2 operations: `test.list` (`SafeRead`) and `test.run` (`PrivilegedExec` — requires approval on first call).
+
+Full reference: [`docs/test-orchestration.md`](docs/test-orchestration.md)
 
 ## Human Interface: TUI & Keybindings
 
@@ -582,6 +636,8 @@ Endpoint list:
 | `prefab.unpack` | DestructiveWrite | `nodeSelector`, `completely?` |
 | `prefab.variant` | SafeWrite | `sourcePath`, `newPath` |
 | `eval.run` | PrivilegedExec | `code`, `declarations?`, `timeoutMs?` |
+| `test.list` | SafeRead | _(none)_ |
+| `test.run` | PrivilegedExec | `platform` (`EditMode`\|`PlayMode`), `timeoutSeconds?` |
 | `hierarchy.snapshot` | SafeRead | _(none)_ |
 | `session.open` | SafeRead | _(none)_ |
 | `session.close` | SafeRead | _(none)_ |

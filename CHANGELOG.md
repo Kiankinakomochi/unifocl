@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.14.0 - 2026-03-29
+
+### Added
+- **`test` command family**: new `test list`, `test run editmode`, and `test run playmode` commands run Unity's test runner as a direct subprocess — no daemon or running editor required. Safe for CI, parallel agent sessions, and headless environments.
+  - **`test list`**: invokes `-listTests` and returns a flat `[{ testName, assembly }]` array. Filters Unity log noise from stdout automatically.
+  - **`test run editmode`**: invokes `-runTests -testPlatform EditMode`, parses the NUnit v3 XML result into a typed JSON envelope. Default timeout 600s. Entire process tree is killed on timeout or cancellation.
+  - **`test run playmode`**: same as editmode but for PlayMode. Supports `--timeout` flag (default 1800s) to accommodate projects that require a player build before running tests.
+- **`TestRunResult` output contract**: uniform JSON schema for all `test run` outcomes — `total`, `passed`, `failed`, `skipped`, `durationMs`, `artifactsPath`, and `failures[{ testName, message, stackTrace, durationMs }]`. Returns zero-count result instead of error when Unity crashes before writing XML.
+- **ExecV2 `test.*` operations**: `test.list` registered as `SafeRead` (no approval gate); `test.run` registered as `PrivilegedExec` (approval required on first call). Both available via `POST /agent/exec`.
+- **Test artifacts**: run results persisted to `<project>/Logs/unifocl-test/` as `test-results-editmode.xml` / `test-results-playmode.xml` for inspection and CI artifact upload.
+
+### Docs
+- **`docs/test-orchestration.md`**: full reference covering command syntax, ExecV2 request schemas, subprocess lifecycle, artifact layout, multi-agent safety, and exit-code behavior.
+- **README updated**: `/test` added to slash-command table; `test list/run` added to contextual-operations table; new Section 8 "Test Orchestration" with usage examples and ExecV2 operation table updated with `test.list` / `test.run`.
+
 ## 2.13.0 - 2026-03-29
 
 ### Added
