@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.20.2 - 2026-03-29
+## 2.21.0 - 2026-03-29
 
 ### Added
 - **Addressables CLI Suite documentation**: README command tables now include the full `addressable` lifecycle/profile/group/entry/analyze/bulk command surface, including the new `bulk add` / `bulk label` operations and dry-run applicability.
@@ -13,7 +13,7 @@
 - Bumped to `v16` — Addressables bridge handler updates require re-deploying editor payload scripts; re-run `/init` after upgrading.
 
 ### Officialized
-- Officialized `2.20.2` by closing the development cycle suffix.
+- Officialized `2.21.0` by closing the development cycle suffix.
 
 ## 2.20.1 - 2026-03-29
 
