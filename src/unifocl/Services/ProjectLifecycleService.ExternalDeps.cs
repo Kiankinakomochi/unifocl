@@ -1050,7 +1050,7 @@ internal sealed partial class ProjectLifecycleService
         bool dryRun,
         Action<string> log)
     {
-        const string ClaudeInstallArgs = "mcp add @unifocl/claude-plugin";
+        const string ClaudeInstallArgs = "install @unifocl/claude-plugin";
         if (dryRun)
         {
             log("[grey]agent[/]: dry-run (no changes applied)");
