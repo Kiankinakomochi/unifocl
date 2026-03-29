@@ -965,7 +965,7 @@ internal sealed partial class InspectorModeService
         if (tokens.Count < 2)
         {
             AddStream(context, $"{context.PromptLabel} > {input}");
-            AddStream(context, "[!] usage: component <add|remove> <type|index>");
+            AddStream(context, "[!] usage: component <add|find|duplicate|remove> <type|index|query>");
             _renderer.Render(context);
             return;
         }
@@ -976,16 +976,119 @@ internal sealed partial class InspectorModeService
             case "add":
                 await HandleComponentAddAsync(input, tokens, session, context);
                 return;
+            case "find":
+                await HandleComponentFindAsync(input, tokens, context);
+                return;
+            case "duplicate":
+            case "dup":
+                await HandleComponentDuplicateAsync(input, tokens, session, context);
+                return;
             case "remove":
             case "rm":
                 await HandleComponentRemoveAsync(input, tokens, session, context);
                 return;
             default:
                 AddStream(context, $"{context.PromptLabel} > {input}");
-                AddStream(context, "[!] usage: component <add|remove> <type|index>");
+                AddStream(context, "[!] usage: component <add|find|duplicate|remove> <type|index|query>");
                 _renderer.Render(context);
                 return;
         }
+    }
+
+    private async Task HandleComponentFindAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        InspectorContext context)
+    {
+        if (tokens.Count < 3)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: component find <query>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var query = string.Join(' ', tokens.Skip(2)).Trim();
+        var matches = context.Components
+            .Select(component =>
+            {
+                var matched = FuzzyMatcher.TryScore(query, component.Name, out var score);
+                return (Component: component, Matched: matched, Score: score);
+            })
+            .Where(x => x.Matched)
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Component.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .ToList();
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        if (matches.Count == 0)
+        {
+            AddStream(context, $"[x] no component results for: {query}");
+            _renderer.Render(context);
+            return;
+        }
+
+        AddStream(context, $"[*] component results for: {query}");
+        foreach (var item in matches)
+        {
+            AddStream(context, $"[{item.Component.Index}] {item.Component.Name}");
+        }
+
+        _renderer.Render(context);
+    }
+
+    private async Task HandleComponentDuplicateAsync(
+        string input,
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        InspectorContext context)
+    {
+        if (tokens.Count < 3)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, "[!] usage: component duplicate <index|name>");
+            _renderer.Render(context);
+            return;
+        }
+
+        var selector = string.Join(' ', tokens.Skip(2)).Trim();
+        var target = ResolveComponentRemoveTarget(context, selector);
+        if (target is null)
+        {
+            AddStream(context, $"{context.PromptLabel} > {input}");
+            AddStream(context, $"[!] no component match for: {selector}");
+            AddStream(context, "[i] use component duplicate <index> to disambiguate");
+            _renderer.Render(context);
+            return;
+        }
+
+        AddStream(context, $"{context.PromptLabel} > {input}");
+        var mutation = await TrySendInspectorMutationWithMessageAsync(
+            session,
+            new InspectorBridgeRequest(
+                "duplicate-component",
+                context.TargetPath,
+                target.Index,
+                target.Name,
+                null,
+                null,
+                null));
+
+        if (!mutation.Ok)
+        {
+            var detail = string.IsNullOrWhiteSpace(mutation.Message)
+                ? "failed to duplicate component via daemon inspect endpoint"
+                : DescribeInspectorMutationFailure(mutation.Message);
+            AddStream(context, $"[!] {detail}");
+            _renderer.Render(context);
+            return;
+        }
+
+        await PopulateComponentsAsync(context, session, forceRefresh: true);
+        AddStream(context, $"[+] duplicated component: {target.Name}");
+        AppendDryRunDiffIfAny(context, mutation.Content);
+        _renderer.Render(context);
     }
 
     private async Task HandleComponentAddAsync(

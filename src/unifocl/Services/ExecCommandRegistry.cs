@@ -55,6 +55,17 @@ internal sealed class ExecCommandRegistry
         ["test.flaky-report"]        = ExecRiskLevel.SafeRead,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
+        ["go find"]             = ExecRiskLevel.SafeRead,
+        ["settings inspect"]    = ExecRiskLevel.SafeRead,
+        // editor utilities
+        ["console clear"]       = ExecRiskLevel.SafeWrite,
+        // scene utilities
+        ["scene load"]          = ExecRiskLevel.SafeWrite,
+        ["scene add"]           = ExecRiskLevel.SafeWrite,
+        ["scene unload"]        = ExecRiskLevel.SafeWrite,
+        ["scene remove"]        = ExecRiskLevel.SafeWrite,
+        // hierarchy utilities
+        ["go duplicate"]        = ExecRiskLevel.SafeWrite,
         // meta
         ["session.open"]        = ExecRiskLevel.SafeRead,
         ["session.close"]       = ExecRiskLevel.SafeRead,
@@ -426,6 +437,96 @@ internal sealed class ExecCommandRegistry
                 return true;
             }
 
+            case "go find":
+            {
+                var query = GetString(req.Args, "query") ?? string.Empty;
+                var limit = GetInt(req.Args, "limit") ?? 20;
+                var parentId = GetInt(req.Args, "parentId") ?? 0;
+                var tag = GetString(req.Args, "tag");
+                var layer = GetString(req.Args, "layer");
+                var component = GetString(req.Args, "component");
+
+                if (string.IsNullOrWhiteSpace(query)
+                    && string.IsNullOrWhiteSpace(tag)
+                    && string.IsNullOrWhiteSpace(layer)
+                    && string.IsNullOrWhiteSpace(component))
+                {
+                    validationError = "go find requires args.query or at least one of args.tag/args.layer/args.component";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new
+                {
+                    query,
+                    limit,
+                    parentId,
+                    tag,
+                    layer,
+                    component
+                });
+                dto = new ProjectCommandRequestDto("hierarchy-find", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "settings inspect":
+            {
+                dto = new ProjectCommandRequestDto("settings-inspect", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "console clear":
+            {
+                var base_ = new ProjectCommandRequestDto("console-clear", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "scene load":
+            case "scene add":
+            case "scene unload":
+            case "scene remove":
+            {
+                var scenePath = GetString(req.Args, "scenePath");
+                if (string.IsNullOrWhiteSpace(scenePath))
+                {
+                    validationError = $"{req.Operation} requires args.scenePath";
+                    return false;
+                }
+
+                var normalizedOperation = req.Operation.Replace('.', ' ');
+                var projectAction = normalizedOperation.ToLowerInvariant() switch
+                {
+                    "scene load" => "scene-load",
+                    "scene add" => "scene-add",
+                    "scene unload" => "scene-unload",
+                    _ => "scene-remove"
+                };
+                var content = JsonSerializer.Serialize(new { scenePath });
+                var base_ = new ProjectCommandRequestDto(projectAction, null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "go duplicate":
+            {
+                var targetId = GetInt(req.Args, "targetId") ?? 0;
+                if (targetId == 0)
+                {
+                    validationError = "go duplicate requires args.targetId";
+                    return false;
+                }
+
+                var parentId = GetInt(req.Args, "parentId") ?? 0;
+                var name = GetString(req.Args, "name");
+                var content = JsonSerializer.Serialize(new { targetId, parentId, name });
+                var base_ = new ProjectCommandRequestDto("hierarchy-duplicate", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
             // session.* and hierarchy.snapshot are handled by ExecOperationRouter directly
             case "hierarchy.snapshot":
             case "session.open":
@@ -454,9 +555,27 @@ internal sealed class ExecCommandRegistry
             return null;
         }
 
-        return element.Value.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String
-            ? prop.GetString()
-            : null;
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.String)
+        {
+            return prop.GetString();
+        }
+
+        return null;
+    }
+
+    private static int? GetInt(JsonElement? element, string key)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetInt32();
+        }
+
+        return null;
     }
 
     /// <summary>Returns the raw JSON text of a property (for arrays/objects passed through as-is).</summary>
@@ -467,8 +586,54 @@ internal sealed class ExecCommandRegistry
             return null;
         }
 
-        return element.Value.TryGetProperty(key, out var prop)
+        return TryGetPropertyWithAliases(element.Value, key, out var prop)
             ? prop.GetRawText()
             : null;
+    }
+
+    private static bool TryGetPropertyWithAliases(JsonElement element, string key, out JsonElement value)
+    {
+        if (element.TryGetProperty(key, out value))
+        {
+            return true;
+        }
+
+        var kebab = ToKebabCase(key);
+        if (!kebab.Equals(key, StringComparison.Ordinal)
+            && element.TryGetProperty(kebab, out value))
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string ToKebabCase(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return string.Empty;
+        }
+
+        var chars = new List<char>(key.Length + 4);
+        for (var i = 0; i < key.Length; i++)
+        {
+            var ch = key[i];
+            if (char.IsUpper(ch))
+            {
+                if (i > 0)
+                {
+                    chars.Add('-');
+                }
+
+                chars.Add(char.ToLowerInvariant(ch));
+                continue;
+            }
+
+            chars.Add(ch);
+        }
+
+        return new string(chars.ToArray());
     }
 }

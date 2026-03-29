@@ -88,6 +88,9 @@ namespace UniFocl.EditorBridge
         public string query = string.Empty;
         public int limit = 20;
         public int parentId;
+        public string tag = string.Empty;
+        public string layer = string.Empty;
+        public string component = string.Empty;
     }
 
     [Serializable]
@@ -395,6 +398,17 @@ namespace UniFocl.EditorBridge
         public string assetPath = string.Empty;
         public string newAssetPath = string.Empty;
         public string content = string.Empty;
+        // hierarchy / scene utility selectors
+        public string query = string.Empty;
+        public int limit = 20;
+        public int parentId;
+        public int targetId;
+        public string parent = string.Empty;
+        public string tag = string.Empty;
+        public string layer = string.Empty;
+        public string component = string.Empty;
+        public string name = string.Empty;
+        public string scenePath = string.Empty;
         // build.exec
         public string method = string.Empty;
         // upm.remove

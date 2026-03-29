@@ -974,6 +974,73 @@ namespace UniFocl.EditorBridge
                     break;
                 }
 
+                case "go find":
+                {
+                    if (string.IsNullOrWhiteSpace(req.args.query)
+                        && string.IsNullOrWhiteSpace(req.args.tag)
+                        && string.IsNullOrWhiteSpace(req.args.layer)
+                        && string.IsNullOrWhiteSpace(req.args.component))
+                    {
+                        return ExecV2ErrorJson("go find requires args.query or at least one filter (tag/layer/component)", requestId);
+                    }
+
+                    var findContent =
+                        $"{{\"query\":\"{EscapeJsonString(req.args.query)}\",\"limit\":{Math.Max(1, req.args.limit)},\"parentId\":{req.args.parentId},\"tag\":\"{EscapeJsonString(req.args.tag)}\",\"layer\":\"{EscapeJsonString(req.args.layer)}\",\"component\":\"{EscapeJsonString(req.args.component)}\"}}";
+                    projectPayload = BuildExecV2ProjectPayload("hierarchy-find", null, null, findContent, requestId);
+                    break;
+                }
+
+                case "settings inspect":
+                {
+                    projectPayload = BuildExecV2ProjectPayload("settings-inspect", null, null, null, requestId);
+                    break;
+                }
+
+                case "console clear":
+                {
+                    projectPayload = BuildExecV2ProjectPayload("console-clear", null, null, null, requestId);
+                    break;
+                }
+
+                case "scene load":
+                case "scene add":
+                case "scene unload":
+                case "scene remove":
+                {
+                    var scenePath = string.IsNullOrWhiteSpace(req.args.scenePath)
+                        ? req.args.assetPath
+                        : req.args.scenePath;
+                    if (string.IsNullOrWhiteSpace(scenePath))
+                    {
+                        return ExecV2ErrorJson($"{op} requires args.scenePath", requestId);
+                    }
+
+                    var normalizedOp = op.Replace('.', ' ');
+                    var action = normalizedOp switch
+                    {
+                        "scene load" => "scene-load",
+                        "scene add" => "scene-add",
+                        "scene unload" => "scene-unload",
+                        _ => "scene-remove"
+                    };
+                    var sceneContent = $"{{\"scenePath\":\"{EscapeJsonString(scenePath)}\"}}";
+                    projectPayload = BuildExecV2ProjectPayload(action, null, null, sceneContent, requestId);
+                    break;
+                }
+
+                case "go duplicate":
+                {
+                    if (req.args.targetId == 0)
+                    {
+                        return ExecV2ErrorJson("go duplicate requires args.targetId", requestId);
+                    }
+
+                    var duplicateContent =
+                        $"{{\"targetId\":{req.args.targetId},\"parentId\":{req.args.parentId},\"name\":\"{EscapeJsonString(req.args.name)}\"}}";
+                    projectPayload = BuildExecV2ProjectPayload("hierarchy-duplicate", null, null, duplicateContent, requestId);
+                    break;
+                }
+
                 default:
                     return ExecV2ErrorJson($"unknown operation: {req.operation}", requestId);
             }
@@ -998,6 +1065,19 @@ namespace UniFocl.EditorBridge
                 newAssetPath = newAssetPath ?? string.Empty,
                 content = content ?? string.Empty,
                 requestId = requestId,
+                intent = new MutationIntentEnvelope
+                {
+                    transactionId = Guid.NewGuid().ToString("N"),
+                    target = string.IsNullOrWhiteSpace(assetPath) ? action : assetPath!,
+                    property = action,
+                    oldValue = assetPath ?? string.Empty,
+                    newValue = newAssetPath ?? string.Empty,
+                    flags = new MutationIntentFlags
+                    {
+                        dryRun = false,
+                        requireRollback = true
+                    }
+                }
             };
             return JsonUtility.ToJson(r);
         }

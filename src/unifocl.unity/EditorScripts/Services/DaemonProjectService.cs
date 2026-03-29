@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 #nullable enable
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -40,6 +41,31 @@ namespace UniFocl.EditorBridge
         private const string VcsModeUvcsHybridGitIgnore = "uvcs_hybrid_gitignore";
         private const string VcsOwnerUvcs = "uvcs";
         private const string LastOpenedSceneMarkerRelativePath = ".unifocl/last-opened-scene.txt";
+
+        [Serializable]
+        private sealed class HierarchyFindPayload
+        {
+            public string query = string.Empty;
+            public int limit = 20;
+            public int parentId;
+            public string tag = string.Empty;
+            public string layer = string.Empty;
+            public string component = string.Empty;
+        }
+
+        [Serializable]
+        private sealed class SceneCommandPayload
+        {
+            public string scenePath = string.Empty;
+        }
+
+        [Serializable]
+        private sealed class HierarchyDuplicatePayload
+        {
+            public int targetId;
+            public int parentId;
+            public string name = string.Empty;
+        }
 
         [InitializeOnLoadMethod]
         private static void InitializeCompilationTracking()
@@ -322,6 +348,7 @@ namespace UniFocl.EditorBridge
                 "mk-script" => Task.FromResult(ExecuteCreateScript(request)),
                 "mk-asset" => Task.FromResult(ExecuteCreateAsset(request)),
                 "rename-asset" => Task.FromResult(ExecuteRenameAsset(request)),
+                "duplicate-asset" => Task.FromResult(ExecuteDuplicateAsset(request)),
                 "remove-asset" => Task.FromResult(ExecuteRemoveAsset(request)),
                 "load-asset" => Task.FromResult(ExecuteLoadAsset(request)),
                 "upm-list" => Task.FromResult(ExecuteUpmList(request)),
@@ -335,11 +362,19 @@ namespace UniFocl.EditorBridge
                 "build-targets" => Task.FromResult(ExecuteBuildTargets()),
                 "compile-request" => Task.FromResult(ExecuteCompileRequest()),
                 "compile-status" => Task.FromResult(ExecuteCompileStatus()),
+                "hierarchy-find" => Task.FromResult(ExecuteHierarchyFind(request)),
+                "settings-inspect" => Task.FromResult(ExecuteSettingsInspect()),
+                "console-clear" => Task.FromResult(ExecuteConsoleClear()),
                 "prefab-create" => Task.FromResult(ExecutePrefabCreate(request)),
                 "prefab-apply" => Task.FromResult(ExecutePrefabApply(request)),
                 "prefab-revert" => Task.FromResult(ExecutePrefabRevert(request)),
                 "prefab-unpack" => Task.FromResult(ExecutePrefabUnpack(request)),
                 "prefab-variant" => Task.FromResult(ExecutePrefabVariant(request)),
+                "scene-load" => Task.FromResult(ExecuteSceneLoad(request, additive: false)),
+                "scene-add" => Task.FromResult(ExecuteSceneLoad(request, additive: true)),
+                "scene-unload" => Task.FromResult(ExecuteSceneUnload(request)),
+                "scene-remove" => Task.FromResult(ExecuteSceneUnload(request)),
+                "hierarchy-duplicate" => Task.FromResult(ExecuteHierarchyDuplicate(request)),
                 "eval-code" => DaemonEvalService.ExecuteAsync(request, isDryRun),
                 "validate-scene-list" => Task.FromResult(DaemonValidateService.ExecuteValidateSceneList()),
                 "validate-missing-scripts" => Task.FromResult(DaemonValidateService.ExecuteValidateMissingScripts()),
@@ -502,6 +537,46 @@ namespace UniFocl.EditorBridge
                 preMutationTargets: new[] { request.assetPath });
         }
 
+        private static string ExecuteDuplicateAsset(ProjectCommandRequest request)
+        {
+            return ExecuteWithRollbackStash(
+                request,
+                mutationName: "duplicate-asset",
+                executeMutation: () =>
+                {
+                    if (!IsValidAssetPath(request.assetPath) || !IsValidAssetPath(request.newAssetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "duplicate-asset requires assetPath and newAssetPath" });
+                    }
+
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.assetPath) is null
+                        && !AssetDatabase.IsValidFolder(request.assetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"asset not found: {request.assetPath}" });
+                    }
+
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(request.newAssetPath) is not null
+                        || AssetDatabase.IsValidFolder(request.newAssetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"target already exists: {request.newAssetPath}" });
+                    }
+
+                    if (!AssetDatabase.CopyAsset(request.assetPath, request.newAssetPath))
+                    {
+                        return JsonUtility.ToJson(new ProjectCommandResponse
+                        {
+                            ok = false,
+                            message = $"failed to duplicate asset: {request.assetPath} -> {request.newAssetPath}"
+                        });
+                    }
+
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = true, message = "asset duplicated" });
+                },
+                preMutationTargets: new[] { request.assetPath },
+                rollbackCleanupTargets: new[] { request.newAssetPath });
+        }
+
         private static string ExecuteLoadAsset(ProjectCommandRequest request)
         {
             if (!IsValidAssetPath(request.assetPath))
@@ -606,6 +681,333 @@ namespace UniFocl.EditorBridge
                 ok = false,
                 message = $"unsupported asset type: {extension} (supported: .unity, .prefab, .cs)"
             });
+        }
+
+        private static string ExecuteHierarchyFind(ProjectCommandRequest request)
+        {
+            var payload = string.IsNullOrWhiteSpace(request.content)
+                ? new HierarchyFindPayload()
+                : JsonUtility.FromJson<HierarchyFindPayload>(request.content) ?? new HierarchyFindPayload();
+            return DaemonHierarchyService.ExecuteSearch(JsonUtility.ToJson(new HierarchySearchRequest
+            {
+                query = payload.query,
+                limit = payload.limit,
+                parentId = payload.parentId,
+                tag = payload.tag ?? string.Empty,
+                layer = payload.layer ?? string.Empty,
+                component = payload.component ?? string.Empty
+            }));
+        }
+
+        private static string ExecuteHierarchyDuplicate(ProjectCommandRequest request)
+        {
+            HierarchyDuplicatePayload? payload;
+            try
+            {
+                payload = JsonUtility.FromJson<HierarchyDuplicatePayload>(request.content);
+            }
+            catch
+            {
+                payload = null;
+            }
+
+            if (payload is null || payload.targetId == 0)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = "hierarchy-duplicate requires content.targetId"
+                });
+            }
+
+            return DaemonHierarchyService.ExecuteCommand(JsonUtility.ToJson(new HierarchyCommandRequest
+            {
+                action = "duplicate",
+                targetId = payload.targetId,
+                parentId = payload.parentId,
+                name = payload.name ?? string.Empty,
+                intent = request.intent
+            }));
+        }
+
+        private static string ExecuteSettingsInspect()
+        {
+            try
+            {
+                var playerDump = DumpStaticSettingsType(typeof(PlayerSettings));
+                var editorDump = DumpStaticSettingsType(typeof(EditorSettings));
+                var content = JsonUtility.ToJson(new SettingsInspectResponse
+                {
+                    playerSettings = playerDump,
+                    editorSettings = editorDump
+                });
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = "inspected editor settings",
+                    kind = "settings",
+                    content = content
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"settings inspection failed: {ex.Message}"
+                });
+            }
+        }
+
+        private static string ExecuteConsoleClear()
+        {
+            try
+            {
+                var logEntriesType = Type.GetType("UnityEditor.LogEntries, UnityEditor");
+                var clearMethod = logEntriesType?.GetMethod("Clear", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (clearMethod is null)
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = "console clear is unavailable: UnityEditor.LogEntries.Clear() not found"
+                    });
+                }
+
+                clearMethod.Invoke(null, null);
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = "console cleared",
+                    kind = "console"
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"console clear failed: {ex.Message}"
+                });
+            }
+        }
+
+        private static string ExecuteSceneLoad(ProjectCommandRequest request, bool additive)
+        {
+            var scenePath = ResolveScenePathFromRequest(request);
+            if (!IsValidAssetPath(scenePath))
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "scene command requires a valid scenePath (or assetPath)" });
+            }
+
+            var normalizedScenePath = scenePath.Replace('\\', '/');
+            if (!File.Exists(Path.Combine(GetProjectRoot(), normalizedScenePath.Replace('/', Path.DirectorySeparatorChar))))
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"scene not found: {normalizedScenePath}" });
+            }
+
+            try
+            {
+                if (!additive && DaemonSceneManager.TryGetActiveScene(out var activeScene))
+                {
+                    DaemonScenePersistenceService.SaveScenesWithoutMarkDirty("project scene-switch preflight", activeScene);
+                }
+
+                DaemonHierarchyService.ClearLoadedPrefabSnapshotRoot();
+
+                var mode = additive ? OpenSceneMode.Additive : OpenSceneMode.Single;
+                var openedScene = EditorSceneManager.OpenScene(normalizedScenePath, mode);
+                if (!openedScene.IsValid() || !openedScene.isLoaded)
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = false,
+                        message = $"scene load failed: {normalizedScenePath}"
+                    });
+                }
+
+                if (!SceneManager.SetActiveScene(openedScene))
+                {
+                    EditorSceneManager.SetActiveScene(openedScene);
+                }
+
+                TryPersistLastOpenedScenePath(normalizedScenePath);
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = additive ? "scene added" : "scene loaded",
+                    kind = "scene",
+                    content = normalizedScenePath
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"scene load failed: {ex.Message}"
+                });
+            }
+        }
+
+        private static string ExecuteSceneUnload(ProjectCommandRequest request)
+        {
+            var scenePath = ResolveScenePathFromRequest(request);
+            if (string.IsNullOrWhiteSpace(scenePath))
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = "scene-unload requires content.scenePath (or assetPath)" });
+            }
+
+            var normalizedScenePath = scenePath.Replace('\\', '/');
+            var scene = SceneManager.GetSceneByPath(normalizedScenePath);
+            if (!scene.IsValid() || !scene.isLoaded)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"scene is not loaded: {normalizedScenePath}" });
+            }
+
+            try
+            {
+                if (!EditorSceneManager.CloseScene(scene, true))
+                {
+                    return JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"scene unload failed: {normalizedScenePath}" });
+                }
+
+                if (!DaemonSceneManager.TryGetActiveScene(out _))
+                {
+                    // If no valid loaded scene remains, clear prefab snapshot root to avoid stale mutation context.
+                    DaemonHierarchyService.ClearLoadedPrefabSnapshotRoot();
+                }
+
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = "scene unloaded",
+                    kind = "scene",
+                    content = normalizedScenePath
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"scene unload failed: {ex.Message}"
+                });
+            }
+        }
+
+        private static string ResolveScenePathFromRequest(ProjectCommandRequest request)
+        {
+            if (!string.IsNullOrWhiteSpace(request.assetPath))
+            {
+                return request.assetPath.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(request.content))
+            {
+                return string.Empty;
+            }
+
+            SceneCommandPayload? payload;
+            try
+            {
+                payload = JsonUtility.FromJson<SceneCommandPayload>(request.content);
+            }
+            catch
+            {
+                payload = null;
+            }
+
+            return payload?.scenePath?.Trim() ?? string.Empty;
+        }
+
+        [Serializable]
+        private sealed class SettingsInspectResponse
+        {
+            public SettingsPropertyEntry[] playerSettings = Array.Empty<SettingsPropertyEntry>();
+            public SettingsPropertyEntry[] editorSettings = Array.Empty<SettingsPropertyEntry>();
+        }
+
+        [Serializable]
+        private sealed class SettingsPropertyEntry
+        {
+            public string name = string.Empty;
+            public string type = string.Empty;
+            public string value = string.Empty;
+            public string error = string.Empty;
+        }
+
+        private static SettingsPropertyEntry[] DumpStaticSettingsType(Type type)
+        {
+            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Static)
+                .Where(property => property.CanRead
+                                   && property.GetIndexParameters().Length == 0)
+                .OrderBy(property => property.Name, StringComparer.Ordinal)
+                .ToArray();
+            var output = new List<SettingsPropertyEntry>(properties.Length);
+            foreach (var property in properties)
+            {
+                var entry = new SettingsPropertyEntry
+                {
+                    name = property.Name,
+                    type = property.PropertyType.Name
+                };
+
+                try
+                {
+                    var value = property.GetValue(null, null);
+                    entry.value = SerializeSettingValue(value);
+                }
+                catch (Exception ex)
+                {
+                    entry.error = ex.GetType().Name + ": " + ex.Message;
+                }
+
+                output.Add(entry);
+            }
+
+            return output.ToArray();
+        }
+
+        private static string SerializeSettingValue(object? value)
+        {
+            if (value is null)
+            {
+                return "null";
+            }
+
+            if (value is string text)
+            {
+                return text;
+            }
+
+            if (value is bool or byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal)
+            {
+                return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+            }
+
+            if (value is Enum enumValue)
+            {
+                return enumValue.ToString();
+            }
+
+            if (value is UnityEngine.Object unityObject)
+            {
+                return unityObject ? unityObject.name : "null";
+            }
+
+            if (value is System.Collections.IEnumerable enumerable && value is not IDictionary)
+            {
+                var parts = new List<string>();
+                foreach (var item in enumerable)
+                {
+                    parts.Add(SerializeSettingValue(item));
+                }
+
+                return "[" + string.Join(", ", parts) + "]";
+            }
+
+            return value.ToString() ?? string.Empty;
         }
 
         private static string ExecuteUpmList(ProjectCommandRequest request)
