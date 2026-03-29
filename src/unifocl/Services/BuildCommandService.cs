@@ -72,9 +72,24 @@ internal sealed class BuildCommandService
             case "logs":
                 await HandleLogsAsync(tokens, session, daemonControlService, daemonRuntime, log);
                 return;
+            case "snapshot-packages":
+                await HandleSnapshotPackagesAsync(session, log);
+                return;
+            case "preflight":
+                await HandlePreflightAsync(session, daemonControlService, daemonRuntime, log);
+                return;
+            case "artifact-metadata":
+                await HandleArtifactMetadataAsync(session, log);
+                return;
+            case "failure-classify":
+                await HandleFailureClassifyAsync(session, log);
+                return;
+            case "report":
+                await HandleReportAsync(session, daemonControlService, daemonRuntime, log);
+                return;
             default:
                 log($"[x] unsupported build subcommand: {Markup.Escape(tokens[1])}");
-                log("supported: /build run | /build exec | /build scenes | /build addressables | /build cancel | /build targets | /build logs");
+                log("supported: /build run | /build exec | /build scenes | /build addressables | /build cancel | /build targets | /build logs | /build snapshot-packages | /build preflight | /build artifact-metadata | /build failure-classify | /build report");
                 return;
         }
     }
@@ -318,7 +333,8 @@ internal sealed class BuildCommandService
         var prompt = new MultiSelectionPrompt<string>()
             .Title("Select scenes to [green]enable[/] in [grey]EditorBuildSettings[/]")
             .NotRequired()
-            .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to save)[/]");
+            .HighlightStyle(CliTheme.SelectionHighlightStyle)
+            .InstructionsText($"[grey](Press [#60a5fa]<space>[/] to toggle, [green]<enter>[/] to save)[/]");
         foreach (var scene in scenes)
         {
             prompt.AddChoice(scene.Path!);
@@ -549,6 +565,7 @@ internal sealed class BuildCommandService
         var prompt = new SelectionPrompt<BuildTargetCandidate>()
             .Title("Select build target")
             .PageSize(Math.Min(12, ordered.Count))
+            .HighlightStyle(CliTheme.SelectionHighlightStyle)
             .UseConverter(target => target.Installed
                 ? $"[white]{Markup.Escape(target.DisplayName)}[/] [green](installed)[/]"
                 : $"[grey]{Markup.Escape(target.DisplayName)}[/] [dim](not installed, will install)[/]")
@@ -1424,4 +1441,183 @@ internal sealed class BuildCommandService
     private sealed record BuildScenesUpdateRequestPayload(List<BuildSceneEntryPayload> Scenes);
 
     private sealed record BuildSceneEntryPayload(string Path, bool Enabled);
+
+    private async Task HandleSnapshotPackagesAsync(CliSessionState session, Action<string> log)
+    {
+        var projectPath = session.CurrentProjectPath!;
+        var bridge = new ProjectDaemonBridge(projectPath);
+        var request = new ProjectCommandRequestDto("build-snapshot-packages", null, null, null, Guid.NewGuid().ToString("N"));
+        bridge.TryHandle($"PROJECT_CMD {JsonSerializer.Serialize(request, WriteJsonOptions)}", out var raw);
+
+        ProjectCommandResponseDto? response;
+        try
+        {
+            response = JsonSerializer.Deserialize<ProjectCommandResponseDto>(raw, ReadJsonOptions);
+        }
+        catch
+        {
+            log("[red]build[/]: snapshot-packages — failed to parse bridge response");
+            return;
+        }
+
+        if (response is null || !response.Ok)
+        {
+            log($"[red]build[/]: snapshot-packages — {Markup.Escape(response?.Message ?? "unknown error")}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            log($"[green]build[/]: {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        BuildSnapshotResult? result;
+        try
+        {
+            result = JsonSerializer.Deserialize<BuildSnapshotResult>(response.Content, ReadJsonOptions);
+        }
+        catch
+        {
+            log($"[green]build[/]: {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        if (result is null)
+        {
+            log($"[green]build[/]: {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        log($"[green]build[/]: snapshot written — {result.PackageCount} package(s), lockfile={result.LockfilePresent}");
+        log($"[grey]build[/]: {Markup.Escape(result.SnapshotPath)}");
+        await Task.CompletedTask;
+    }
+
+    private async Task HandlePreflightAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        var validateSvc = new ValidateCommandService();
+        log("[grey]build[/]: running preflight checks...");
+        var result = await validateSvc.BuildPreflightAsync(session, daemonControlService, daemonRuntime, log);
+
+        var statusColor = result.Passed ? "green" : "red";
+        var statusText = result.Passed ? "PASS" : "FAIL";
+        log($"[{statusColor}]Preflight {statusText}[/] — {result.ErrorCount} error(s), {result.WarningCount} warning(s)");
+
+        if (result.SceneList is not null)
+            log($"  scene-list:     [{(result.SceneList.Passed ? "green" : "red")}]{(result.SceneList.Passed ? "PASS" : "FAIL")}[/] ({result.SceneList.ErrorCount} errors, {result.SceneList.WarningCount} warnings)");
+        if (result.BuildSettings is not null)
+            log($"  build-settings: [{(result.BuildSettings.Passed ? "green" : "red")}]{(result.BuildSettings.Passed ? "PASS" : "FAIL")}[/] ({result.BuildSettings.ErrorCount} errors, {result.BuildSettings.WarningCount} warnings)");
+        if (result.Packages is not null)
+            log($"  packages:       [{(result.Packages.Passed ? "green" : "red")}]{(result.Packages.Passed ? "PASS" : "FAIL")}[/] ({result.Packages.ErrorCount} errors, {result.Packages.WarningCount} warnings)");
+    }
+
+    private async Task HandleArtifactMetadataAsync(CliSessionState session, Action<string> log)
+    {
+        if (DaemonControlService.GetPort(session) is not int port)
+        {
+            log("[yellow]build[/]: artifact-metadata — daemon not running");
+            return;
+        }
+
+        var request = new ProjectCommandRequestDto("build-artifact-metadata", null, null, null, Guid.NewGuid().ToString("N"));
+        var response = await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus: null);
+
+        if (!response.Ok)
+        {
+            log($"[red]build[/]: artifact-metadata — {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        log($"[green]build[/]: artifact-metadata — {Markup.Escape(response.Message)}");
+        if (!string.IsNullOrWhiteSpace(response.Content))
+            log($"[grey]{Markup.Escape(response.Content)}[/]");
+    }
+
+    private async Task HandleFailureClassifyAsync(CliSessionState session, Action<string> log)
+    {
+        if (DaemonControlService.GetPort(session) is not int port)
+        {
+            log("[yellow]build[/]: failure-classify — daemon not running");
+            return;
+        }
+
+        var request = new ProjectCommandRequestDto("build-failure-classify", null, null, null, Guid.NewGuid().ToString("N"));
+        var response = await _daemonClient.ExecuteProjectCommandAsync(port, request, onStatus: null);
+
+        if (!response.Ok)
+        {
+            log($"[red]build[/]: failure-classify — {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        log($"[green]build[/]: failure-classify — {Markup.Escape(response.Message)}");
+        if (!string.IsNullOrWhiteSpace(response.Content))
+            log($"[grey]{Markup.Escape(response.Content)}[/]");
+    }
+
+    private async Task HandleReportAsync(
+        CliSessionState session,
+        DaemonControlService daemonControlService,
+        DaemonRuntime daemonRuntime,
+        Action<string> log)
+    {
+        log($"[bold]Build Report — {DateTime.Now:yyyy-MM-dd HH:mm:ss}[/]");
+        log("[dim]─────────────────────────────────────[/]");
+
+        // Preflight
+        var validateSvc = new ValidateCommandService();
+        var preflight = await validateSvc.BuildPreflightAsync(session, daemonControlService, daemonRuntime, log);
+        var preflightStatus = preflight.Passed ? "[green]PASS[/]" : "[red]FAIL[/]";
+        log($"Preflight   {preflightStatus}  ({preflight.ErrorCount} errors, {preflight.WarningCount} warnings)");
+
+        // Artifact metadata
+        string artifactLine = "Artifacts   (no build report available)";
+        string resultLine = "Result      (unknown)";
+        if (DaemonControlService.GetPort(session) is int port)
+        {
+            var metaReq = new ProjectCommandRequestDto("build-artifact-metadata", null, null, null, Guid.NewGuid().ToString("N"));
+            var metaResp = await _daemonClient.ExecuteProjectCommandAsync(port, metaReq, onStatus: null);
+            if (metaResp.Ok && !string.IsNullOrWhiteSpace(metaResp.Content))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(metaResp.Content);
+                    var root = doc.RootElement;
+                    var fileCount = root.TryGetProperty("fileCount", out var fc) ? fc.GetInt32() : 0;
+                    var totalSize = root.TryGetProperty("totalSize", out var ts) ? ts.GetInt64() : 0L;
+                    var buildTarget = root.TryGetProperty("buildTarget", out var bt) ? bt.GetString() : "unknown";
+                    var buildResult = root.TryGetProperty("result", out var br) ? br.GetString() : "unknown";
+                    artifactLine = $"Artifacts   {fileCount} files, {totalSize / 1024.0 / 1024.0:0.0} MB, {Markup.Escape(buildTarget ?? "unknown")}";
+                    resultLine = $"Result      {Markup.Escape(buildResult ?? "unknown")}";
+                }
+                catch { /* leave defaults */ }
+            }
+
+            var classReq = new ProjectCommandRequestDto("build-failure-classify", null, null, null, Guid.NewGuid().ToString("N"));
+            var classResp = await _daemonClient.ExecuteProjectCommandAsync(port, classReq, onStatus: null);
+            if (classResp.Ok && !string.IsNullOrWhiteSpace(classResp.Content))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(classResp.Content);
+                    var root = doc.RootElement;
+                    var totalErrors = root.TryGetProperty("totalErrors", out var te) ? te.GetInt32() : 0;
+                    log(artifactLine);
+                    log(resultLine);
+                    log($"Failures    {totalErrors} error(s)");
+                    return;
+                }
+                catch { /* fall through */ }
+            }
+        }
+
+        log(artifactLine);
+        log(resultLine);
+        log("Failures    (unavailable — no daemon or no build report)");
+    }
 }

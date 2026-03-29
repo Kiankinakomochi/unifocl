@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.14.0 - 2026-03-29
+## 2.18.0 - 2026-03-29
 
 ### Added
 - **`test` command family**: new `test list`, `test run editmode`, and `test run playmode` commands run Unity's test runner as a direct subprocess — no daemon or running editor required. Safe for CI, parallel agent sessions, and headless environments.
@@ -14,6 +14,73 @@
 ### Docs
 - **`docs/test-orchestration.md`**: full reference covering command syntax, ExecV2 request schemas, subprocess lifecycle, artifact layout, multi-agent safety, and exit-code behavior.
 - **README updated**: `/test` added to slash-command table; `test list/run` added to contextual-operations table; new Section 8 "Test Orchestration" with usage examples and ExecV2 operation table updated with `test.list` / `test.run`.
+
+### Officialized
+- Officialized `2.18.0` by closing the development cycle suffix.
+
+
+## 2.17.0 - 2026-03-29
+
+### Added
+
+**Project Validation — deeper checks**
+
+- **`validate asmdef`**: parses every `.asmdef` file under `Assets/`, builds a dependency graph, and checks for three classes of problem: duplicate assembly names (VASD002), undefined references (VASD003), and circular dependencies via DFS (VASD004). No daemon required — runs against files on disk.
+- **`validate asset-refs`**: scans `.unity`, `.prefab`, `.asset`, `.mat`, and `.controller` files for GUID-based cross-asset references and resolves each via `AssetDatabase`. Any GUID that does not map to a known asset path is reported as a broken reference (VAR001). Output is capped at 500 findings per run.
+- **`validate addressables`**: checks whether the Addressables package is installed in `Packages/manifest.json`, then validates the presence of the settings asset, groups directory, and settings load. Exits cleanly with an informational message when Addressables is not in use (VADR000).
+
+**Build Workflow**
+
+- **`build snapshot-packages`**: reads `Packages/manifest.json` and writes a timestamped snapshot to `.unifocl-runtime/snapshots/packages-{yyyyMMdd-HHmmss}.json`. Useful as a pre-build baseline for rollback or audit. No daemon required.
+- **`build preflight`**: orchestrates `validate scene-list` + `validate build-settings` + `validate packages` in sequence and reports a single aggregated pass/fail with total error and warning counts. Designed to run immediately before a build.
+- **`build artifact-metadata`**: reads the captured build report (`Library/unifocl-last-build-report.json`) and returns artifact file paths, roles, sizes, output path, build target, and duration.
+- **`build failure-classify`**: reads the captured build report and classifies each error message into one of five named categories — `CompileError` (Roslyn `CS\d{4}`), `LinkerError`, `MissingAsset`, `ScriptError`, or `Timeout`. Unclassified messages are omitted.
+- **`build report`**: consolidated report that runs preflight and then reads artifact-metadata and failure-classify, rendering a summary table in one command.
+
+**Infrastructure**
+
+- **`DaemonBuildReportService`** + **`BuildReportCapture`**: a `IPostprocessBuildWithReport` hook fires automatically after every Unity build and persists the `BuildReport` to `Library/unifocl-last-build-report.json`. This file is the data source for all three post-build commands.
+- **ExecV2**: eight new `SafeRead` operations registered — `validate.asmdef`, `validate.asset-refs`, `validate.addressables`, `build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report`. No approval gating required for any of them.
+
+### Docs
+
+- **README** updated with new `/validate` and `/build` subcommand tables and expanded Sections 7–8.
+- **`docs/validate-build-workflow.md`** (new): full reference for all validate and build workflow commands, including diagnostic code tables, output schemas, and ExecV2 operation index.
+
+## 2.16.0 - 2026-03-29
+
+### Added
+- **`MarkdownRenderer` service**: new static renderer (`Services/MarkdownRenderer.cs`) that converts markdown text to Spectre.Console markup lines emitted via the standard `Action<string> log` pipeline — no new NuGet dependencies.
+  - **Block elements**: H1 (flanking `━━━` rule in brand color), H2 (leading `──` rule), H3 (bold text), fenced code blocks (Unicode box border with language label, dynamic terminal width), bullet lists (`● item`), ordered lists, blockquotes (`▎ text`), horizontal rules, paragraphs.
+  - **Inline elements**: `` `inline code` `` (surface-background highlight), `**bold**`, `*italic*`.
+  - **Syntax highlighting** for C#, JavaScript/TypeScript, JSON, and shell — keyword coloring (Info blue), strings (Success green), comments (TextMuted italic), JSON numbers/booleans (Warning orange).
+  - **`CliLogService.AppendMarkdown`**: convenience wrapper for agentic accumulator call sites.
+- **`CliTheme.SelectionHighlightStyle`**: new `Style` property (black text on brand `#ffb300` background) derived from the existing cursor constants. Applied to all `SelectionPrompt` / `MultiSelectionPrompt` instances so selected items render with the brand palette instead of Spectre's default blue.
+
+### Fixed
+- **`CliDryRunDiffService`**: `AppendUnifiedDiffToLog` now renders diff lines with per-line color — added lines in Success green, removed lines in Error red, hunk headers (`@@`) in Info blue, file headers (`+++`/`---`) in bold TextMuted. Removes the `[i]` prefix which was an invalid Spectre tag silently hitting the error fallback path.
+- **`ValidateCommandService`**: `RenderResult` now uses `✓`/`✗` icons (replacing `PASS`/`FAIL` text), colors error/warning counts by severity, sorts diagnostics with errors first, adds per-diagnostic severity icons (`✗`, `⚠`, `i`), and inserts visual separators between validators in `/validate all` mode.
+- **`BuildCommandService` `[blue]` tag**: replaced with `[#60a5fa]` (Info blue) in `MultiSelectionPrompt.InstructionsText` — `[blue]` is not in `ApplyMarkupPalette` and was rendering as the terminal's raw blue.
+
+### Officialized
+- **Officialized `2.16.0`** by closing the development cycle suffix.
+
+## 2.15.0 - 2026-03-29
+
+### Fixed
+- **`/update` Windows binary lock**: the running `.exe` can no longer be replaced in-place on Windows. The command now uses one of two fully hands-free deferred paths — the user simply quits unifocl and the update applies automatically on exit.
+  - **winget path** (preferred): probes `winget show` to retrieve the version available in winget, compares it with the latest GitHub release, and either queues a silent `winget upgrade` automatically (versions match) or presents a `SelectionPrompt` so the user can choose between the managed winget version and the newer GitHub binary.
+  - **manual path** (fallback / user choice): downloads the GitHub release asset and spawns a hidden PowerShell script that waits for the current PID to exit, then copies the new binary over the old one. The binary is replaced in the same directory, so any existing PATH entry remains valid.
+  - Non-interactive environments (`Console.IsInputRedirected`) skip the prompt and default to the manual/latest path.
+
+### Added
+- **Officialized `2.15.0`** by closing the development cycle suffix.
+
+## 2.14.0 - 2026-03-29
+
+### Added
+- Officialized `2.14.0` by closing the development cycle suffix.
+- **Partial-class refactor**: split 6 large service classes into 22 partial files — `ProjectLifecycleService` (6 partials), `DaemonProjectService` (6 partials), `InspectorModeService` (3 partials), `DaemonControlService` (3 partials), `ProjectViewService.Upm` (2 partials), `HierarchyTui` (2 partials). No behavioral changes; routing and fields remain in the main file per the `ProjectViewService` pattern.
 
 ## 2.13.0 - 2026-03-29
 

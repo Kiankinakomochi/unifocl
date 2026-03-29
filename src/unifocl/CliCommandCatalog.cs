@@ -84,13 +84,21 @@ internal static class CliCommandCatalog
             new("/test list", "List all tests (EditMode) using Unity -listTests", "/test list"),
             new("/test run editmode [--timeout <seconds>]", "Run EditMode tests, capture NUnit XML results", "/test run editmode"),
             new("/test run playmode [--timeout <seconds>]", "Run PlayMode tests, capture NUnit XML results", "/test run playmode"),
-            new("/validate <scene-list|missing-scripts|packages|build-settings|all>", "Run project validation checks", "/validate"),
+            new("/validate <scene-list|missing-scripts|packages|build-settings|asmdef|asset-refs|addressables|all>", "Run project validation checks", "/validate"),
             new("/validate scene-list", "Check that all build-settings scene paths exist", "/validate scene-list"),
             new("/validate missing-scripts", "Scan scenes and prefabs for missing MonoBehaviour scripts", "/validate missing-scripts"),
             new("/validate packages", "Validate manifest.json vs packages-lock.json consistency", "/validate packages"),
             new("/validate build-settings", "Check PlayerSettings/build configuration sanity", "/validate build-settings"),
+            new("/validate asmdef", "Validate .asmdef files for duplicates, undefined refs, and cycles", "/validate asmdef"),
+            new("/validate asset-refs", "Scan asset files for broken GUID references", "/validate asset-refs"),
+            new("/validate addressables", "Validate Addressables configuration if installed", "/validate addressables"),
             new("/validate all", "Run all validators", "/validate all"),
-            new("/val <subcommand>", "Alias for /validate", "/val")
+            new("/val <subcommand>", "Alias for /validate", "/val"),
+            new("/build snapshot-packages", "Snapshot current package manifest to .unifocl-runtime/snapshots/", "/build snapshot-packages"),
+            new("/build preflight", "Run preflight validation (scene-list, build-settings, packages)", "/build preflight"),
+            new("/build artifact-metadata", "Read last build artifact metadata from cached build report", "/build artifact-metadata"),
+            new("/build failure-classify", "Classify failures from last build report", "/build failure-classify"),
+            new("/build report", "Full build report: preflight + artifacts + failure classification", "/build report")
         ];
     }
 
@@ -136,6 +144,11 @@ internal static class CliCommandCatalog
             new("build cancel", "Request cancellation of an ongoing build", "build cancel"),
             new("build targets", "List installed Unity build support targets", "build targets"),
             new("build logs", "Open restartable build log tail viewer", "build logs"),
+            new("build snapshot-packages", "Snapshot current package manifest", "build snapshot-packages"),
+            new("build preflight", "Run preflight validation checks", "build preflight"),
+            new("build artifact-metadata", "Read last build artifact metadata", "build artifact-metadata"),
+            new("build failure-classify", "Classify failures from last build report", "build failure-classify"),
+            new("build report", "Full build report: preflight + artifacts + failures", "build report"),
             new("b [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Alias for build run", "b"),
             new("bx <Method>", "Alias for build exec", "bx"),
             new("ba [--clean] [--update]", "Alias for build addressables", "ba"),

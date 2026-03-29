@@ -83,6 +83,13 @@ internal sealed class ProjectDaemonBridge
             "validate-missing-scripts" => RequireBridgeMode("validate-missing-scripts"),
             "validate-build-settings" => RequireBridgeMode("validate-build-settings"),
             "validate-packages" => HandleValidatePackages(),
+            "validate-asmdef" => HandleValidateAsmdef(),
+            "validate-asset-refs" => RequireBridgeMode("validate-asset-refs"),
+            "validate-addressables" => RequireBridgeMode("validate-addressables"),
+            "build-snapshot-packages" => HandleBuildSnapshotPackages(),
+            "build-preflight" => RequireBridgeMode("build-preflight"),
+            "build-artifact-metadata" => RequireBridgeMode("build-artifact-metadata"),
+            "build-failure-classify" => RequireBridgeMode("build-failure-classify"),
             _ => new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} unsupported action: {request.Action}", null, null)
         };
         response = JsonSerializer.Serialize(result, _jsonOptions);
@@ -493,6 +500,207 @@ internal sealed class ProjectDaemonBridge
         var json = JsonSerializer.Serialize(result, _jsonOptions);
         return new ProjectCommandResponseDto(true, errorCount == 0 ? "packages valid" : $"packages: {errorCount} error(s), {warningCount} warning(s)", "validate", json);
     }
+
+    private ProjectCommandResponseDto HandleValidateAsmdef()
+    {
+        var diagnostics = new List<ValidateDiagnostic>();
+        var assetsPath = Path.Combine(_projectPath, "Assets");
+
+        if (!Directory.Exists(assetsPath))
+        {
+            diagnostics.Add(new ValidateDiagnostic(ValidateSeverity.Error, "VASD001", "Assets/ directory not found"));
+            var r0 = new ValidateResult("asmdef", false, 1, 0, diagnostics);
+            return new ProjectCommandResponseDto(false, "asmdef: 1 error(s)", "validate", JsonSerializer.Serialize(r0, _jsonOptions));
+        }
+
+        var asmdefFiles = Directory.GetFiles(assetsPath, "*.asmdef", SearchOption.AllDirectories);
+        var nameToPath = new Dictionary<string, string>(StringComparer.Ordinal);
+        var allNames = new HashSet<string>(StringComparer.Ordinal);
+
+        // First pass: build name → path map and detect duplicates
+        foreach (var file in asmdefFiles)
+        {
+            string? name = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                if (doc.RootElement.TryGetProperty("name", out var nameProp))
+                    name = nameProp.GetString();
+            }
+            catch { /* skip unreadable */ }
+
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            if (!allNames.Add(name))
+            {
+                diagnostics.Add(new ValidateDiagnostic(ValidateSeverity.Error, "VASD002",
+                    $"duplicate assembly name '{name}'", AssetPath: GetRelativePath(file)));
+                continue;
+            }
+
+            nameToPath[name] = file;
+        }
+
+        // Second pass: check references and build adjacency for cycle detection
+        var adjacency = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var file in asmdefFiles)
+        {
+            string? name = null;
+            string[]? refs = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                if (doc.RootElement.TryGetProperty("name", out var nameProp))
+                    name = nameProp.GetString();
+                if (doc.RootElement.TryGetProperty("references", out var refsProp) && refsProp.ValueKind == JsonValueKind.Array)
+                {
+                    refs = refsProp.EnumerateArray()
+                        .Where(e => e.ValueKind == JsonValueKind.String)
+                        .Select(e => e.GetString() ?? "")
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .ToArray();
+                }
+            }
+            catch { continue; }
+
+            if (string.IsNullOrWhiteSpace(name) || !nameToPath.ContainsKey(name))
+                continue;
+
+            var neighbors = new List<string>();
+            foreach (var refName in refs ?? Array.Empty<string>())
+            {
+                if (!nameToPath.ContainsKey(refName))
+                {
+                    diagnostics.Add(new ValidateDiagnostic(ValidateSeverity.Warning, "VASD003",
+                        $"assembly '{name}' references undefined assembly '{refName}'",
+                        AssetPath: GetRelativePath(file)));
+                }
+                else
+                {
+                    neighbors.Add(refName);
+                }
+            }
+
+            adjacency[name] = neighbors;
+        }
+
+        // Cycle detection via DFS
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var inStack = new HashSet<string>(StringComparer.Ordinal);
+        var cycleReported = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var startName in adjacency.Keys)
+        {
+            if (!visited.Contains(startName))
+                DfsCycleDetect(startName, adjacency, visited, inStack, cycleReported, diagnostics);
+        }
+
+        var errorCount = diagnostics.Count(d => d.Severity == ValidateSeverity.Error);
+        var warningCount = diagnostics.Count(d => d.Severity == ValidateSeverity.Warning);
+        var result = new ValidateResult("asmdef", errorCount == 0, errorCount, warningCount, diagnostics);
+        var json = JsonSerializer.Serialize(result, _jsonOptions);
+        return new ProjectCommandResponseDto(true, errorCount == 0 ? "asmdef valid" : $"asmdef: {errorCount} error(s), {warningCount} warning(s)", "validate", json);
+    }
+
+    private static void DfsCycleDetect(
+        string node,
+        Dictionary<string, List<string>> adjacency,
+        HashSet<string> visited,
+        HashSet<string> inStack,
+        HashSet<string> cycleReported,
+        List<ValidateDiagnostic> diagnostics)
+    {
+        visited.Add(node);
+        inStack.Add(node);
+
+        if (adjacency.TryGetValue(node, out var neighbors))
+        {
+            foreach (var neighbor in neighbors)
+            {
+                if (!visited.Contains(neighbor))
+                {
+                    DfsCycleDetect(neighbor, adjacency, visited, inStack, cycleReported, diagnostics);
+                }
+                else if (inStack.Contains(neighbor) && cycleReported.Add(neighbor))
+                {
+                    diagnostics.Add(new ValidateDiagnostic(ValidateSeverity.Error, "VASD004",
+                        $"circular dependency detected: '{node}' -> '{neighbor}'"));
+                }
+            }
+        }
+
+        inStack.Remove(node);
+    }
+
+    private string GetRelativePath(string absolutePath)
+    {
+        if (absolutePath.StartsWith(_projectPath, StringComparison.Ordinal))
+        {
+            var rel = absolutePath[_projectPath.Length..].TrimStart(Path.DirectorySeparatorChar, '/');
+            return rel.Replace(Path.DirectorySeparatorChar, '/');
+        }
+        return absolutePath;
+    }
+
+    private ProjectCommandResponseDto HandleBuildSnapshotPackages()
+    {
+        var manifestPath = Path.Combine(_projectPath, "Packages", "manifest.json");
+        var lockPath = Path.Combine(_projectPath, "Packages", "packages-lock.json");
+
+        if (!File.Exists(manifestPath))
+        {
+            return new ProjectCommandResponseDto(false, "Packages/manifest.json not found", null, null);
+        }
+
+        var packages = new List<SnapshotPackageEntry>();
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (doc.RootElement.TryGetProperty("dependencies", out var deps) && deps.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in deps.EnumerateObject())
+                {
+                    packages.Add(new SnapshotPackageEntry(prop.Name, prop.Value.GetString() ?? ""));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            return new ProjectCommandResponseDto(false, $"failed to read manifest: {ex.Message}", null, null);
+        }
+
+        var lockfilePresent = File.Exists(lockPath);
+        var timestamp = DateTime.UtcNow;
+        var timestampStr = timestamp.ToString("yyyyMMdd-HHmmss");
+        var snapshotsDir = Path.Combine(_projectPath, ".unifocl-runtime", "snapshots");
+        Directory.CreateDirectory(snapshotsDir);
+        var snapshotPath = Path.Combine(snapshotsDir, $"packages-{timestampStr}.json");
+
+        var snapshotPayload = new
+        {
+            timestamp = timestamp.ToString("O"),
+            packageCount = packages.Count,
+            packages = packages.Select(p => new { name = p.Name, version = p.Version }).ToArray(),
+            lockfilePresent,
+            snapshotPath
+        };
+
+        try
+        {
+            File.WriteAllText(snapshotPath, JsonSerializer.Serialize(snapshotPayload, _jsonOptions));
+        }
+        catch (Exception ex)
+        {
+            return new ProjectCommandResponseDto(false, $"failed to write snapshot: {ex.Message}", null, null);
+        }
+
+        var result = new BuildSnapshotResult(snapshotPath, timestamp.ToString("O"), packages.Count, lockfilePresent);
+        var resultJson = JsonSerializer.Serialize(result, _jsonOptions);
+        return new ProjectCommandResponseDto(true, $"snapshot written: {snapshotPath}", "build-snapshot", resultJson);
+    }
+
+    private sealed record SnapshotPackageEntry(string Name, string Version);
 
     private ProjectCommandResponseDto RequireBridgeMode(string action)
     {

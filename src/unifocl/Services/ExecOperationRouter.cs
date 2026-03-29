@@ -21,6 +21,10 @@ internal sealed class ExecOperationRouter
         _testService = new TestCommandService();
     }
 
+    /// <summary>Synchronous routing path used by the daemon HTTP endpoint.</summary>
+    public ExecV2Response Route(ExecV2Request request, ProjectDaemonBridge projectBridge)
+        => RouteAsync(request, projectBridge, CancellationToken.None).GetAwaiter().GetResult();
+
     public async Task<ExecV2Response> RouteAsync(ExecV2Request request, ProjectDaemonBridge projectBridge,
         CancellationToken cancellationToken = default)
     {
