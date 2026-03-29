@@ -680,7 +680,18 @@ internal sealed partial class ProjectLifecycleService
             return false;
         }
 
-        // Acquire cross-process file lock to prevent concurrent opens on the same project.
+        // Fast path: if a Bridge mode daemon is already responsive, attach without acquiring
+        // the project open lock. No Unity launch is needed so concurrent attaches are safe.
+        var candidatePort = DaemonControlService.ResolveProjectDaemonPort(projectPath);
+        if (await IsDaemonEndpointAliveAsync(candidatePort))
+        {
+            return await TryOpenProjectLockedAsync(
+                projectPath, session, daemonControlService, daemonRuntime,
+                editorDependencyInitializerService, promptForInitialization,
+                ensureMcpHostDependencyCheck, allowUnsafe, daemonStartupTimeout, log);
+        }
+
+        // Acquire cross-process file lock to prevent concurrent Unity launches on the same project.
         // Agents working concurrently should clone the project (with Library/) to their own worktree.
         var lockDir = Path.Combine(projectPath, ".unifocl");
         Directory.CreateDirectory(lockDir);
@@ -791,6 +802,7 @@ internal sealed partial class ProjectLifecycleService
 
         log("[grey]open[/]: step 4/5 ensure managed daemon bridge");
         var daemonPort = DaemonControlService.ResolveProjectDaemonPort(projectPath);
+
         if (allowUnsafe)
         {
             log("[yellow]open[/]: --allow-unsafe enabled (using -noUpm and -ignoreCompileErrors for faster Host mode boot)");
@@ -992,6 +1004,21 @@ internal sealed partial class ProjectLifecycleService
 
         sceneAssetPath = normalized;
         return true;
+    }
+
+    private static async Task<bool> IsDaemonEndpointAliveAsync(int port)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var response = await UnityRegistryHttpClient.GetAsync(
+                $"http://127.0.0.1:{port}/ping", cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static async Task<bool> WaitForHierarchySnapshotReadyAsync(int port, Action<string> log)
