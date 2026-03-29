@@ -2,6 +2,36 @@ using System.Text;
 
 internal static class CliCommandParsingService
 {
+    public static bool TryParseAgentInstallCommandText(string[] args, out string? commandText, out string? error)
+    {
+        commandText = null;
+        error = null;
+
+        if (args.Length == 0 || !args[0].Equals("agent", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (args.Length < 2 || !args[1].Equals("install", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "usage: unifocl agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+            return true;
+        }
+
+        if (args.Length < 3)
+        {
+            error = "usage: unifocl agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
+            return true;
+        }
+
+        var remaining = args
+            .Skip(2)
+            .Select(QuoteShellLikeToken)
+            .ToArray();
+        commandText = "/agent install " + string.Join(' ', remaining);
+        return true;
+    }
+
     public static bool TryParseExecLaunchOptions(string[] args, out ExecLaunchOptions? options, out string? error)
     {
         options = null;
@@ -538,5 +568,20 @@ internal static class CliCommandParsingService
         }
 
         return consumed >= tokenCount ? string.Empty : input;
+    }
+
+    private static string QuoteShellLikeToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return "\"\"";
+        }
+
+        if (!token.Any(char.IsWhiteSpace) && !token.Contains('"', StringComparison.Ordinal))
+        {
+            return token;
+        }
+
+        return $"\"{token.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 }
