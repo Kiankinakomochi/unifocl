@@ -94,7 +94,14 @@ internal static class CliCommandCatalog
             new("/build preflight", "Run preflight validation (scene-list, build-settings, packages)", "/build preflight"),
             new("/build artifact-metadata", "Read last build artifact metadata from cached build report", "/build artifact-metadata"),
             new("/build failure-classify", "Classify failures from last build report", "/build failure-classify"),
-            new("/build report", "Full build report: preflight + artifacts + failure classification", "/build report")
+            new("/build report", "Full build report: preflight + artifacts + failure classification", "/build report"),
+            new("/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|all>", "Run project diagnostics", "/diag"),
+            new("/diag script-defines", "Show scripting define symbols per build target group", "/diag script-defines"),
+            new("/diag compile-errors", "Show compiler messages from last compilation pass", "/diag compile-errors"),
+            new("/diag assembly-graph", "Show assembly dependency graph (asmdef references)", "/diag assembly-graph"),
+            new("/diag scene-deps", "Show asset dependencies per enabled scene", "/diag scene-deps"),
+            new("/diag prefab-deps", "Show asset dependencies per prefab (capped at 100)", "/diag prefab-deps"),
+            new("/diag all", "Run all diagnostics", "/diag all")
         ];
     }
 

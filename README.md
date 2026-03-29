@@ -141,6 +141,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
 | `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `all`). |
+| `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `all`). All ops are read-only and require the daemon. See [`docs/project-diagnostics.md`](docs/project-diagnostics.md). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -243,6 +244,11 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `build artifact-metadata` |  | Show last build artifact files and sizes in project mode. |
 | `build failure-classify` |  | Classify last build errors by category in project mode. |
 | `build report` |  | Consolidated build report in project mode. |
+| `diag script-defines` |  | Show scripting define symbols per build target group in project mode. |
+| `diag compile-errors` |  | Show compiler messages from last compilation pass in project mode. |
+| `diag assembly-graph` |  | Show asmdef-level assembly dependency graph in project mode. |
+| `diag scene-deps` |  | Show transitive asset dependencies per enabled build scene in project mode. |
+| `diag prefab-deps` |  | Show transitive asset dependencies per prefab (capped at 100) in project mode. |
 | `prefab create <idx\|name> <asset-path>` |  | Convert scene GameObject to new Prefab Asset on disk in project mode. |
 | `prefab apply <idx>` |  | Push instance overrides back to source Prefab Asset in project mode. |
 | `prefab revert <idx>` |  | Discard local overrides, revert to source Prefab Asset in project mode. |
@@ -431,6 +437,37 @@ ExecV2 operations (all `SafeRead` — no approval required):
 `build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report`
 
 Full reference: [`docs/validate-build-workflow.md`](docs/validate-build-workflow.md)
+
+### 9. Project Diagnostics
+
+The `diag` command family provides read-only structural introspection of the project — assembly topology, define symbols, and asset dependency trees. Unlike `/validate`, `diag` commands are data dumps rather than pass/fail checks.
+
+```
+/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|all>
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `script-defines` | Scripting define symbols per build target group (`PlayerSettings.GetScriptingDefineSymbolsForGroup`). |
+| `compile-errors` | Compiler messages from the last compilation pass (`CompilationPipeline.GetAssemblies` + `.compilerMessages`). |
+| `assembly-graph` | Asmdef-level assembly dependency graph (`assemblyReferences` per assembly). |
+| `scene-deps` | Transitive `AssetDatabase.GetDependencies` per enabled build scene. |
+| `prefab-deps` | Transitive `AssetDatabase.GetDependencies` per prefab under `Assets/` (capped at 100). |
+
+All operations require the daemon. All are `SafeRead` — no approval gating.
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/diag assembly-graph" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/diag script-defines" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/diag scene-deps" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations (all `SafeRead` — no approval required):
+`diag.script-defines`, `diag.compile-errors`, `diag.assembly-graph`, `diag.scene-deps`, `diag.prefab-deps`
+
+Full reference: [`docs/project-diagnostics.md`](docs/project-diagnostics.md)
 
 ## Human Interface: TUI & Keybindings
 
