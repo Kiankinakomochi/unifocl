@@ -119,6 +119,11 @@ These commands manage your session, project loading, and configuration. In the i
 | `/build cancel` |  | Request cancellation for the active build process via daemon. |
 | `/build targets` |  | List platform build support currently available in this Unity Editor. |
 | `/build logs` |  | Reopen live build log tail (restartable, with error filtering). |
+| `/build snapshot-packages` |  | Snapshot `Packages/manifest.json` to a timestamped file under `.unifocl-runtime/snapshots/`. |
+| `/build preflight` |  | Run scene-list + build-settings + packages validators sequentially and report aggregated pass/fail before a build. |
+| `/build artifact-metadata` |  | Show file list, sizes, and target from the last captured build report. |
+| `/build failure-classify` |  | Classify errors from the last build into CompileError / LinkerError / MissingAsset / ScriptError / Timeout categories. |
+| `/build report` |  | Render a consolidated build summary: preflight + artifacts + classified failures. |
 | `/upm` |  | Show Unity Package Manager command usage and options. |
 | `/upm list [--outdated] [--builtin] [--git]` | `/upm ls` | List installed Unity packages (with optional outdated/builtin/git filters). |
 | `/upm install <target>` | `/upm add`, `/upm i` | Install a package by package ID, Git URL, or `file:` target. |
@@ -135,7 +140,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
-| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `all`). |
+| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `all`). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -233,6 +238,11 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `build cancel` |  | Request cancellation for active build in project mode. |
 | `build targets` |  | List Unity build support targets in project mode. |
 | `build logs` |  | Open restartable build log tail in project mode. |
+| `build snapshot-packages` |  | Snapshot package manifest to `.unifocl-runtime/snapshots/` in project mode. |
+| `build preflight` |  | Run pre-build validation suite in project mode. |
+| `build artifact-metadata` |  | Show last build artifact files and sizes in project mode. |
+| `build failure-classify` |  | Classify last build errors by category in project mode. |
+| `build report` |  | Consolidated build report in project mode. |
 | `prefab create <idx\|name> <asset-path>` |  | Convert scene GameObject to new Prefab Asset on disk in project mode. |
 | `prefab apply <idx>` |  | Push instance overrides back to source Prefab Asset in project mode. |
 | `prefab revert <idx>` |  | Discard local overrides, revert to source Prefab Asset in project mode. |
@@ -364,7 +374,7 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
 
 ```
-/validate <scene-list|missing-scripts|packages|build-settings|all>
+/validate <subcommand>
 ```
 
 | Subcommand | Requires Daemon | Description |
@@ -373,15 +383,54 @@ The `/validate` command family runs project health checks and produces structure
 | `missing-scripts` | Yes | Scans loaded scenes and all prefab assets for null `MonoBehaviour` components (missing script references). |
 | `packages` | No | Compares `manifest.json` vs `packages-lock.json` — detects missing lock entries, version mismatches, and missing files. |
 | `build-settings` | Yes | Checks `PlayerSettings` sanity — bundle ID, product/company name, version format, active build target, enabled scenes, scripting backend. |
+| `asmdef` | No | Parses all `.asmdef` files under `Assets/`, builds a dependency graph, and checks for duplicate assembly names, undefined references, and circular dependencies. |
+| `asset-refs` | Yes | Scans `.unity`, `.prefab`, `.asset`, `.mat`, and `.controller` files for GUID references that do not resolve to any known asset in `AssetDatabase`. Caps output at 500 findings. |
+| `addressables` | Yes | Checks whether the Addressables package is installed, then validates the settings asset, groups directory, and basic settings structure. |
 | `all` | Mixed | Runs all validators sequentially. |
+
+Every diagnostic carries: `severity` (Error/Warning/Info), `errorCode` (e.g. `VSC003`, `VASD004`, `VAR001`), `message`, optional `assetPath`/`objectPath`, and a `fixable` flag.
 
 **Agentic usage:**
 
 ```sh
 unifocl exec "/validate packages" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/validate asmdef" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/validate asset-refs" --agentic --format json --project ./my-project --session-seed my-seed
 ```
 
-ExecV2 operations: `validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings` (all `SafeRead` — no approval required).
+ExecV2 operations (all `SafeRead` — no approval required):
+`validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings`, `validate.asmdef`, `validate.asset-refs`, `validate.addressables`
+
+Full reference: [`docs/validate-build-workflow.md`](docs/validate-build-workflow.md)
+
+### 8. Build Workflow
+
+The build workflow commands extend `/build` with pre-build validation, post-build introspection, and a unified report surface. Build reports are automatically captured after every build via a `IPostprocessBuildWithReport` hook and stored at `Library/unifocl-last-build-report.json`.
+
+```
+/build <snapshot-packages|preflight|artifact-metadata|failure-classify|report>
+```
+
+| Subcommand | Requires Daemon | Description |
+| --- | --- | --- |
+| `snapshot-packages` | No | Reads `Packages/manifest.json` and writes a timestamped snapshot to `.unifocl-runtime/snapshots/packages-{timestamp}.json`. |
+| `preflight` | Yes | Orchestrates `validate scene-list` + `validate build-settings` + `validate packages` sequentially and reports aggregated pass/fail. |
+| `artifact-metadata` | Yes | Returns the file list, roles, sizes, output path, build target, and duration from the last captured build report. |
+| `failure-classify` | Yes | Reads the last build report and classifies each error message into one of five categories: `CompileError`, `LinkerError`, `MissingAsset`, `ScriptError`, `Timeout`. |
+| `report` | Yes | Runs preflight, then reads artifact-metadata and failure-classify, and renders a consolidated summary. |
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/build preflight" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/build artifact-metadata" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/build report" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations (all `SafeRead` — no approval required):
+`build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report`
+
+Full reference: [`docs/validate-build-workflow.md`](docs/validate-build-workflow.md)
 
 ## Human Interface: TUI & Keybindings
 

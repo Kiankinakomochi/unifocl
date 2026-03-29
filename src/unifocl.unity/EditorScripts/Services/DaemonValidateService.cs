@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.SceneManagement;
@@ -258,6 +259,163 @@ namespace UniFocl.EditorBridge
             });
 
             return BuildResultJson("build-settings", diagnostics);
+        }
+
+        // ── validate-asset-refs ──────────────────────────────────────────
+
+        public static string ExecuteValidateAssetRefs()
+        {
+            var diagnostics = new List<ValidateDiagnosticEntry>();
+            var extensions = new[] { ".unity", ".prefab", ".asset", ".mat", ".controller" };
+            var allPaths = AssetDatabase.GetAllAssetPaths()
+                .Where(p => p.StartsWith("Assets/", StringComparison.Ordinal) && extensions.Any(e => p.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+
+            diagnostics.Add(new ValidateDiagnosticEntry
+            {
+                severity = "Info",
+                errorCode = "VAR002",
+                message = $"scanned {allPaths.Length} asset file(s)"
+            });
+
+            var brokenGuids = new Dictionary<string, string>();
+            var guidPattern = new Regex(@"guid: ([0-9a-f]{32})", RegexOptions.Compiled);
+
+            foreach (var assetPath in allPaths)
+            {
+                string text;
+                try
+                {
+                    text = File.ReadAllText(assetPath);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (Match match in guidPattern.Matches(text))
+                {
+                    var guid = match.Groups[1].Value;
+                    if (brokenGuids.ContainsKey(guid))
+                        continue;
+                    var resolved = AssetDatabase.GUIDToAssetPath(guid);
+                    if (string.IsNullOrEmpty(resolved))
+                    {
+                        brokenGuids[guid] = assetPath;
+                    }
+                }
+
+                if (diagnostics.Count(d => d.severity == "Error") >= 500)
+                    break;
+            }
+
+            foreach (var kvp in brokenGuids)
+            {
+                if (diagnostics.Count(d => d.severity == "Error") >= 500)
+                {
+                    diagnostics.Add(new ValidateDiagnosticEntry
+                    {
+                        severity = "Warning",
+                        errorCode = "VAR000",
+                        message = "too many broken refs — showing first 500"
+                    });
+                    break;
+                }
+
+                diagnostics.Add(new ValidateDiagnosticEntry
+                {
+                    severity = "Error",
+                    errorCode = "VAR001",
+                    message = $"broken guid reference: {kvp.Key}",
+                    assetPath = kvp.Value
+                });
+            }
+
+            return BuildResultJson("asset-refs", diagnostics);
+        }
+
+        // ── validate-addressables ────────────────────────────────────────
+
+        public static string ExecuteValidateAddressables()
+        {
+            var diagnostics = new List<ValidateDiagnosticEntry>();
+            var manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+
+            if (!File.Exists(manifestPath))
+            {
+                diagnostics.Add(new ValidateDiagnosticEntry
+                {
+                    severity = "Info",
+                    errorCode = "VADR000",
+                    message = "not installed — skipping"
+                });
+                return BuildResultJson("addressables", diagnostics);
+            }
+
+            var manifestText = File.ReadAllText(manifestPath);
+            if (!manifestText.Contains("\"com.unity.addressables\"", StringComparison.Ordinal))
+            {
+                diagnostics.Add(new ValidateDiagnosticEntry
+                {
+                    severity = "Info",
+                    errorCode = "VADR000",
+                    message = "not installed — skipping"
+                });
+                return BuildResultJson("addressables", diagnostics);
+            }
+
+            const string settingsPath = "Assets/AddressableAssetsData/AddressableAssetSettings.asset";
+            const string groupsDir = "Assets/AddressableAssetsData/AssetGroups";
+
+            if (!File.Exists(Path.Combine(Application.dataPath, "..", settingsPath)))
+            {
+                diagnostics.Add(new ValidateDiagnosticEntry
+                {
+                    severity = "Error",
+                    errorCode = "VADR001",
+                    message = "AddressableAssetSettings.asset not found",
+                    assetPath = settingsPath
+                });
+            }
+            else
+            {
+                var groupsDirFull = Path.Combine(Application.dataPath, "..", groupsDir);
+                if (!Directory.Exists(groupsDirFull))
+                {
+                    diagnostics.Add(new ValidateDiagnosticEntry
+                    {
+                        severity = "Warning",
+                        errorCode = "VADR002",
+                        message = "AssetGroups directory not found",
+                        assetPath = groupsDir
+                    });
+                }
+                else
+                {
+                    var assetGroupCount = Directory.GetFiles(groupsDirFull, "*.asset").Length;
+                    diagnostics.Add(new ValidateDiagnosticEntry
+                    {
+                        severity = "Info",
+                        errorCode = "VADR003",
+                        message = $"{assetGroupCount} asset group(s) found",
+                        assetPath = groupsDir
+                    });
+                }
+
+                var loaded = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(settingsPath);
+                if (loaded == null)
+                {
+                    diagnostics.Add(new ValidateDiagnosticEntry
+                    {
+                        severity = "Warning",
+                        errorCode = "VADR004",
+                        message = "AddressableAssetSettings.asset could not be loaded",
+                        assetPath = settingsPath
+                    });
+                }
+            }
+
+            return BuildResultJson("addressables", diagnostics);
         }
 
         // ── shared helpers ───────────────────────────────────────────────

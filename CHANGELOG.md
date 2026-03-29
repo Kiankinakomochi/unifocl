@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.17.0 - 2026-03-29
+
+### Added
+
+**Project Validation — deeper checks**
+
+- **`validate asmdef`**: parses every `.asmdef` file under `Assets/`, builds a dependency graph, and checks for three classes of problem: duplicate assembly names (VASD002), undefined references (VASD003), and circular dependencies via DFS (VASD004). No daemon required — runs against files on disk.
+- **`validate asset-refs`**: scans `.unity`, `.prefab`, `.asset`, `.mat`, and `.controller` files for GUID-based cross-asset references and resolves each via `AssetDatabase`. Any GUID that does not map to a known asset path is reported as a broken reference (VAR001). Output is capped at 500 findings per run.
+- **`validate addressables`**: checks whether the Addressables package is installed in `Packages/manifest.json`, then validates the presence of the settings asset, groups directory, and settings load. Exits cleanly with an informational message when Addressables is not in use (VADR000).
+
+**Build Workflow**
+
+- **`build snapshot-packages`**: reads `Packages/manifest.json` and writes a timestamped snapshot to `.unifocl-runtime/snapshots/packages-{yyyyMMdd-HHmmss}.json`. Useful as a pre-build baseline for rollback or audit. No daemon required.
+- **`build preflight`**: orchestrates `validate scene-list` + `validate build-settings` + `validate packages` in sequence and reports a single aggregated pass/fail with total error and warning counts. Designed to run immediately before a build.
+- **`build artifact-metadata`**: reads the captured build report (`Library/unifocl-last-build-report.json`) and returns artifact file paths, roles, sizes, output path, build target, and duration.
+- **`build failure-classify`**: reads the captured build report and classifies each error message into one of five named categories — `CompileError` (Roslyn `CS\d{4}`), `LinkerError`, `MissingAsset`, `ScriptError`, or `Timeout`. Unclassified messages are omitted.
+- **`build report`**: consolidated report that runs preflight and then reads artifact-metadata and failure-classify, rendering a summary table in one command.
+
+**Infrastructure**
+
+- **`DaemonBuildReportService`** + **`BuildReportCapture`**: a `IPostprocessBuildWithReport` hook fires automatically after every Unity build and persists the `BuildReport` to `Library/unifocl-last-build-report.json`. This file is the data source for all three post-build commands.
+- **ExecV2**: eight new `SafeRead` operations registered — `validate.asmdef`, `validate.asset-refs`, `validate.addressables`, `build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report`. No approval gating required for any of them.
+
+### Docs
+
+- **README** updated with new `/validate` and `/build` subcommand tables and expanded Sections 7–8.
+- **`docs/validate-build-workflow.md`** (new): full reference for all validate and build workflow commands, including diagnostic code tables, output schemas, and ExecV2 operation index.
+
 ## 2.16.0 - 2026-03-29
 
 ### Added

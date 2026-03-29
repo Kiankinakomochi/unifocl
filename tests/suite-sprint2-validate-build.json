@@ -1,0 +1,120 @@
+{
+  "suite": "sprint2-validate-build",
+  "runner": "dotnet run --no-build --project {suite_dir}/../src/unifocl/unifocl.csproj --",
+  "project": "{suite_dir}/../../../../.local/validate-smoke",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "validate-asmdef-smoke",
+      "description": "validate asmdef runs CLI-side against validate-smoke (has Assets/ with no .asmdef files → PASS)",
+      "steps": [
+        {
+          "cmd": "/validate asmdef",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "asmdef" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-asset-refs-needs-daemon",
+      "description": "asset-refs without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/validate asset-refs",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "validate-addressables-needs-daemon",
+      "description": "addressables without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/validate addressables",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-snapshot-packages-smoke",
+      "description": "build snapshot-packages writes a snapshot and reports package count",
+      "steps": [
+        {
+          "cmd": "/build snapshot-packages",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "snapshot written" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-preflight-smoke",
+      "description": "build preflight runs and reports Preflight result (daemon down → partial pass)",
+      "steps": [
+        {
+          "cmd": "/build preflight",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "Preflight" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-artifact-metadata-no-daemon",
+      "description": "build artifact-metadata without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/build artifact-metadata",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-failure-classify-no-daemon",
+      "description": "build failure-classify without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/build failure-classify",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-report-smoke",
+      "description": "build report runs and outputs Build Report header",
+      "steps": [
+        {
+          "cmd": "/build report",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs": { "$contains": "Build Report" }
+          }
+        }
+      ]
+    }
+  ]
+}
