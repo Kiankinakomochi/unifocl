@@ -32,8 +32,18 @@ internal sealed class ValidateCommandService
         var subcommand = tokens[1].ToLowerInvariant();
         var validators = subcommand == "all" ? AllValidators : new[] { subcommand };
 
+        var isAll = subcommand == "all";
+        var first = true;
         foreach (var validator in validators)
         {
+            if (isAll && !first)
+            {
+                var sep = "─── " + new string('─', 40);
+                log($"[{CliTheme.TextMuted}]{sep}[/]");
+            }
+
+            first = false;
+
             switch (validator)
             {
                 case "scene-list":
@@ -152,21 +162,39 @@ internal sealed class ValidateCommandService
 
     private static void RenderResult(ValidateResult result, Action<string> log)
     {
-        var statusColor = result.Passed ? "green" : "red";
-        var statusText = result.Passed ? "PASS" : "FAIL";
-        log($"[{statusColor}]{statusText}[/] [white]{Markup.Escape(result.Validator)}[/] — {result.ErrorCount} error(s), {result.WarningCount} warning(s)");
+        var statusColor = result.Passed ? CliTheme.Success : CliTheme.Error;
+        var statusIcon = result.Passed ? "✓" : "✗";
+        log($"[bold {statusColor}]{statusIcon}[/] [{CliTheme.TextPrimary}]{Markup.Escape(result.Validator)}[/]  " +
+            $"[{CliTheme.Error}]{result.ErrorCount} error(s)[/]  " +
+            $"[{CliTheme.Warning}]{result.WarningCount} warning(s)[/]");
 
-        foreach (var diag in result.Diagnostics)
-        {
-            var sevColor = diag.Severity switch
+        if (result.Diagnostics.Count == 0)
+            return;
+
+        // Errors first, then warnings, then info
+        var grouped = result.Diagnostics
+            .OrderBy(d => d.Severity switch
             {
-                ValidateSeverity.Error => "red",
-                ValidateSeverity.Warning => "yellow",
-                _ => "grey"
+                ValidateSeverity.Error => 0,
+                ValidateSeverity.Warning => 1,
+                _ => 2
+            })
+            .ToList();
+
+        foreach (var diag in grouped)
+        {
+            var (sevColor, sevIcon) = diag.Severity switch
+            {
+                ValidateSeverity.Error => (CliTheme.Error, "✗"),
+                ValidateSeverity.Warning => (CliTheme.Warning, "⚠"),
+                _ => (CliTheme.Info, "i")
             };
-            var location = diag.AssetPath ?? diag.ObjectPath ?? "";
-            var fixHint = diag.Fixable ? " [grey](fixable)[/]" : "";
-            log($"  [{sevColor}]{diag.Severity}[/] [{sevColor}]{Markup.Escape(diag.ErrorCode)}[/]: {Markup.Escape(diag.Message)}{(string.IsNullOrEmpty(location) ? "" : $" [grey]@ {Markup.Escape(location)}[/]")}{fixHint}");
+            var location = diag.AssetPath ?? diag.ObjectPath ?? string.Empty;
+            var locationPart = string.IsNullOrEmpty(location)
+                ? string.Empty
+                : $" [{CliTheme.TextMuted}]@ {Markup.Escape(location)}[/]";
+            var fixPart = diag.Fixable ? $" [{CliTheme.TextMuted}](fixable)[/]" : string.Empty;
+            log($"  [{sevColor}]{sevIcon}[/] [{CliTheme.TextMuted}]{Markup.Escape(diag.ErrorCode)}[/] {Markup.Escape(diag.Message)}{locationPart}{fixPart}");
         }
     }
 

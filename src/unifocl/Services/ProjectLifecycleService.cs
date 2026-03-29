@@ -248,6 +248,7 @@ internal sealed partial class ProjectLifecycleService
                     new SelectionPrompt<UnityEditorPathService.UnityEditorInstallation>()
                         .Title("Choose Unity editor version")
                         .PageSize(ResolvePromptPageSize(availableEditors.Count, 12))
+                        .HighlightStyle(CliTheme.SelectionHighlightStyle)
                         .UseConverter(editor => $"{editor.Version} ({editor.EditorPath})")
                         .AddChoices(availableEditors)));
         }
