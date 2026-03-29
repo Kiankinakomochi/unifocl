@@ -16,7 +16,7 @@ namespace UniFocl.EditorBridge
 
         public static void CaptureReport(BuildReport report)
         {
-            var files = report.files?.Select(f => new StoredBuildFile
+            var files = report.GetFiles()?.Select(f => new StoredBuildFile
             {
                 path = f.path,
                 role = f.role,

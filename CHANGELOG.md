@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.20.1 - 2026-03-29
+
+### Fixes
+- **`EditorDependencyInitializerService`**: register all 12 Unity editor payload files that were embedded in the CLI binary but never extracted during `/init`. The missing files were: all 6 `DaemonProjectService.*` partial class files (`AssetCreation`, `Build`, `DryRun`, `Prefab`, `Transaction`, `TypeQuery`), plus `DaemonBuildReportService`, `DaemonDiagService`, `DaemonImportTimingStore`, `DaemonValidateService`, and `DaemonDryRunAssetModificationProcessor`. The most visible symptom was `CS0246: The type or namespace name 'BuildRuntimeState' could not be found` on every fresh `/init` because `DaemonProjectService.Build.cs` (which defines `BuildRuntimeState`) was never written to the project package directory.
+- **`DaemonImportTimingStore`**: remove unused `using System.Diagnostics` (caused `Debug` ambiguity with `UnityEngine.Debug`); qualify nested `ImportBatchEntry` as `DaemonImportTimingStore.ImportBatchEntry` when referenced from the sibling `UnifoclImportTimingCapture` class.
+- **`DaemonBuildReportService`**: replace deprecated `BuildReport.files` with `BuildReport.GetFiles()`.
+
+### Protocol
+- Bumped to `v15` — corrected bridge payload now deploys all partial service files; re-run `/init` to pick up the fix.
+
+### Officialized
+- Officialized `2.20.1` by closing the development cycle suffix.
+
 ## 2.20.0 - 2026-03-29
 
 ### Added
