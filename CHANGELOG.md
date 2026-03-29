@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.21.1 - 2026-03-29
+
+### Fixes
+- **`/open` project lock bypass for already-running editor**: `/open` previously acquired an exclusive `open.lock` before attaching to a user's running Unity editor in Bridge mode, causing `E_PROJECT_LOCKED` errors even with no competing process. The lock guards concurrent Unity launches only; it is unnecessary when the daemon is already responsive. A lightweight `/ping` probe (2-second timeout) now runs before the lock; if the daemon responds, `/open` skips the lock and attaches directly.
+
+### Officialized
+- Officialized `2.21.1` by closing the development cycle suffix.
+
 ## 2.21.0 - 2026-03-29
 
 ### Added
