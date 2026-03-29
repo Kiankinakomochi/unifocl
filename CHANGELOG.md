@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.15.0 - 2026-03-29
+
+### Added
+- **`validate asmdef`** (CLI-side): validates `.asmdef` files under `Assets/` for duplicate names (VASD002), undefined assembly references (VASD003), and circular dependencies via DFS (VASD004).
+- **`validate asset-refs`** (daemon-side): scans `.unity`, `.prefab`, `.asset`, `.mat`, `.controller` files for broken GUID references (VAR001), caps at 500 diagnostics.
+- **`validate addressables`** (daemon-side): checks Addressables installation, settings file, asset groups directory, and settings load (VADR000–VADR004).
+- **`build snapshot-packages`** (CLI-side): snapshots `Packages/manifest.json` to `.unifocl-runtime/snapshots/packages-{timestamp}.json`.
+- **`build preflight`** (CLI orchestration): runs scene-list + build-settings + packages validators sequentially and reports aggregated pass/fail.
+- **`build artifact-metadata`** (daemon-side): reads `Library/unifocl-last-build-report.json` captured by `BuildReportCapture` post-process hook and returns artifact metadata.
+- **`build failure-classify`** (daemon-side): classifies build failures from last report into CompileError, LinkerError, MissingAsset, Timeout, ScriptError categories.
+- **`build report`** (CLI orchestration): runs preflight + artifact-metadata + failure-classify and renders a consolidated summary table.
+- **`DaemonBuildReportService`** (Unity Editor-side): captures `BuildReport` via `IPostprocessBuildWithReport`, stores JSON to `Library/unifocl-last-build-report.json`, and serves artifact-metadata/failure-classify dispatch.
+- **`BuildModels.cs`**: `BuildSnapshotResult` and `BuildPreflightResult` records.
+- **ExecV2 operations**: `validate.asmdef`, `validate.asset-refs`, `validate.addressables`, `build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report` registered in `ExecCommandRegistry`.
+
 ## 2.14.0 - 2026-03-29
 
 ### Added

@@ -31,6 +31,15 @@ internal sealed class ExecCommandRegistry
         ["validate.missing-scripts"] = ExecRiskLevel.SafeRead,
         ["validate.packages"]        = ExecRiskLevel.SafeRead,
         ["validate.build-settings"]  = ExecRiskLevel.SafeRead,
+        ["validate.asmdef"]          = ExecRiskLevel.SafeRead,
+        ["validate.asset-refs"]      = ExecRiskLevel.SafeRead,
+        ["validate.addressables"]    = ExecRiskLevel.SafeRead,
+        // build workflow operations
+        ["build.snapshot-packages"]  = ExecRiskLevel.SafeWrite,
+        ["build.preflight"]          = ExecRiskLevel.SafeRead,
+        ["build.artifact-metadata"]  = ExecRiskLevel.SafeRead,
+        ["build.failure-classify"]   = ExecRiskLevel.SafeRead,
+        ["build.report"]             = ExecRiskLevel.SafeRead,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         // meta
@@ -311,6 +320,54 @@ internal sealed class ExecCommandRegistry
             case "validate.build-settings":
             {
                 dto = new ProjectCommandRequestDto("validate-build-settings", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "validate.asmdef":
+            {
+                dto = new ProjectCommandRequestDto("validate-asmdef", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "validate.asset-refs":
+            {
+                dto = new ProjectCommandRequestDto("validate-asset-refs", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "validate.addressables":
+            {
+                dto = new ProjectCommandRequestDto("validate-addressables", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "build.snapshot-packages":
+            {
+                dto = new ProjectCommandRequestDto("build-snapshot-packages", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "build.preflight":
+            {
+                dto = new ProjectCommandRequestDto("build-preflight", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "build.artifact-metadata":
+            {
+                dto = new ProjectCommandRequestDto("build-artifact-metadata", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "build.failure-classify":
+            {
+                dto = new ProjectCommandRequestDto("build-failure-classify", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "build.report":
+            {
+                dto = new ProjectCommandRequestDto("build-report", null, null, null, req.RequestId);
                 return true;
             }
 
