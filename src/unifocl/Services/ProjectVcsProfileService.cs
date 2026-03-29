@@ -24,7 +24,12 @@ internal static class ProjectVcsProfileService
         }
 
         var head = tokens[0].ToLowerInvariant();
-        return head is "mk" or "make" or "rename" or "rm" or "remove";
+        if (head is "mk" or "make" or "rename" or "rm" or "remove")
+        {
+            return true;
+        }
+
+        return ProjectViewService.IsAddressableMutationCommand(tokens);
     }
 
     public static VcsMutationGuardResult EnsureInteractiveMutationReady(string projectPath, CliSessionState session)
