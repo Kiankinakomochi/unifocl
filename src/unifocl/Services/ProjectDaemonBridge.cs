@@ -79,6 +79,10 @@ internal sealed class ProjectDaemonBridge
             "prefab-revert" => RequireBridgeMode("prefab-revert"),
             "prefab-unpack" => RequireBridgeMode("prefab-unpack"),
             "prefab-variant" => RequireBridgeMode("prefab-variant"),
+            "validate-scene-list" => RequireBridgeMode("validate-scene-list"),
+            "validate-missing-scripts" => RequireBridgeMode("validate-missing-scripts"),
+            "validate-build-settings" => RequireBridgeMode("validate-build-settings"),
+            "validate-packages" => HandleValidatePackages(),
             _ => new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} unsupported action: {request.Action}", null, null)
         };
         response = JsonSerializer.Serialize(result, _jsonOptions);
@@ -400,6 +404,94 @@ internal sealed class ProjectDaemonBridge
             "build cancel acknowledged (stubbed host mode had no active build worker)",
             "build",
             null);
+    }
+
+    private ProjectCommandResponseDto HandleValidatePackages()
+    {
+        var diagnostics = new List<ValidateDiagnostic>();
+        var manifestPath = Path.Combine(_projectPath, "Packages", "manifest.json");
+        var lockPath = Path.Combine(_projectPath, "Packages", "packages-lock.json");
+
+        if (!File.Exists(manifestPath))
+        {
+            diagnostics.Add(new ValidateDiagnostic(
+                ValidateSeverity.Error, "VPK001", "Packages/manifest.json not found",
+                AssetPath: "Packages/manifest.json"));
+        }
+        else
+        {
+            try
+            {
+                using var manifestDoc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                var deps = manifestDoc.RootElement.TryGetProperty("dependencies", out var depsEl)
+                    ? depsEl : (JsonElement?)null;
+
+                if (deps is null || deps.Value.ValueKind != JsonValueKind.Object)
+                {
+                    diagnostics.Add(new ValidateDiagnostic(
+                        ValidateSeverity.Warning, "VPK002", "manifest.json has no dependencies block",
+                        AssetPath: "Packages/manifest.json"));
+                }
+                else if (File.Exists(lockPath))
+                {
+                    using var lockDoc = JsonDocument.Parse(File.ReadAllText(lockPath));
+                    var locked = lockDoc.RootElement.TryGetProperty("dependencies", out var lockDeps)
+                        ? lockDeps : (JsonElement?)null;
+
+                    if (locked is not null && locked.Value.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var dep in deps.Value.EnumerateObject())
+                        {
+                            if (!locked.Value.TryGetProperty(dep.Name, out var lockEntry))
+                            {
+                                diagnostics.Add(new ValidateDiagnostic(
+                                    ValidateSeverity.Warning, "VPK003",
+                                    $"package '{dep.Name}' in manifest.json but missing from packages-lock.json",
+                                    AssetPath: "Packages/manifest.json", Fixable: true));
+                                continue;
+                            }
+
+                            var requestedVersion = dep.Value.GetString() ?? "";
+                            if (lockEntry.TryGetProperty("version", out var lockedVersion))
+                            {
+                                var lockedStr = lockedVersion.GetString() ?? "";
+                                // Warn when manifest requests a specific version that differs from resolved
+                                if (!string.IsNullOrEmpty(requestedVersion)
+                                    && !requestedVersion.StartsWith("file:", StringComparison.Ordinal)
+                                    && !requestedVersion.StartsWith("git", StringComparison.OrdinalIgnoreCase)
+                                    && !requestedVersion.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                                    && requestedVersion != lockedStr
+                                    && !lockedStr.StartsWith(requestedVersion, StringComparison.Ordinal))
+                                {
+                                    diagnostics.Add(new ValidateDiagnostic(
+                                        ValidateSeverity.Info, "VPK004",
+                                        $"package '{dep.Name}': manifest requests '{requestedVersion}', lock resolved '{lockedStr}'",
+                                        AssetPath: "Packages/manifest.json"));
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    diagnostics.Add(new ValidateDiagnostic(
+                        ValidateSeverity.Warning, "VPK005", "packages-lock.json not found — run Unity to regenerate",
+                        AssetPath: "Packages/packages-lock.json", Fixable: true));
+                }
+            }
+            catch (JsonException ex)
+            {
+                diagnostics.Add(new ValidateDiagnostic(
+                    ValidateSeverity.Error, "VPK006", $"failed to parse package files: {ex.Message}",
+                    AssetPath: "Packages/manifest.json"));
+            }
+        }
+
+        var errorCount = diagnostics.Count(d => d.Severity == ValidateSeverity.Error);
+        var warningCount = diagnostics.Count(d => d.Severity == ValidateSeverity.Warning);
+        var result = new ValidateResult("packages", errorCount == 0, errorCount, warningCount, diagnostics);
+        var json = JsonSerializer.Serialize(result, _jsonOptions);
+        return new ProjectCommandResponseDto(true, errorCount == 0 ? "packages valid" : $"packages: {errorCount} error(s), {warningCount} warning(s)", "validate", json);
     }
 
     private ProjectCommandResponseDto RequireBridgeMode(string action)
