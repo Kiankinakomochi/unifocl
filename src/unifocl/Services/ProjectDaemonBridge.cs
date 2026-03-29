@@ -62,6 +62,7 @@ internal sealed class ProjectDaemonBridge
             "mk-script" => HandleCreateScript(request),
             "mk-asset" => HandleCreateAsset(request),
             "rename-asset" => HandleRenameAsset(request),
+            "duplicate-asset" => HandleDuplicateAsset(request),
             "remove-asset" => HandleRemoveAsset(request),
             "load-asset" => HandleLoadAsset(request),
             "upm-list" => HandleUpmList(request),
@@ -75,6 +76,14 @@ internal sealed class ProjectDaemonBridge
             "addressables-cli" => RequireBridgeMode("addressables-cli"),
             "build-targets" => HandleBuildTargetsStub(),
             "build-cancel" => HandleBuildCancelStub(),
+            "hierarchy-find" => RequireBridgeMode("hierarchy-find"),
+            "settings-inspect" => RequireBridgeMode("settings-inspect"),
+            "console-clear" => RequireBridgeMode("console-clear"),
+            "scene-load" => RequireBridgeMode("scene-load"),
+            "scene-add" => RequireBridgeMode("scene-add"),
+            "scene-unload" => RequireBridgeMode("scene-unload"),
+            "scene-remove" => RequireBridgeMode("scene-remove"),
+            "hierarchy-duplicate" => RequireBridgeMode("hierarchy-duplicate"),
             "prefab-create" => RequireBridgeMode("prefab-create"),
             "prefab-apply" => RequireBridgeMode("prefab-apply"),
             "prefab-revert" => RequireBridgeMode("prefab-revert"),
@@ -269,6 +278,68 @@ internal sealed class ProjectDaemonBridge
         catch (Exception ex)
         {
             return new ProjectCommandResponseDto(false, $"failed to remove asset: {ex.Message}", null, null);
+        }
+    }
+
+    private ProjectCommandResponseDto HandleDuplicateAsset(ProjectCommandRequestDto request)
+    {
+        if (!IsValidAssetPath(request.AssetPath) || !IsValidAssetPath(request.NewAssetPath))
+        {
+            return new ProjectCommandResponseDto(false, $"{StubbedBridgePrefix} duplicate-asset requires assetPath and newAssetPath", null, null);
+        }
+
+        var sourcePath = ResolveAssetPath(request.AssetPath!);
+        var targetPath = ResolveAssetPath(request.NewAssetPath!);
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+        {
+            return new ProjectCommandResponseDto(false, $"asset not found: {request.AssetPath}", null, null);
+        }
+
+        if (File.Exists(targetPath) || Directory.Exists(targetPath))
+        {
+            return new ProjectCommandResponseDto(false, $"target already exists: {request.NewAssetPath}", null, null);
+        }
+
+        try
+        {
+            if (Directory.Exists(sourcePath))
+            {
+                CopyDirectoryRecursive(sourcePath, targetPath);
+            }
+            else
+            {
+                var targetDirectory = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrWhiteSpace(targetDirectory))
+                {
+                    Directory.CreateDirectory(targetDirectory);
+                }
+
+                File.Copy(sourcePath, targetPath);
+            }
+
+            CopyMetaIfPresent(sourcePath, targetPath);
+            return new ProjectCommandResponseDto(true, "asset duplicated (stubbed bridge fallback)", null, null);
+        }
+        catch (Exception ex)
+        {
+            return new ProjectCommandResponseDto(false, $"failed to duplicate asset: {ex.Message}", null, null);
+        }
+    }
+
+    private static void CopyDirectoryRecursive(string sourcePath, string destinationPath)
+    {
+        Directory.CreateDirectory(destinationPath);
+        foreach (var file in Directory.GetFiles(sourcePath))
+        {
+            var fileName = Path.GetFileName(file);
+            var targetFile = Path.Combine(destinationPath, fileName);
+            File.Copy(file, targetFile);
+        }
+
+        foreach (var directory in Directory.GetDirectories(sourcePath))
+        {
+            var name = Path.GetFileName(directory);
+            CopyDirectoryRecursive(directory, Path.Combine(destinationPath, name));
         }
     }
 
@@ -727,6 +798,24 @@ internal sealed class ProjectDaemonBridge
     private string ResolveAssetPath(string assetPath)
     {
         return Path.GetFullPath(Path.Combine(_projectPath, assetPath.Replace('/', Path.DirectorySeparatorChar)));
+    }
+
+    private static void CopyMetaIfPresent(string sourcePath, string targetPath)
+    {
+        var sourceMeta = sourcePath + ".meta";
+        var targetMeta = targetPath + ".meta";
+        if (!File.Exists(sourceMeta))
+        {
+            return;
+        }
+
+        var targetDirectory = Path.GetDirectoryName(targetMeta);
+        if (!string.IsNullOrWhiteSpace(targetDirectory))
+        {
+            Directory.CreateDirectory(targetDirectory);
+        }
+
+        File.Copy(sourceMeta, targetMeta, overwrite: true);
     }
 
     private static void MoveMetaIfPresent(string sourcePath, string targetPath)

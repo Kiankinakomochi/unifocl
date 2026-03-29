@@ -516,6 +516,96 @@ internal sealed partial class ProjectViewService
         }
     }
 
+    private async Task<bool> HandleDuplicateAssetViaBridgeAsync(
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        List<string> outputs)
+    {
+        if (tokens.Count < 3)
+        {
+            outputs.Add("[x] usage: asset duplicate <idx|name> [new-path]");
+            return true;
+        }
+
+        var state = session.ProjectView;
+        var selector = tokens[2];
+        var target = ProjectViewServiceUtils.FindEntryBySelector(state, selector);
+        if (target is null)
+        {
+            outputs.Add($"[x] no entry matches: {selector}");
+            return true;
+        }
+
+        var sourceRelativePath = target.RelativePath.Replace('\\', '/');
+        var destinationRelative = tokens.Count >= 4
+            ? tokens[3].Replace('\\', '/')
+            : BuildDefaultDuplicatePath(sourceRelativePath, state.AssetPathByInstanceId.Values);
+
+        state.DbState = ProjectDbState.LockedImporting;
+        try
+        {
+            var response = await ExecuteProjectCommandAsync(
+                session,
+                BuildVcsAwareProjectRequest(
+                    session,
+                    new ProjectCommandRequestDto("duplicate-asset", sourceRelativePath, destinationRelative, null),
+                    sourceRelativePath,
+                    sourceRelativePath + ".meta",
+                    destinationRelative,
+                    destinationRelative + ".meta"));
+
+            if (!response.Ok)
+            {
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("duplicate", response.Message));
+                return true;
+            }
+
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
+                return true;
+            }
+
+            outputs.Add($"[+] duplicated: {sourceRelativePath} -> {destinationRelative}");
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                ProjectViewTreeUtils.RefreshTree(session.CurrentProjectPath, state);
+            }
+
+            await SyncAssetIndexAsync(session);
+            return true;
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
+    }
+
+    private static string BuildDefaultDuplicatePath(string sourceRelativePath, IEnumerable<string> knownPaths)
+    {
+        var normalizedSource = sourceRelativePath.Replace('\\', '/');
+        var extension = Path.GetExtension(normalizedSource);
+        var fileName = Path.GetFileNameWithoutExtension(normalizedSource);
+        var directory = Path.GetDirectoryName(normalizedSource)?.Replace('\\', '/');
+        var prefix = string.IsNullOrWhiteSpace(directory) ? string.Empty : directory + "/";
+
+        var known = new HashSet<string>(
+            knownPaths
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => path.Replace('\\', '/')),
+            StringComparer.OrdinalIgnoreCase);
+
+        var candidate = $"{prefix}{fileName}-copy{extension}";
+        var suffix = 2;
+        while (known.Contains(candidate))
+        {
+            candidate = $"{prefix}{fileName}-copy-{suffix}{extension}";
+            suffix++;
+        }
+
+        return candidate;
+    }
+
     private async Task<string?> ResolveAssetFallbackPathAsync(CliSessionState session, string targetRelativePath, bool allowDirectoryFallback)
     {
         var targetPath = targetRelativePath.Replace('\\', '/');

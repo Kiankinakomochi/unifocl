@@ -340,6 +340,12 @@ namespace UniFocl.EditorBridge
                 return ExecuteMove(request);
             }
 
+            if (request.action.Equals("duplicate", StringComparison.OrdinalIgnoreCase)
+                || request.action.Equals("dup", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteDuplicate(request);
+            }
+
             return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"unsupported action: {request.action}" });
         }
 
@@ -370,12 +376,26 @@ namespace UniFocl.EditorBridge
                 });
             }
 
-            if (request is null || string.IsNullOrWhiteSpace(request.query))
+            if (request is null)
             {
                 return JsonUtility.ToJson(new HierarchySearchResponse
                 {
                     ok = false,
-                    message = "search query is required",
+                    message = "search payload is required",
+                    results = Array.Empty<HierarchySearchResult>()
+                });
+            }
+
+            var query = request.query?.Trim() ?? string.Empty;
+            var hasFilter = !string.IsNullOrWhiteSpace(request.tag)
+                            || !string.IsNullOrWhiteSpace(request.layer)
+                            || !string.IsNullOrWhiteSpace(request.component);
+            if (query.Length == 0 && !hasFilter)
+            {
+                return JsonUtility.ToJson(new HierarchySearchResponse
+                {
+                    ok = false,
+                    message = "search query or at least one filter (tag/layer/component) is required",
                     results = Array.Empty<HierarchySearchResult>()
                 });
             }
@@ -388,7 +408,7 @@ namespace UniFocl.EditorBridge
                     ? FindNode(snapshot.root, request.parentId) ?? snapshot.root
                     : snapshot.root;
                 var originPath = BuildPath(snapshot.root, origin.id);
-                CollectMatches(origin, originPath, request.query, matches);
+                CollectMatches(origin, originPath, query, request, matches);
             }
 
             var limit = Mathf.Clamp(request.limit <= 0 ? 20 : request.limit, 1, 50);
@@ -1041,6 +1061,81 @@ namespace UniFocl.EditorBridge
             });
         }
 
+        private static string ExecuteDuplicate(HierarchyCommandRequest request)
+        {
+            if (request.targetId == 0)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "duplicate requires target id" });
+            }
+
+            var source = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            if (source is null)
+            {
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
+            }
+
+            Transform? destinationParent = source.transform.parent;
+            Scene destinationScene = source.scene;
+            if (request.parentId != 0)
+            {
+                var parent = EditorUtility.InstanceIDToObject(request.parentId) as GameObject;
+                if (parent is null)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {request.parentId}" });
+                }
+
+                destinationParent = parent.transform;
+                destinationScene = parent.scene;
+            }
+
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl hierarchy duplicate");
+
+            try
+            {
+                var clone = UnityEngine.Object.Instantiate(source);
+                Undo.RegisterCreatedObjectUndo(clone, "unifocl duplicate hierarchy object");
+                if (!string.IsNullOrWhiteSpace(request.name))
+                {
+                    clone.name = request.name.Trim();
+                }
+
+                if (destinationParent is not null)
+                {
+                    Undo.SetTransformParent(clone.transform, destinationParent, "unifocl duplicate hierarchy object");
+                }
+                else if (destinationScene.IsValid())
+                {
+                    SceneManager.MoveGameObjectToScene(clone, destinationScene);
+                }
+
+                if (request.parentId == 0
+                    && source.transform.parent == destinationParent)
+                {
+                    clone.transform.SetSiblingIndex(source.transform.GetSiblingIndex() + 1);
+                }
+
+                Undo.CollapseUndoOperations(undoGroup);
+                DaemonScenePersistenceService.RecordPrefabInstanceMutation(clone);
+                DaemonScenePersistenceService.PersistMutationScenes("hierarchy mutation", source.scene, destinationScene);
+                _snapshotVersion++;
+
+                return JsonUtility.ToJson(new HierarchyCommandResponse
+                {
+                    ok = true,
+                    message = "duplicated",
+                    nodeId = clone.GetInstanceID(),
+                    isActive = clone.activeSelf,
+                    assignedName = clone.name
+                });
+            }
+            catch (Exception ex)
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"duplicate failed: {ex.Message}" });
+            }
+        }
+
         private static HierarchySnapshotResponse BuildSnapshot()
         {
             string sceneName;
@@ -1192,9 +1287,15 @@ namespace UniFocl.EditorBridge
             return null;
         }
 
-        private static void CollectMatches(HierarchyNodeDto node, string path, string query, List<HierarchySearchResult> output)
+        private static void CollectMatches(
+            HierarchyNodeDto node,
+            string path,
+            string query,
+            HierarchySearchRequest request,
+            List<HierarchySearchResult> output)
         {
-            if (TryScore(query, path, out var pathScore))
+            var passesFilter = PassesSearchFilters(node, request);
+            if (passesFilter && TryScore(query, path, out var pathScore))
             {
                 output.Add(new HierarchySearchResult
                 {
@@ -1204,7 +1305,7 @@ namespace UniFocl.EditorBridge
                     score = pathScore
                 });
             }
-            else if (TryScore(query, node.name, out var nameScore))
+            else if (passesFilter && TryScore(query, node.name, out var nameScore))
             {
                 output.Add(new HierarchySearchResult
                 {
@@ -1214,12 +1315,88 @@ namespace UniFocl.EditorBridge
                     score = nameScore
                 });
             }
+            else if (passesFilter && string.IsNullOrWhiteSpace(query))
+            {
+                output.Add(new HierarchySearchResult
+                {
+                    nodeId = node.id,
+                    path = path,
+                    active = node.active,
+                    score = 1
+                });
+            }
 
             foreach (var child in node.children)
             {
                 var childPath = path.EndsWith("/", StringComparison.Ordinal) ? path + child.name : path + "/" + child.name;
-                CollectMatches(child, childPath, query, output);
+                CollectMatches(child, childPath, query, request, output);
             }
+        }
+
+        private static bool PassesSearchFilters(HierarchyNodeDto node, HierarchySearchRequest request)
+        {
+            var hasTagFilter = !string.IsNullOrWhiteSpace(request.tag);
+            var hasLayerFilter = !string.IsNullOrWhiteSpace(request.layer);
+            var hasComponentFilter = !string.IsNullOrWhiteSpace(request.component);
+            if (!hasTagFilter && !hasLayerFilter && !hasComponentFilter)
+            {
+                return true;
+            }
+
+            if (node.id == SceneRootNodeId)
+            {
+                return false;
+            }
+
+            var go = EditorUtility.InstanceIDToObject(node.id) as GameObject;
+            if (go is null)
+            {
+                return false;
+            }
+
+            if (hasTagFilter)
+            {
+                var requestedTag = request.tag.Trim();
+                if (!string.Equals(go.tag, requestedTag, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            if (hasLayerFilter)
+            {
+                var requestedLayer = request.layer.Trim();
+                if (int.TryParse(requestedLayer, out var layerIndex))
+                {
+                    if (go.layer != layerIndex)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    var layerName = LayerMask.LayerToName(go.layer);
+                    if (!string.Equals(layerName, requestedLayer, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (hasComponentFilter)
+            {
+                if (!TryResolveComponentType(request.component, out var componentType))
+                {
+                    return false;
+                }
+
+                if (go.GetComponent(componentType) is null)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool TryScore(string query, string candidate, out double score)
