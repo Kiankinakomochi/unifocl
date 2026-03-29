@@ -3,12 +3,14 @@ using System.Text.Json;
 /// <summary>
 /// Routes structured ExecV2 requests through validation → approval → dispatch.
 /// Delegates actual execution to ProjectDaemonBridge (existing infrastructure).
+/// Test operations are dispatched directly as subprocesses (not via daemon).
 /// </summary>
 internal sealed class ExecOperationRouter
 {
     private readonly ExecCommandRegistry _registry;
     private readonly ExecApprovalService _approval;
     private readonly ExecSessionService _sessions;
+    private readonly TestCommandService _testService;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ExecOperationRouter(ExecCommandRegistry registry, ExecApprovalService approval, ExecSessionService sessions)
@@ -16,9 +18,11 @@ internal sealed class ExecOperationRouter
         _registry = registry;
         _approval = approval;
         _sessions = sessions;
+        _testService = new TestCommandService();
     }
 
-    public ExecV2Response Route(ExecV2Request request, ProjectDaemonBridge projectBridge)
+    public async Task<ExecV2Response> RouteAsync(ExecV2Request request, ProjectDaemonBridge projectBridge,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.RequestId))
         {
@@ -70,6 +74,12 @@ internal sealed class ExecOperationRouter
                 ApprovalToken: token,
                 Message: $"operation '{request.Operation}' requires approval (risk: {risk}). " +
                          $"Re-submit with intent.approvalToken set to authorize execution.");
+        }
+
+        // test.* operations launch Unity as a subprocess — not dispatched through the daemon bridge.
+        if (request.Operation.StartsWith("test.", StringComparison.OrdinalIgnoreCase))
+        {
+            return await DispatchTestOperationAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
         return Dispatch(request, intent.DryRun, projectBridge);
@@ -215,6 +225,66 @@ internal sealed class ExecOperationRouter
 
         var status = result?.Ok == true ? ExecV2Status.Completed : ExecV2Status.Failed;
         return new ExecV2Response(status, request.RequestId, Message: result?.Message, Result: result);
+    }
+
+    /// <summary>
+    /// Dispatches test.* operations directly as Unity subprocesses.
+    /// Requires a session with a valid projectPath.
+    /// </summary>
+    private async Task<ExecV2Response> DispatchTestOperationAsync(
+        ExecV2Request request,
+        CancellationToken cancellationToken)
+    {
+        var session = _sessions.Get(request.SessionId);
+        if (session is null || string.IsNullOrWhiteSpace(session.ProjectPath))
+        {
+            return Rejected(request.RequestId,
+                "test operations require an active session with a projectPath. " +
+                "Open a session first with operation 'session.open'.");
+        }
+
+        var projectPath = session.ProjectPath;
+
+        switch (request.Operation.ToLowerInvariant())
+        {
+            case "test.list":
+            {
+                var (ok, result, error) = await _testService.ExecListAsync(projectPath, cancellationToken)
+                    .ConfigureAwait(false);
+                return ok
+                    ? new ExecV2Response(ExecV2Status.Completed, request.RequestId, Result: result)
+                    : new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: error);
+            }
+
+            case "test.run":
+            {
+                var platformRaw = GetString(request.Args, "platform") ?? "editmode";
+                var timeoutSecs = request.Args.HasValue
+                    && request.Args.Value.TryGetProperty("timeoutSeconds", out var tsProp)
+                    && tsProp.ValueKind == JsonValueKind.Number
+                    ? tsProp.GetInt32()
+                    : 0;
+
+                var platform = platformRaw.Equals("playmode", StringComparison.OrdinalIgnoreCase)
+                    ? TestPlatform.PlayMode
+                    : TestPlatform.EditMode;
+
+                var timeout = timeoutSecs > 0
+                    ? TimeSpan.FromSeconds(timeoutSecs)
+                    : platform == TestPlatform.PlayMode
+                        ? TimeSpan.FromMinutes(30)
+                        : TimeSpan.FromMinutes(10);
+
+                var (ok, result, error) = await _testService.ExecRunAsync(
+                    projectPath, platform, timeout, cancellationToken).ConfigureAwait(false);
+                return ok
+                    ? new ExecV2Response(ExecV2Status.Completed, request.RequestId, Result: result)
+                    : new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: error);
+            }
+
+            default:
+                return Rejected(request.RequestId, $"unknown test operation: {request.Operation}");
+        }
     }
 
     private static ExecV2Response Rejected(string requestId, string message)

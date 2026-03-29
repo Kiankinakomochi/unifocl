@@ -408,6 +408,23 @@ internal static class CliCommandParsingService
         return true;
     }
 
+    /// <summary>
+    /// Returns true if the input is a bare "test ..." command (not slash-prefixed).
+    /// Used to intercept test orchestration commands before project router.
+    /// </summary>
+    public static bool IsTestCommand(string input)
+    {
+        var trimmed = input.TrimStart();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return false;
+        }
+
+        var commandEnd = trimmed.IndexOf(' ');
+        var head = commandEnd >= 0 ? trimmed[..commandEnd] : trimmed;
+        return head.Equals("test", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static List<string> TokenizeComposerInput(string input)
     {
         var tokens = new List<string>();

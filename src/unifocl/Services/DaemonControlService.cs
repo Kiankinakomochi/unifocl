@@ -516,7 +516,7 @@ internal sealed class DaemonControlService
 
                 if (v2Request is not null && !string.IsNullOrWhiteSpace(v2Request.Operation))
                 {
-                    var v2Response = execRouter.Route(v2Request, projectBridge);
+                    var v2Response = await execRouter.RouteAsync(v2Request, projectBridge, cancellationToken).ConfigureAwait(false);
                     touchActivity();
                     await ctx.WriteJsonAsync(
                         JsonSerializer.Serialize(v2Response, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
