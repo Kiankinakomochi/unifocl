@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.15.0 - 2026-03-29
+
+### Fixed
+- **`/update` Windows binary lock**: the running `.exe` can no longer be replaced in-place on Windows. The command now uses one of two fully hands-free deferred paths — the user simply quits unifocl and the update applies automatically on exit.
+  - **winget path** (preferred): probes `winget show` to retrieve the version available in winget, compares it with the latest GitHub release, and either queues a silent `winget upgrade` automatically (versions match) or presents a `SelectionPrompt` so the user can choose between the managed winget version and the newer GitHub binary.
+  - **manual path** (fallback / user choice): downloads the GitHub release asset and spawns a hidden PowerShell script that waits for the current PID to exit, then copies the new binary over the old one. The binary is replaced in the same directory, so any existing PATH entry remains valid.
+  - Non-interactive environments (`Console.IsInputRedirected`) skip the prompt and default to the manual/latest path.
+
+### Added
+- **Officialized `2.15.0`** by closing the development cycle suffix.
+
 ## 2.14.0 - 2026-03-29
 
 ### Added
