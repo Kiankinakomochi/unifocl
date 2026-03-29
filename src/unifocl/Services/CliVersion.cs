@@ -1,9 +1,9 @@
 internal static class CliVersion
 {
     public const int Major = 2;
-    public const int Minor = 14;
+    public const int Minor = 15;
     public const int Patch = 0;
-    public const string DevCycle = "";
+    public const string DevCycle = "a2";
     public const string Protocol = "v12";
 
     public static string SemVer => string.IsNullOrWhiteSpace(DevCycle)
