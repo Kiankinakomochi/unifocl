@@ -1,10 +1,14 @@
 # Changelog
 
+## 2.14.0 - 2026-03-29
+
+### Added
+- Officialized `2.14.0` by closing the development cycle suffix.
+- **Partial-class refactor**: split 6 large service classes into 22 partial files — `ProjectLifecycleService` (6 partials), `DaemonProjectService` (6 partials), `InspectorModeService` (3 partials), `DaemonControlService` (3 partials), `ProjectViewService.Upm` (2 partials), `HierarchyTui` (2 partials). No behavioral changes; routing and fields remain in the main file per the `ProjectViewService` pattern.
+
 ## 2.13.0 - 2026-03-29
 
 ### Added
-- Officialized `2.13.0` by closing the development cycle suffix.
-- **Partial-class refactor**: split 6 large service classes into 22 partial files — `ProjectLifecycleService` (6 partials), `DaemonProjectService` (6 partials), `InspectorModeService` (3 partials), `DaemonControlService` (3 partials), `ProjectViewService.Upm` (2 partials), `HierarchyTui` (2 partials). No behavioral changes; routing and fields remain in the main file per the `ProjectViewService` pattern.
 - **New agent integration installer command**: added `/agent install <codex|claude>` plus direct CLI support `unifocl agent install <codex|claude>` for one-step MCP/plugin bootstrap.
 - **Codex integration package scaffold**: added `src/unifocl.codex-plugin/` with npm publish metadata, installer CLI (`unifocl-codex-plugin`), and workflow skill references.
 - **`/validate` command family**: new root command (`/validate`, `/val`) with four sub-validators for project health checks. All validators return a uniform `ValidateResult` envelope with severity-tagged diagnostics.
