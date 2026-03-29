@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.14.0 - 2026-03-29
+
+### Added
+- Officialized `2.14.0` by closing the development cycle suffix.
+- **Partial-class refactor**: split 6 large service classes into 22 partial files — `ProjectLifecycleService` (6 partials), `DaemonProjectService` (6 partials), `InspectorModeService` (3 partials), `DaemonControlService` (3 partials), `ProjectViewService.Upm` (2 partials), `HierarchyTui` (2 partials). No behavioral changes; routing and fields remain in the main file per the `ProjectViewService` pattern.
+
 ## 2.13.0 - 2026-03-29
 
 ### Added
