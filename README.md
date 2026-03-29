@@ -135,6 +135,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy&#124;project&#124;inspector> [--format json&#124;yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
+| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `all`). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -357,6 +358,30 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 - `eval.run` is classified as `PrivilegedExec` in the ExecV2 API. Like `build.run` and `build.exec`, it requires two-step approval before execution — agents cannot silently evaluate code without explicit confirmation.
 - `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
 - The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
+
+### 7. Project Validation
+
+The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
+
+```
+/validate <scene-list|missing-scripts|packages|build-settings|all>
+```
+
+| Subcommand | Requires Daemon | Description |
+| --- | --- | --- |
+| `scene-list` | Yes | Checks that all `EditorBuildSettings.scenes` paths exist on disk. Flags disabled and empty entries. |
+| `missing-scripts` | Yes | Scans loaded scenes and all prefab assets for null `MonoBehaviour` components (missing script references). |
+| `packages` | No | Compares `manifest.json` vs `packages-lock.json` — detects missing lock entries, version mismatches, and missing files. |
+| `build-settings` | Yes | Checks `PlayerSettings` sanity — bundle ID, product/company name, version format, active build target, enabled scenes, scripting backend. |
+| `all` | Mixed | Runs all validators sequentially. |
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/validate packages" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations: `validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings` (all `SafeRead` — no approval required).
 
 ## Human Interface: TUI & Keybindings
 

@@ -26,6 +26,11 @@ internal sealed class ExecCommandRegistry
         ["prefab.revert"]       = ExecRiskLevel.SafeWrite,
         ["prefab.unpack"]       = ExecRiskLevel.DestructiveWrite,
         ["prefab.variant"]      = ExecRiskLevel.SafeWrite,
+        // validate operations (read-only)
+        ["validate.scene-list"]      = ExecRiskLevel.SafeRead,
+        ["validate.missing-scripts"] = ExecRiskLevel.SafeRead,
+        ["validate.packages"]        = ExecRiskLevel.SafeRead,
+        ["validate.build-settings"]  = ExecRiskLevel.SafeRead,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         // meta
@@ -282,6 +287,30 @@ internal sealed class ExecCommandRegistry
                 var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
                 dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
 
+                return true;
+            }
+
+            case "validate.scene-list":
+            {
+                dto = new ProjectCommandRequestDto("validate-scene-list", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "validate.missing-scripts":
+            {
+                dto = new ProjectCommandRequestDto("validate-missing-scripts", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "validate.packages":
+            {
+                dto = new ProjectCommandRequestDto("validate-packages", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "validate.build-settings":
+            {
+                dto = new ProjectCommandRequestDto("validate-build-settings", null, null, null, req.RequestId);
                 return true;
             }
 

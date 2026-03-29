@@ -137,6 +137,7 @@ try
         return;
     }
 
+    var validateCommandService = new ValidateCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
@@ -161,6 +162,7 @@ try
                 projectCommandRouterService,
                 hierarchyTui,
                 buildCommandService,
+                validateCommandService,
                 appCancellation.Token).WaitAsync(appCancellation.Token);
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
@@ -503,6 +505,19 @@ try
         {
             await AwaitWithCancellationAsync(
                 () => buildCommandService.HandleBuildCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/validate", StringComparison.Ordinal) || matched.Trigger == "/val")
+        {
+            await AwaitWithCancellationAsync(
+                () => validateCommandService.HandleValidateCommandAsync(
                     input,
                     session,
                     daemonControlService,
