@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.21.3 - 2026-03-30
+
+### Fixes
+- **`agent install claude` wrong subcommand**: `mcp add @unifocl/claude-plugin` failed with "missing required argument 'commandOrUrl'" because `mcp add` requires `<name> <command> [args...]`. Fixed to use `claude mcp add unifocl -- unifocl --mcp-server`, with `--` required to prevent `--mcp-server` from being parsed as a flag for `mcp add`.
+
+### Officialized
+- Officialized `2.21.3` by closing the development cycle suffix.
+
 ## 2.21.2 - 2026-03-29
 
 ### Fixes

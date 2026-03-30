@@ -1050,7 +1050,7 @@ internal sealed partial class ProjectLifecycleService
         bool dryRun,
         Action<string> log)
     {
-        const string ClaudeInstallArgs = "mcp add @unifocl/claude-plugin";
+        const string ClaudeInstallArgs = "mcp add unifocl -- unifocl --mcp-server";
         if (dryRun)
         {
             log("[grey]agent[/]: dry-run (no changes applied)");
@@ -1073,7 +1073,7 @@ internal sealed partial class ProjectLifecycleService
         }
 
         log("[green]agent[/]: claude integration installed");
-        log("[grey]agent[/]: plugin [white]@unifocl/claude-plugin[/] was registered");
+        log("[grey]agent[/]: MCP server [white]unifocl[/] registered (unifocl --mcp-server)");
         log("[grey]agent[/]: restart Claude Code to ensure MCP/tooling refresh");
         return true;
     }
