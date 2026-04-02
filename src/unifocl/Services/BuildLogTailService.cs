@@ -63,7 +63,11 @@ internal static class BuildLogTailService
                 lines.RemoveRange(0, lines.Count - keep);
             }
 
-            AnsiConsole.Clear();
+            if (!Console.IsOutputRedirected)
+            {
+                Console.Write("\u001b[H\u001b[0J");
+            }
+
             var mode = errorsOnly ? "ERRORS ONLY" : "ALL";
             AnsiConsole.MarkupLine($"[bold deepskyblue1]{Markup.Escape(title)}[/] [grey]({Markup.Escape(mode)})[/]");
             AnsiConsole.MarkupLine($"[dim]{Markup.Escape(logPath)}[/]");
