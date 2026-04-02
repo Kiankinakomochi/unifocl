@@ -14,6 +14,9 @@ internal sealed class ExecCommandRegistry
         ["build.exec"]          = ExecRiskLevel.PrivilegedExec,
         ["build.scenes.set"]    = ExecRiskLevel.SafeWrite,
         // package management
+        ["upm.list"]            = ExecRiskLevel.SafeRead,
+        ["upm.install"]         = ExecRiskLevel.SafeWrite,
+        ["upm.update"]          = ExecRiskLevel.SafeWrite,
         ["upm.remove"]          = ExecRiskLevel.DestructiveWrite,
         // eval operations
         ["eval.run"]            = ExecRiskLevel.PrivilegedExec,
@@ -188,6 +191,58 @@ internal sealed class ExecCommandRegistry
 
                 var content = $"{{\"scenes\":{scenesRaw}}}";
                 dto = new ProjectCommandRequestDto("build-scenes-set", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "upm.list":
+            {
+                var outdated = req.Args is not null
+                    && req.Args.Value.TryGetProperty("outdated", out var outdatedProp)
+                    && outdatedProp.ValueKind == JsonValueKind.True;
+                var builtin = req.Args is not null
+                    && req.Args.Value.TryGetProperty("builtin", out var builtinProp)
+                    && builtinProp.ValueKind == JsonValueKind.True;
+                var git = req.Args is not null
+                    && req.Args.Value.TryGetProperty("git", out var gitProp)
+                    && gitProp.ValueKind == JsonValueKind.True;
+
+                var content = $"{{\"outdated\":{(outdated ? "true" : "false")},\"builtin\":{(builtin ? "true" : "false")},\"git\":{(git ? "true" : "false")}}}";
+                dto = new ProjectCommandRequestDto("upm-list", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "upm.install":
+            {
+                var target = GetString(req.Args, "target");
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    validationError = "upm.install requires args.target (registry ID, Git URL, or file: path)";
+                    return false;
+                }
+
+                var content = $"{{\"target\":\"{target}\"}}";
+                var base_ = new ProjectCommandRequestDto("upm-install", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "upm.update":
+            {
+                var id = GetString(req.Args, "id");
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    validationError = "upm.update requires args.id";
+                    return false;
+                }
+
+                var version = GetString(req.Args, "version");
+                var content = string.IsNullOrWhiteSpace(version)
+                    ? $"{{\"id\":\"{id}\"}}"
+                    : $"{{\"id\":\"{id}\",\"version\":\"{version}\"}}";
+                var base_ = new ProjectCommandRequestDto("upm-install", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
                 return true;
             }
 
