@@ -12,12 +12,24 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonRuntimeModelsResource = "Payload/EditorScripts/Models/DaemonBridgeModels.cs";
     private const string DaemonAssetIndexServiceResource = "Payload/EditorScripts/Services/DaemonAssetIndexService.cs";
     private const string DaemonDryRunServicesResource = "Payload/EditorScripts/Services/DaemonDryRunServices.cs";
+    private const string DaemonDryRunAssetModificationProcessorResource = "Payload/EditorScripts/Services/DaemonDryRunAssetModificationProcessor.cs";
     private const string DaemonHierarchyServiceResource = "Payload/EditorScripts/Services/DaemonHierarchyService.cs";
     private const string DaemonInspectorServiceResource = "Payload/EditorScripts/Services/DaemonInspectorService.cs";
     private const string DaemonMutationCommandDispatcherResource = "Payload/EditorScripts/Services/DaemonMutationCommandDispatcher.cs";
     private const string DaemonMutationCommandStoreResource = "Payload/EditorScripts/Services/DaemonMutationCommandStore.cs";
     private const string DaemonMutationTransactionCoordinatorResource = "Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs";
     private const string DaemonProjectServiceResource = "Payload/EditorScripts/Services/DaemonProjectService.cs";
+    private const string DaemonProjectServiceAssetCreationResource = "Payload/EditorScripts/Services/DaemonProjectService.AssetCreation.cs";
+    private const string DaemonProjectServiceAddressablesResource = "Payload/EditorScripts/Services/DaemonProjectService.Addressables.cs";
+    private const string DaemonProjectServiceBuildResource = "Payload/EditorScripts/Services/DaemonProjectService.Build.cs";
+    private const string DaemonProjectServiceDryRunResource = "Payload/EditorScripts/Services/DaemonProjectService.DryRun.cs";
+    private const string DaemonProjectServicePrefabResource = "Payload/EditorScripts/Services/DaemonProjectService.Prefab.cs";
+    private const string DaemonProjectServiceTransactionResource = "Payload/EditorScripts/Services/DaemonProjectService.Transaction.cs";
+    private const string DaemonProjectServiceTypeQueryResource = "Payload/EditorScripts/Services/DaemonProjectService.TypeQuery.cs";
+    private const string DaemonBuildReportServiceResource = "Payload/EditorScripts/Services/DaemonBuildReportService.cs";
+    private const string DaemonDiagServiceResource = "Payload/EditorScripts/Services/DaemonDiagService.cs";
+    private const string DaemonImportTimingStoreResource = "Payload/EditorScripts/Services/DaemonImportTimingStore.cs";
+    private const string DaemonValidateServiceResource = "Payload/EditorScripts/Services/DaemonValidateService.cs";
     private const string DaemonSceneManagerResource = "Payload/EditorScripts/Services/DaemonSceneManager.cs";
     private const string DaemonScenePersistenceServiceResource = "Payload/EditorScripts/Services/DaemonScenePersistenceService.cs";
     private const string UnifoclCommandAttributeResource = "Payload/EditorScripts/UnifoclCommandAttribute.cs";
@@ -123,12 +135,24 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Models", "DaemonBridgeModels.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonAssetIndexService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunServices.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunAssetModificationProcessor.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonHierarchyService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonMutationCommandDispatcher.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonMutationCommandStore.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonMutationTransactionCoordinator.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.AssetCreation.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Addressables.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Build.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.DryRun.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Prefab.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Transaction.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.TypeQuery.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonBuildReportService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonDiagService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonImportTimingStore.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonValidateService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonSceneManager.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonScenePersistenceService.cs"),
             Path.Combine(packagePath, "Editor", "UnifoclCommandAttribute.cs"),
@@ -238,12 +262,24 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonRuntimeModelsResource, Path.Combine("Editor", "Models", "DaemonBridgeModels.cs")),
                 (DaemonAssetIndexServiceResource, Path.Combine("Editor", "Services", "DaemonAssetIndexService.cs")),
                 (DaemonDryRunServicesResource, Path.Combine("Editor", "Services", "DaemonDryRunServices.cs")),
+                (DaemonDryRunAssetModificationProcessorResource, Path.Combine("Editor", "Services", "DaemonDryRunAssetModificationProcessor.cs")),
                 (DaemonHierarchyServiceResource, Path.Combine("Editor", "Services", "DaemonHierarchyService.cs")),
                 (DaemonInspectorServiceResource, Path.Combine("Editor", "Services", "DaemonInspectorService.cs")),
                 (DaemonMutationCommandDispatcherResource, Path.Combine("Editor", "Services", "DaemonMutationCommandDispatcher.cs")),
                 (DaemonMutationCommandStoreResource, Path.Combine("Editor", "Services", "DaemonMutationCommandStore.cs")),
                 (DaemonMutationTransactionCoordinatorResource, Path.Combine("Editor", "Services", "DaemonMutationTransactionCoordinator.cs")),
                 (DaemonProjectServiceResource, Path.Combine("Editor", "Services", "DaemonProjectService.cs")),
+                (DaemonProjectServiceAssetCreationResource, Path.Combine("Editor", "Services", "DaemonProjectService.AssetCreation.cs")),
+                (DaemonProjectServiceAddressablesResource, Path.Combine("Editor", "Services", "DaemonProjectService.Addressables.cs")),
+                (DaemonProjectServiceBuildResource, Path.Combine("Editor", "Services", "DaemonProjectService.Build.cs")),
+                (DaemonProjectServiceDryRunResource, Path.Combine("Editor", "Services", "DaemonProjectService.DryRun.cs")),
+                (DaemonProjectServicePrefabResource, Path.Combine("Editor", "Services", "DaemonProjectService.Prefab.cs")),
+                (DaemonProjectServiceTransactionResource, Path.Combine("Editor", "Services", "DaemonProjectService.Transaction.cs")),
+                (DaemonProjectServiceTypeQueryResource, Path.Combine("Editor", "Services", "DaemonProjectService.TypeQuery.cs")),
+                (DaemonBuildReportServiceResource, Path.Combine("Editor", "Services", "DaemonBuildReportService.cs")),
+                (DaemonDiagServiceResource, Path.Combine("Editor", "Services", "DaemonDiagService.cs")),
+                (DaemonImportTimingStoreResource, Path.Combine("Editor", "Services", "DaemonImportTimingStore.cs")),
+                (DaemonValidateServiceResource, Path.Combine("Editor", "Services", "DaemonValidateService.cs")),
                 (DaemonSceneManagerResource, Path.Combine("Editor", "Services", "DaemonSceneManager.cs")),
                 (DaemonScenePersistenceServiceResource, Path.Combine("Editor", "Services", "DaemonScenePersistenceService.cs")),
                 (UnifoclCommandAttributeResource,        Path.Combine("Editor", "UnifoclCommandAttribute.cs")),

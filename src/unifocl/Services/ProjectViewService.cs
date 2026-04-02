@@ -129,9 +129,55 @@ internal sealed partial class ProjectViewService
         {
             handled = await HandleFuzzyFindAsync(session, tokens, outputs);
         }
+        else if (tokens[0].Equals("asset", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tokens.Count < 2)
+            {
+                outputs.Add("[x] usage: asset <find|duplicate> <...>");
+                handled = true;
+            }
+            else if (tokens[1].Equals("find", StringComparison.OrdinalIgnoreCase))
+            {
+                var findTokens = tokens.Count >= 3
+                    ? new List<string> { "f", string.Join(' ', tokens.Skip(2)) }
+                    : new List<string> { "f" };
+                handled = await HandleFuzzyFindAsync(session, findTokens, outputs);
+            }
+            else if (tokens[1].Equals("duplicate", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!EnsureVcsSetupForMutation(session, outputs))
+                {
+                    handled = true;
+                    ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                    RenderFrame(session.ProjectView);
+                    return true;
+                }
+
+                await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+                handled = await HandleDuplicateAssetViaBridgeAsync(tokens, session, outputs);
+            }
+            else
+            {
+                outputs.Add("[x] usage: asset <find|duplicate> <...>");
+                handled = true;
+            }
+        }
         else if (tokens[0].Equals("upm", StringComparison.OrdinalIgnoreCase))
         {
             handled = await HandleUpmCommandAsync(session, tokens, outputs, daemonControlService, daemonRuntime);
+        }
+        else if (tokens[0].Equals("addressable", StringComparison.OrdinalIgnoreCase))
+        {
+            if (IsAddressableMutationCommand(tokens) && !EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+            handled = await HandleAddressableCommandAsync(session, tokens, outputs, daemonControlService, daemonRuntime);
         }
         else if (tokens[0].Equals("prefab", StringComparison.OrdinalIgnoreCase))
         {
@@ -296,7 +342,11 @@ internal sealed partial class ProjectViewService
             return;
         }
 
-        AnsiConsole.Clear();
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Write("\u001b[H\u001b[0J");
+        }
+
         var lines = _renderer.Render(state, highlightedEntryIndex, focusModeEnabled);
         foreach (var line in lines)
         {

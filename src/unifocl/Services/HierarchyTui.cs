@@ -25,11 +25,14 @@ internal sealed partial class HierarchyTui
         new("mk <type> [count] [--name <name>|-n <name>] [--parent <path|id>|-p <path|id>]", "Create typed object(s) under current object", "mk"),
         new("remove <idx>", "Remove object by visible index", "remove"),
         new("rm <idx>", "Alias for remove", "rm"),
+        new("dup <idx> [name]", "Duplicate object by visible index", "dup"),
+        new("go duplicate <idx> [name]", "Alias for dup", "go duplicate"),
         new("toggle <idx>", "Toggle active state by index", "toggle"),
         new("t <idx>", "Alias for toggle", "t"),
         new("inspect <idx|name>", "Transition selected hierarchy object to inspector mode", "inspect"),
         new("ins <idx|name>", "Alias for inspect", "ins"),
         new("f <query>", "Fuzzy search hierarchy paths", "f"),
+        new("go find <query>", "Alias for f", "go find"),
         new("ff <query>", "Alias for fuzzy search", "ff"),
         new("scroll [tree|log] <up|down> [count]", "Scroll tree or command stream", "scroll"),
         new("quit|exit|q|:q", "Exit hierarchy mode", "quit")
@@ -373,11 +376,25 @@ internal sealed partial class HierarchyTui
             "enter" => "cd",
             ".." => "up",
             "remove" => "rm",
+            "duplicate" => "dup",
             "t" => "toggle",
             "ins" => "inspect",
             "ff" => "f",
             _ => tokens[0]
         };
+
+        if (tokens[0].Equals("go", StringComparison.OrdinalIgnoreCase) && tokens.Count >= 2)
+        {
+            var sub = tokens[1].ToLowerInvariant();
+            if (sub is "find" or "f")
+            {
+                tokens = ["f", .. tokens.Skip(2)];
+            }
+            else if (sub is "duplicate" or "dup")
+            {
+                tokens = ["dup", .. tokens.Skip(2)];
+            }
+        }
 
         if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals(":i", StringComparison.OrdinalIgnoreCase))
         {
@@ -549,6 +566,37 @@ internal sealed partial class HierarchyTui
             {
                 CliDryRunDiffService.AppendUnifiedDiffToLog(commandLog, rmDiff);
             }
+            return true;
+        }
+
+        if (tokens.Count >= 2 && tokens[0].Equals("dup", StringComparison.OrdinalIgnoreCase) && int.TryParse(tokens[1], out var dupIndex))
+        {
+            if (!indexMap.TryGetValue(dupIndex, out var targetId))
+            {
+                commandLog.Add($"[!] invalid index: {dupIndex}");
+                return true;
+            }
+
+            var requestedName = tokens.Count >= 3
+                ? string.Join(' ', tokens.Skip(2))
+                : null;
+            var response = await _daemonClient.ExecuteAsync(
+                port,
+                new HierarchyCommandRequestDto("duplicate", null, targetId, requestedName, false));
+            if (!response.Ok)
+            {
+                commandLog.Add($"[!] hierarchy command failed: {FormatHierarchyCommandFailure(response.Message)}");
+                return true;
+            }
+
+            var sourceName = FindNode(snapshot.Root, targetId)?.Name ?? "Object";
+            var assignedName = string.IsNullOrWhiteSpace(response.AssignedName) ? "<unnamed>" : response.AssignedName!;
+            commandLog.Add($"[+] duplicated: {sourceName} -> {assignedName}");
+            if (CliDryRunDiffService.TryCaptureDiffFromContent(response.Content, out var dupDiff) && dupDiff is not null)
+            {
+                CliDryRunDiffService.AppendUnifiedDiffToLog(commandLog, dupDiff);
+            }
+
             return true;
         }
 
@@ -864,7 +912,10 @@ internal sealed partial class HierarchyTui
         string cwdPath,
         bool focusModeEnabled = false)
     {
-        Console.Clear();
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Write("\u001b[H\u001b[0J");
+        }
 
         var frameWidth = ResolveFrameWidth();
         var borderTop = $"┌{new string('─', frameWidth)}┐";

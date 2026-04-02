@@ -14,6 +14,9 @@ internal sealed class ExecCommandRegistry
         ["build.exec"]          = ExecRiskLevel.PrivilegedExec,
         ["build.scenes.set"]    = ExecRiskLevel.SafeWrite,
         // package management
+        ["upm.list"]            = ExecRiskLevel.SafeRead,
+        ["upm.install"]         = ExecRiskLevel.SafeWrite,
+        ["upm.update"]          = ExecRiskLevel.SafeWrite,
         ["upm.remove"]          = ExecRiskLevel.DestructiveWrite,
         // eval operations
         ["eval.run"]            = ExecRiskLevel.PrivilegedExec,
@@ -34,6 +37,10 @@ internal sealed class ExecCommandRegistry
         ["validate.asmdef"]          = ExecRiskLevel.SafeRead,
         ["validate.asset-refs"]      = ExecRiskLevel.SafeRead,
         ["validate.addressables"]    = ExecRiskLevel.SafeRead,
+        // build subcommands (sprint C)
+        ["build.addressables"]       = ExecRiskLevel.SafeWrite,
+        ["build.cancel"]             = ExecRiskLevel.SafeWrite,
+        ["build.targets"]            = ExecRiskLevel.SafeRead,
         // build workflow operations
         ["build.snapshot-packages"]  = ExecRiskLevel.SafeWrite,
         ["build.preflight"]          = ExecRiskLevel.SafeRead,
@@ -53,8 +60,33 @@ internal sealed class ExecCommandRegistry
         ["test.list"]                = ExecRiskLevel.SafeRead,
         ["test.run"]                 = ExecRiskLevel.PrivilegedExec,
         ["test.flaky-report"]        = ExecRiskLevel.SafeRead,
+        // addressable operations
+        ["addressable.init"]           = ExecRiskLevel.SafeWrite,
+        ["addressable.profile.list"]   = ExecRiskLevel.SafeRead,
+        ["addressable.profile.set"]    = ExecRiskLevel.SafeWrite,
+        ["addressable.group.list"]     = ExecRiskLevel.SafeRead,
+        ["addressable.group.create"]   = ExecRiskLevel.SafeWrite,
+        ["addressable.group.remove"]   = ExecRiskLevel.DestructiveWrite,
+        ["addressable.entry.add"]      = ExecRiskLevel.SafeWrite,
+        ["addressable.entry.remove"]   = ExecRiskLevel.DestructiveWrite,
+        ["addressable.entry.rename"]   = ExecRiskLevel.SafeWrite,
+        ["addressable.entry.label"]    = ExecRiskLevel.SafeWrite,
+        ["addressable.bulk.add"]       = ExecRiskLevel.SafeWrite,
+        ["addressable.bulk.label"]     = ExecRiskLevel.SafeWrite,
+        ["addressable.analyze"]        = ExecRiskLevel.SafeRead,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
+        ["go find"]             = ExecRiskLevel.SafeRead,
+        ["settings inspect"]    = ExecRiskLevel.SafeRead,
+        // editor utilities
+        ["console clear"]       = ExecRiskLevel.SafeWrite,
+        // scene utilities
+        ["scene load"]          = ExecRiskLevel.SafeWrite,
+        ["scene add"]           = ExecRiskLevel.SafeWrite,
+        ["scene unload"]        = ExecRiskLevel.SafeWrite,
+        ["scene remove"]        = ExecRiskLevel.SafeWrite,
+        // hierarchy utilities
+        ["go duplicate"]        = ExecRiskLevel.SafeWrite,
         // meta
         ["session.open"]        = ExecRiskLevel.SafeRead,
         ["session.close"]       = ExecRiskLevel.SafeRead,
@@ -204,6 +236,87 @@ internal sealed class ExecCommandRegistry
 
                 var content = $"{{\"scenes\":{scenesRaw}}}";
                 dto = new ProjectCommandRequestDto("build-scenes-set", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "upm.list":
+            {
+                var outdated = req.Args is not null
+                    && req.Args.Value.TryGetProperty("outdated", out var outdatedProp)
+                    && outdatedProp.ValueKind == JsonValueKind.True;
+                var builtin = req.Args is not null
+                    && req.Args.Value.TryGetProperty("builtin", out var builtinProp)
+                    && builtinProp.ValueKind == JsonValueKind.True;
+                var git = req.Args is not null
+                    && req.Args.Value.TryGetProperty("git", out var gitProp)
+                    && gitProp.ValueKind == JsonValueKind.True;
+
+                var content = $"{{\"outdated\":{(outdated ? "true" : "false")},\"builtin\":{(builtin ? "true" : "false")},\"git\":{(git ? "true" : "false")}}}";
+                dto = new ProjectCommandRequestDto("upm-list", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "upm.install":
+            {
+                var target = GetString(req.Args, "target");
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    validationError = "upm.install requires args.target (registry ID, Git URL, or file: path)";
+                    return false;
+                }
+
+                var content = $"{{\"target\":\"{target}\"}}";
+                var base_ = new ProjectCommandRequestDto("upm-install", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "upm.update":
+            {
+                var id = GetString(req.Args, "id");
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    validationError = "upm.update requires args.id";
+                    return false;
+                }
+
+                var version = GetString(req.Args, "version");
+                var content = string.IsNullOrWhiteSpace(version)
+                    ? $"{{\"id\":\"{id}\"}}"
+                    : $"{{\"id\":\"{id}\",\"version\":\"{version}\"}}";
+                var base_ = new ProjectCommandRequestDto("upm-install", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "build.addressables":
+            {
+                var clean = req.Args is not null
+                    && req.Args.Value.TryGetProperty("clean", out var cleanProp)
+                    && cleanProp.ValueKind == JsonValueKind.True;
+                var update = req.Args is not null
+                    && req.Args.Value.TryGetProperty("update", out var updateProp)
+                    && updateProp.ValueKind == JsonValueKind.True;
+                var content = $"{{\"clean\":{(clean ? "true" : "false")},\"update\":{(update ? "true" : "false")}}}";
+                var base_ = new ProjectCommandRequestDto("build-addressables", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "build.cancel":
+            {
+                var base_ = new ProjectCommandRequestDto("build-cancel", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "build.targets":
+            {
+                dto = new ProjectCommandRequestDto("build-targets", null, null, null, req.RequestId);
                 return true;
             }
 
@@ -453,6 +566,290 @@ internal sealed class ExecCommandRegistry
                 return true;
             }
 
+            case "go find":
+            {
+                var query = GetString(req.Args, "query") ?? string.Empty;
+                var limit = GetInt(req.Args, "limit") ?? 20;
+                var parentId = GetInt(req.Args, "parentId") ?? 0;
+                var tag = GetString(req.Args, "tag");
+                var layer = GetString(req.Args, "layer");
+                var component = GetString(req.Args, "component");
+
+                if (string.IsNullOrWhiteSpace(query)
+                    && string.IsNullOrWhiteSpace(tag)
+                    && string.IsNullOrWhiteSpace(layer)
+                    && string.IsNullOrWhiteSpace(component))
+                {
+                    validationError = "go find requires args.query or at least one of args.tag/args.layer/args.component";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new
+                {
+                    query,
+                    limit,
+                    parentId,
+                    tag,
+                    layer,
+                    component
+                });
+                dto = new ProjectCommandRequestDto("hierarchy-find", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "settings inspect":
+            {
+                dto = new ProjectCommandRequestDto("settings-inspect", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "console clear":
+            {
+                var base_ = new ProjectCommandRequestDto("console-clear", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "scene load":
+            case "scene add":
+            case "scene unload":
+            case "scene remove":
+            {
+                var scenePath = GetString(req.Args, "scenePath");
+                if (string.IsNullOrWhiteSpace(scenePath))
+                {
+                    validationError = $"{req.Operation} requires args.scenePath";
+                    return false;
+                }
+
+                var normalizedOperation = req.Operation.Replace('.', ' ');
+                var projectAction = normalizedOperation.ToLowerInvariant() switch
+                {
+                    "scene load" => "scene-load",
+                    "scene add" => "scene-add",
+                    "scene unload" => "scene-unload",
+                    _ => "scene-remove"
+                };
+                var content = JsonSerializer.Serialize(new { scenePath });
+                var base_ = new ProjectCommandRequestDto(projectAction, null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "go duplicate":
+            {
+                var targetId = GetInt(req.Args, "targetId") ?? 0;
+                if (targetId == 0)
+                {
+                    validationError = "go duplicate requires args.targetId";
+                    return false;
+                }
+
+                var parentId = GetInt(req.Args, "parentId") ?? 0;
+                var name = GetString(req.Args, "name");
+                var content = JsonSerializer.Serialize(new { targetId, parentId, name });
+                var base_ = new ProjectCommandRequestDto("hierarchy-duplicate", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            // ── addressable operations ──────────────────────────────────
+            case "addressable.init":
+            {
+                var content = JsonSerializer.Serialize(new { operation = "init" });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.profile.list":
+            {
+                var content = JsonSerializer.Serialize(new { operation = "profile-list" });
+                dto = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "addressable.profile.set":
+            {
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "addressable.profile.set requires args.name";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { operation = "profile-set", name });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.group.list":
+            {
+                var content = JsonSerializer.Serialize(new { operation = "group-list" });
+                dto = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "addressable.group.create":
+            {
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "addressable.group.create requires args.name";
+                    return false;
+                }
+
+                var setDefault = req.Args is not null
+                    && req.Args.Value.TryGetProperty("default", out var defaultProp)
+                    && defaultProp.ValueKind == JsonValueKind.True;
+                var content = JsonSerializer.Serialize(new { operation = "group-create", name, setDefault });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.group.remove":
+            {
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "addressable.group.remove requires args.name";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { operation = "group-remove", name });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.entry.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var groupName = GetString(req.Args, "groupName");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(groupName))
+                {
+                    validationError = "addressable.entry.add requires args.assetPath and args.groupName";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { operation = "entry-add", assetPath, groupName });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.entry.remove":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "addressable.entry.remove requires args.assetPath";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { operation = "entry-remove", assetPath });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.entry.rename":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var newAddress = GetString(req.Args, "newAddress");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(newAddress))
+                {
+                    validationError = "addressable.entry.rename requires args.assetPath and args.newAddress";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { operation = "entry-rename", assetPath, address = newAddress });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.entry.label":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var label = GetString(req.Args, "label");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(label))
+                {
+                    validationError = "addressable.entry.label requires args.assetPath and args.label";
+                    return false;
+                }
+
+                var remove = req.Args is not null
+                    && req.Args.Value.TryGetProperty("remove", out var removeProp)
+                    && removeProp.ValueKind == JsonValueKind.True;
+                var content = JsonSerializer.Serialize(new { operation = "entry-label", assetPath, label, remove });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.bulk.add":
+            {
+                var folder = GetString(req.Args, "folder");
+                var group = GetString(req.Args, "group");
+                if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(group))
+                {
+                    validationError = "addressable.bulk.add requires args.folder and args.group";
+                    return false;
+                }
+
+                var type = GetString(req.Args, "type");
+                var content = JsonSerializer.Serialize(new { operation = "bulk-add", folder, groupName = group, type });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.bulk.label":
+            {
+                var folder = GetString(req.Args, "folder");
+                var label = GetString(req.Args, "label");
+                if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(label))
+                {
+                    validationError = "addressable.bulk.label requires args.folder and args.label";
+                    return false;
+                }
+
+                var type = GetString(req.Args, "type");
+                var remove = req.Args is not null
+                    && req.Args.Value.TryGetProperty("remove", out var removeProp)
+                    && removeProp.ValueKind == JsonValueKind.True;
+                var content = JsonSerializer.Serialize(new { operation = "bulk-label", folder, label, type, remove });
+                var base_ = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "addressable.analyze":
+            {
+                var duplicate = req.Args is not null
+                    && req.Args.Value.TryGetProperty("duplicate", out var dupProp)
+                    && dupProp.ValueKind == JsonValueKind.True;
+                var content = JsonSerializer.Serialize(new { operation = "analyze", duplicate });
+                dto = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                return true;
+            }
+
             // session.* and hierarchy.snapshot are handled by ExecOperationRouter directly
             case "hierarchy.snapshot":
             case "session.open":
@@ -481,9 +878,27 @@ internal sealed class ExecCommandRegistry
             return null;
         }
 
-        return element.Value.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String
-            ? prop.GetString()
-            : null;
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.String)
+        {
+            return prop.GetString();
+        }
+
+        return null;
+    }
+
+    private static int? GetInt(JsonElement? element, string key)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetInt32();
+        }
+
+        return null;
     }
 
     /// <summary>Returns the raw JSON text of a property (for arrays/objects passed through as-is).</summary>
@@ -494,8 +909,54 @@ internal sealed class ExecCommandRegistry
             return null;
         }
 
-        return element.Value.TryGetProperty(key, out var prop)
+        return TryGetPropertyWithAliases(element.Value, key, out var prop)
             ? prop.GetRawText()
             : null;
+    }
+
+    private static bool TryGetPropertyWithAliases(JsonElement element, string key, out JsonElement value)
+    {
+        if (element.TryGetProperty(key, out value))
+        {
+            return true;
+        }
+
+        var kebab = ToKebabCase(key);
+        if (!kebab.Equals(key, StringComparison.Ordinal)
+            && element.TryGetProperty(kebab, out value))
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string ToKebabCase(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return string.Empty;
+        }
+
+        var chars = new List<char>(key.Length + 4);
+        for (var i = 0; i < key.Length; i++)
+        {
+            var ch = key[i];
+            if (char.IsUpper(ch))
+            {
+                if (i > 0)
+                {
+                    chars.Add('-');
+                }
+
+                chars.Add(char.ToLowerInvariant(ch));
+                continue;
+            }
+
+            chars.Add(ch);
+        }
+
+        return new string(chars.ToArray());
     }
 }

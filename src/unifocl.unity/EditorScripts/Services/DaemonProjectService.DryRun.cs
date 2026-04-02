@@ -14,7 +14,8 @@ namespace UniFocl.EditorBridge
             return action.Equals("rename-asset", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("remove-asset", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("mk-script", StringComparison.OrdinalIgnoreCase)
-                   || action.Equals("mk-asset", StringComparison.OrdinalIgnoreCase);
+                   || action.Equals("mk-asset", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("addressables-cli", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string BuildMkAssetDryRunResponse(

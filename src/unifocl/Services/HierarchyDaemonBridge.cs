@@ -72,9 +72,21 @@ internal sealed class HierarchyDaemonBridge
             return new HierarchySearchResponseDto(false, [], "missing hierarchy search payload");
         }
 
+        if (!string.IsNullOrWhiteSpace(request.Tag)
+            || !string.IsNullOrWhiteSpace(request.Layer)
+            || !string.IsNullOrWhiteSpace(request.Component))
+        {
+            return new HierarchySearchResponseDto(false, [], "tag/layer/component filters are unavailable in host mode");
+        }
+
         _ = TryBuildTree(out _, out var index);
         var limit = request.Limit <= 0 ? 20 : Math.Min(request.Limit, 200);
         var query = request.Query?.Trim() ?? string.Empty;
+        if (query.Length == 0)
+        {
+            return new HierarchySearchResponseDto(false, [], "search query is required in host mode");
+        }
+
         if (request.ParentId is int requestedParentId && !index.ContainsKey(requestedParentId))
         {
             return new HierarchySearchResponseDto(false, [], $"parent not found: {requestedParentId}");
@@ -153,6 +165,8 @@ internal sealed class HierarchyDaemonBridge
             "rename" => HandleRename(request),
             "mv" => HandleMove(request),
             "mk" => HandleMake(request),
+            "duplicate" => new HierarchyCommandResponseDto(false, "duplicate is unavailable in host mode", null, null),
+            "dup" => new HierarchyCommandResponseDto(false, "duplicate is unavailable in host mode", null, null),
             _ => new HierarchyCommandResponseDto(false, $"unsupported hierarchy action in host mode: {request.Action}", null, null)
         };
     }

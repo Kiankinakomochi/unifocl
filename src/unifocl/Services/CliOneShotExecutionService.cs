@@ -658,6 +658,31 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger.StartsWith("/addressable", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            var addressableInput = input.Length > "/addressable".Length
+                ? $"addressable {input["/addressable".Length..].Trim()}"
+                : "addressable";
+            var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                addressableInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+            if (!handled)
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]addressable[/]: unsupported /addressable command");
+            }
+
+            return;
+        }
+
         if (matched.Trigger == "/mutate")
         {
             if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))

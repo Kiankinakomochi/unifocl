@@ -224,9 +224,15 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `toggle <target>` | `t` | Toggle boolean/active/enabled flags. |
 | `move <...>` | `mv` | Move, reparent, or reorder an item. |
 | `f [--type <type>&#124;t:<type>] <query>` | `ff` | Run fuzzy find in the active mode. |
+| `go find <query>` |  | Hierarchy-mode fuzzy find alias for `f`. |
+| `go duplicate <idx> [name]` |  | Duplicate a hierarchy GameObject. |
+| `asset find <query>` |  | Project-mode fuzzy find alias for `f`. |
+| `asset duplicate <idx&#124;name> [new-path]` |  | Duplicate an asset in project mode. |
 | `inspect [idx&#124;path]` |  | Enter inspector root target from inspector context. |
 | `edit <field> <value...>` | `e` | Edit serialized field value for the selected component (inspector). |
 | `component add <type>` | `comp add <type>` | Add a component to the inspected object. |
+| `component find <query>` |  | Find components on the inspected object. |
+| `component duplicate <index&#124;name>` |  | Duplicate a component on the inspected object. |
 | `component remove <index&#124;name>` | `comp remove <index&#124;name>` | Remove a component from the inspected object. |
 | `scroll [body&#124;stream] <up&#124;down> [count]` |  | Scroll inspector body or command stream. |
 | `upm list [--outdated] [--builtin] [--git]` | `upm ls` | List installed Unity packages in project mode. |
@@ -245,6 +251,19 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `build artifact-metadata` |  | Show last build artifact files and sizes in project mode. |
 | `build failure-classify` |  | Classify last build errors by category in project mode. |
 | `build report` |  | Consolidated build report in project mode. |
+| `addressable init` |  | Create Addressables settings and default groups if missing. |
+| `addressable profile list` |  | List all profiles and evaluated variables. |
+| `addressable profile set <name>` |  | Set active Addressables profile. |
+| `addressable group list` |  | List groups with packing/compression details. |
+| `addressable group create <name> [--default]` |  | Create a group and optionally set it as default for new entries. |
+| `addressable group remove <name>` |  | Remove a group and unmark contained entries safely. |
+| `addressable entry add <asset-path> <group-name>` |  | Mark an asset as Addressable and place it in a group. |
+| `addressable entry remove <asset-path>` |  | Remove Addressable flag from an asset entry. |
+| `addressable entry rename <asset-path> <new-address>` |  | Change an entry's address key. |
+| `addressable entry label <asset-path> <label> [--remove]` |  | Add/remove a label on a specific Addressable entry. |
+| `addressable bulk add --folder <path> --group <name> [--type <T>]` |  | Add all matching assets in a folder to a group in one operation. |
+| `addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]` |  | Add/remove labels for matching folder assets in one operation. |
+| `addressable analyze [--duplicate]` |  | Output structured Addressables analysis or duplicate dependency report. |
 | `test list` |  | List all available edit-mode tests (name + assembly). No daemon required. |
 | `test run editmode [--timeout <s>]` |  | Run all EditMode tests via Unity subprocess; returns structured JSON results. Default timeout 600s. |
 | `test run playmode [--timeout <s>]` |  | Run all PlayMode tests via Unity subprocess. May trigger player build. Default timeout 1800s. |
@@ -263,9 +282,10 @@ Interact directly with the active environment. Mutating operations are safely ro
 
 Both human operators and AI agents can validate mutations safely before execution. `-dry-run` is supported for mutation commands in all interactive and agentic modes:
 
-- `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`)
-- `Inspector` mutations (`set`, `toggle`, `component add/remove`, `make`, `remove`, `rename`, `move`)
-- `Project` filesystem mutations (`mk-script`, `rename-asset`, `remove-asset`, `prefab-create`, `prefab-apply`, `prefab-revert`, `prefab-unpack`, `prefab-variant`)
+- `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`, `go duplicate`)
+- `Inspector` mutations (`set`, `toggle`, `component add/duplicate/remove`, `make`, `remove`, `rename`, `move`)
+- `Project` filesystem mutations (`mk-script`, `rename-asset`, `duplicate-asset`, `remove-asset`, `prefab-create`, `prefab-apply`, `prefab-revert`, `prefab-unpack`, `prefab-variant`)
+- `Addressables` mutations (`addressable init`, `profile set`, `group create/remove`, `entry add/remove/rename/label`, `bulk add`, `bulk label`)
 - **Custom `[UnifoclCommand]` tools** — pass `dryRun: true` in the tool arguments; unifocl wraps the call in a Unity Undo group and reverts all in-memory and AssetDatabase changes automatically (see [`docs/custom-commands.md`](docs/custom-commands.md))
 - **`/eval` dynamic C# execution** — pass `--dry-run` to execute code inside the Undo sandbox; all Unity-tracked changes are reverted after execution completes
 

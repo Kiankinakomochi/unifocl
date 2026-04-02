@@ -67,6 +67,19 @@ internal static class CliCommandCatalog
             new("/upm update <id> [version]", "Update package to latest or specified version", "/upm update"),
             new("/upm u <id> [version]", "Alias for /upm update", "/upm u"),
             new("/upm", "Unity Package Manager commands", "/upm"),
+            new("/addressable init", "Create Addressables settings and default groups if missing", "/addressable init"),
+            new("/addressable profile list", "List Addressables profiles with evaluated variables", "/addressable profile list"),
+            new("/addressable profile set <name>", "Set active Addressables profile", "/addressable profile set"),
+            new("/addressable group list", "List Addressables groups, packing mode, and compression", "/addressable group list"),
+            new("/addressable group create <name> [--default]", "Create an Addressables group", "/addressable group create"),
+            new("/addressable group remove <name>", "Remove an Addressables group and unmark entries", "/addressable group remove"),
+            new("/addressable entry add <asset-path> <group-name>", "Mark asset as Addressable and assign group", "/addressable entry add"),
+            new("/addressable entry remove <asset-path>", "Unmark an Addressable asset entry", "/addressable entry remove"),
+            new("/addressable entry rename <asset-path> <new-address>", "Set Addressable key for asset entry", "/addressable entry rename"),
+            new("/addressable entry label <asset-path> <label> [--remove]", "Add/remove Addressables label on entry", "/addressable entry label"),
+            new("/addressable bulk add --folder <path> --group <name> [--type <T>]", "Bulk add folder assets to an Addressables group", "/addressable bulk add"),
+            new("/addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]", "Bulk apply/remove Addressables label over folder assets", "/addressable bulk label"),
+            new("/addressable analyze [--duplicate]", "Analyze Addressables layout or duplicate dependencies", "/addressable analyze"),
             new("/build <run|exec|scenes|addressables|cancel|targets>", "Build pipeline commands", "/build"),
             new("/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target (prompts when omitted)", "/build run"),
             new("/build exec <Method>", "Execute static build method (e.g., CI.Builder.BuildAndroidProd)", "/build exec"),
@@ -109,6 +122,31 @@ internal static class CliCommandCatalog
             new("/diag all", "Run all diagnostics", "/diag all"),
             new("/diag asset-size", "List all project assets sorted by file size, with dependency counts", "/diag asset-size"),
             new("/diag import-hotspots", "Show most-frequently-re-imported assets from recorded import history", "/diag import-hotspots"),
+
+            // Asset operations (ExecV2)
+            new("/asset rename <path> <new-name>", "Rename an asset at the given path (DestructiveWrite, requires approval)", "/asset rename"),
+            new("/asset remove <path>", "Delete an asset at the given path (DestructiveWrite, requires approval)", "/asset remove"),
+            new("/asset create <type> <path>", "Create a new asset of the given type at path", "/asset create"),
+            new("/asset create-script <name> <path>", "Create a new C# script at path", "/asset create-script"),
+
+            // Build scene management (ExecV2)
+            new("/build scenes set <json-array>", "Set the build scene list programmatically from a JSON array of paths", "/build scenes set"),
+
+            // Compile operations (ExecV2)
+            new("/compile request", "Trigger a Unity script recompilation", "/compile request"),
+            new("/compile status", "Check the result of the last compilation pass", "/compile status"),
+
+            // Console operations (ExecV2)
+            new("/console clear", "Clear the Unity console log", "/console clear"),
+
+            // Scene operations (ExecV2)
+            new("/scene load <path>", "Load a scene by path (replaces current)", "/scene load"),
+            new("/scene add <path>", "Additively load a scene by path", "/scene add"),
+            new("/scene unload <path>", "Unload an additively-loaded scene", "/scene unload"),
+            new("/scene remove <path>", "Remove a scene from the loaded set", "/scene remove"),
+
+            // Hierarchy snapshot (ExecV2)
+            new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot"),
 
             // Profiler (lazy-loaded category)
             new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect"),
@@ -161,6 +199,8 @@ internal static class CliCommandCatalog
             new("t <target>", "Alias for toggle", "t"),
             new("f [--type <type>|t:<type>] <query>", "Fuzzy find in active mode", "f"),
             new("ff [--type <type>|t:<type>] <query>", "Alias for fuzzy find", "ff"),
+            new("asset find <query>", "Fuzzy find assets in project mode", "asset find"),
+            new("asset duplicate <idx|name> [new-path]", "Duplicate an asset in project mode", "asset duplicate"),
             new("move <...>", "Move/reorder item in active mode", "move"),
             new("mv <...>", "Alias for move", "mv"),
             new("upm list [--outdated] [--builtin] [--git]", "List installed Unity packages (UPM)", "upm list"),
@@ -173,6 +213,19 @@ internal static class CliCommandCatalog
             new("upm uninstall <id>", "Alias for upm remove", "upm uninstall"),
             new("upm update <id> [version]", "Update package to latest or specified version", "upm update"),
             new("upm u <id> [version]", "Alias for upm update", "upm u"),
+            new("addressable init", "Create Addressables settings and default groups if missing", "addressable init"),
+            new("addressable profile list", "List Addressables profiles with evaluated variables", "addressable profile list"),
+            new("addressable profile set <name>", "Set active Addressables profile", "addressable profile set"),
+            new("addressable group list", "List Addressables groups, packing mode, and compression", "addressable group list"),
+            new("addressable group create <name> [--default]", "Create an Addressables group", "addressable group create"),
+            new("addressable group remove <name>", "Remove an Addressables group and unmark entries", "addressable group remove"),
+            new("addressable entry add <asset-path> <group-name>", "Mark asset as Addressable and assign group", "addressable entry add"),
+            new("addressable entry remove <asset-path>", "Unmark an Addressable asset entry", "addressable entry remove"),
+            new("addressable entry rename <asset-path> <new-address>", "Set Addressable key for asset entry", "addressable entry rename"),
+            new("addressable entry label <asset-path> <label> [--remove]", "Add/remove Addressables label on entry", "addressable entry label"),
+            new("addressable bulk add --folder <path> --group <name> [--type <T>]", "Bulk add folder assets to an Addressables group", "addressable bulk add"),
+            new("addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]", "Bulk apply/remove Addressables label over folder assets", "addressable bulk label"),
+            new("addressable analyze [--duplicate]", "Analyze Addressables layout or duplicate dependencies", "addressable analyze"),
             new("build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target", "build run"),
             new("build exec <Method>", "Execute static build method", "build exec"),
             new("build scenes", "Open interactive scene build-settings TUI", "build scenes"),
@@ -195,7 +248,29 @@ internal static class CliCommandCatalog
             new("prefab apply <idx>", "Push instance overrides back to source Prefab Asset", "prefab apply"),
             new("prefab revert <idx>", "Discard local overrides, revert to source Prefab Asset", "prefab revert"),
             new("prefab unpack <idx> [--completely]", "Break prefab connection, turn into regular GameObject", "prefab unpack"),
-            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant")
+            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant"),
+
+            // Asset operations (ExecV2)
+            new("asset rename <path> <new-name>", "Rename an asset at the given path", "asset rename"),
+            new("asset remove <path>", "Delete an asset at the given path", "asset remove"),
+            new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create"),
+            new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script"),
+
+            // Compile operations
+            new("compile request", "Trigger a Unity script recompilation", "compile request"),
+            new("compile status", "Check the result of the last compilation pass", "compile status"),
+
+            // Console
+            new("console clear", "Clear the Unity console log", "console clear"),
+
+            // Scene management
+            new("scene load <path>", "Load a scene by path (replaces current)", "scene load"),
+            new("scene add <path>", "Additively load a scene by path", "scene add"),
+            new("scene unload <path>", "Unload an additively-loaded scene", "scene unload"),
+            new("scene remove <path>", "Remove a scene from the loaded set", "scene remove"),
+
+            // Hierarchy snapshot
+            new("hierarchy snapshot", "Dump the current scene hierarchy as structured data", "hierarchy snapshot")
         ];
     }
 
@@ -220,6 +295,8 @@ internal static class CliCommandCatalog
             new("toggle <component-index|field>", "Toggle component enabled state or bool field", "toggle"),
             new("t <component-index|field>", "Alias for toggle", "t"),
             new("component add <type>", "Add a component from catalog to inspected target", "component add"),
+            new("component find <query>", "Find components on inspected target", "component find"),
+            new("component duplicate <index|name>", "Duplicate a component on inspected target", "component duplicate"),
             new("component remove <index|name>", "Remove a component from inspected target", "component remove"),
             new("comp <add|remove> <...>", "Alias for component", "comp"),
             new("f <query>", "Fuzzy find in inspector context", "f"),

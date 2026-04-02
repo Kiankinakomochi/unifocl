@@ -1,5 +1,125 @@
 # Changelog
 
+## 2.23.0 - 2026-04-02
+
+### Added
+- **`profiling` lazy-loaded category**: 28 new MCP tools for Unity Profiler capture, analysis, and live telemetry. Load via `load_category('profiling')`.
+  - **Capture control**: `profiling.inspect`, `profiling.start_recording`, `profiling.stop_recording` — profiler state inspection and recording lifecycle.
+  - **File I/O**: `profiling.save_profile` / `profiling.load_profile` (`.data` editor captures), `profiling.take_snapshot` (`.snap` memory snapshots), `profiling.binary_log_start` / `profiling.binary_log_stop` (`.raw` streaming).
+  - **Frame analysis**: `profiling.frames` (CPU/GPU/FPS range stats with avg/p50/p95/max), `profiling.threads` (thread enumeration), `profiling.counters` (counter series extraction).
+  - **Marker analysis**: `profiling.markers` (hotspot table by total/self time), `profiling.sample` (raw per-sample timing + callstacks), `profiling.gc_alloc` (GC allocation tracking).
+  - **Comparison & CI**: `profiling.compare` (baseline vs candidate deltas), `profiling.budget_check` (pass/fail budget expressions), `profiling.export_summary`.
+  - **Live telemetry**: `profiling.live_start` / `profiling.live_stop` (ProfilerRecorder), `profiling.recorders_list`, `profiling.frame_timing` (FrameTimingManager).
+  - **Metadata**: `profiling.annotate_session` / `profiling.annotate_frame` (emit metadata into profiler stream).
+  - **GPU capture**: `profiling.gpu_capture_begin` / `profiling.gpu_capture_end` (optional, RenderDoc/PIX).
+- **MCP workflow guide**: `built_in_categories.profiling` section added to `get_agent_workflow_guide` for agent discoverability.
+- **CLI command catalog**: 26 `/profiler` commands added to `list_commands` / `lookup_command` surface.
+
+### Fixes
+- **DaemonImportTimingStore**: resolved `Debug` ambiguity (`UnityEngine.Debug` vs `System.Diagnostics.Debug`) and qualified nested `ImportBatchEntry` type reference.
+- **DaemonBuildReportService**: replaced obsolete `report.files` with `report.GetFiles()`.
+
+### Protocol
+- Bumped to `v18` (new `profiling` category editor scripts; run `/init` to deploy updated bridge payload).
+
+### Officialized
+- Officialized `2.23.0` by closing the development cycle suffix.
+
+## 2.22.0 - 2026-04-02
+
+### Added
+- **Addressable ExecV2 routing**: Wired 13 addressable operations (`init`, `profile.list`, `profile.set`, `group.list`, `group.create`, `group.remove`, `entry.add`, `entry.remove`, `entry.rename`, `entry.label`, `bulk.add`, `bulk.label`, `analyze`) to ExecV2 structured dispatch via the `addressables-cli` daemon action.
+- **UPM ExecV2 routing**: Wired `upm.list`, `upm.install`, and `upm.update` to ExecV2 structured dispatch alongside the existing `upm.remove`.
+- **Build subcommand ExecV2 routing**: Wired `build.addressables`, `build.cancel`, and `build.targets` to ExecV2 structured dispatch. (`build.logs` skipped — uses direct HTTP, not project command routing.)
+- **MCP command catalog parity**: Added catalog entries for `asset rename/remove/create/create-script`, `build scenes set`, `compile request/status`, `console clear`, `scene load/add/unload/remove`, and `hierarchy snapshot` to both root and project scopes in `CliCommandCatalog`, making them discoverable via MCP `list_commands`/`lookup_command`.
+
+### Officialized
+- Officialized `2.22.0` by closing the development cycle suffix.
+
+## 2.21.4 - 2026-04-02
+
+### Fixes
+- **TUI flicker from full-screen clear**: `HierarchyTui`, `InspectorTuiRenderer`, `ProjectViewService`, and `BuildLogTailService` called `Console.Clear()` / `AnsiConsole.Clear()` on every render frame, causing a blank-screen flash between frames. Replaced with the ANSI sequence `ESC[H ESC[0J` (cursor home + clear to end of screen), which overwrites old content in place without a visible blank transition.
+
+### Officialized
+- Officialized `2.21.4` by closing the development cycle suffix.
+
+## 2.21.3 - 2026-03-30
+
+### Fixes
+- **`agent install claude` wrong subcommand**: `mcp add @unifocl/claude-plugin` failed with "missing required argument 'commandOrUrl'" because `mcp add` requires `<name> <command> [args...]`. Fixed to use `claude mcp add unifocl -- unifocl --mcp-server`, with `--` required to prevent `--mcp-server` from being parsed as a flag for `mcp add`.
+
+### Officialized
+- Officialized `2.21.3` by closing the development cycle suffix.
+
+## 2.21.2 - 2026-03-29
+
+### Fixes
+- **`/open` project lock bypass for already-running editor**: `/open` previously acquired an exclusive `open.lock` before attaching to a user's running Unity editor in Bridge mode, causing `E_PROJECT_LOCKED` errors even with no competing process. The lock guards concurrent Unity launches only; it is unnecessary when the daemon is already responsive. A lightweight `/ping` probe (2-second timeout) now runs before the lock; if the daemon responds, `/open` skips the lock and attaches directly.
+
+### Officialized
+- Officialized `2.21.2` by closing the development cycle suffix.
+
+## 2.21.1 - 2026-03-29
+
+### Added
+- **Git-like command naming updates across modes**:
+  - Hierarchy mode: added `go find <query>` and `go duplicate <idx> [name]`.
+  - Project mode: added `asset find <query>` and `asset duplicate <idx|name> [new-path]`.
+  - Inspector mode: added `component find <query>` and `component duplicate <index|name>`.
+- **Project asset duplication**:
+  - New daemon action `duplicate-asset` (Unity bridge mode) and host-mode fallback implementation.
+  - Wired through project view command handling and mutation intent/dry-run pathways.
+- **Inspector component duplication**:
+  - New inspector mutation action `duplicate-component` with index assignment response.
+  - Implemented via Unity editor copy/paste component utility path, with scene persistence handling.
+
+### Changed
+- **Exec operation naming normalization**:
+  - Replaced `hierarchy find` / `hierarchy duplicate` with `go find` / `go duplicate` in structured operation routing.
+- **Hierarchy search filters**:
+  - `go find` supports optional `tag`, `layer`, and `component` filtering on Unity daemon snapshots.
+
+### Docs
+- Updated `README.md` command reference and dry-run section to include:
+  - `go find`, `go duplicate`
+  - `asset find`, `asset duplicate`
+  - `component find`, `component duplicate`
+
+### Protocol
+- Bumped to `v17` — Unity bridge payload changes for project/inspector mutation handlers require re-running `/init`.
+
+### Officialized
+- Officialized `2.21.1` by closing the development cycle suffix.
+
+## 2.21.0 - 2026-03-29
+
+### Added
+- **Addressables CLI Suite documentation**: README command tables now include the full `addressable` lifecycle/profile/group/entry/analyze/bulk command surface, including the new `bulk add` / `bulk label` operations and dry-run applicability.
+
+### Fixes
+- **Addressables default settings resolution (Unity compatibility)**: bridge-side Addressables command handlers no longer hard-fail when `AddressableAssetSettingsDefaultObject` is exposed under different namespace/assembly layouts. Resolution now supports both known namespace forms and a fallback assembly scan for Unity editor environments where reflection lookup shape differs.
+- **`addressable bulk label --dry-run` behavior parity**: dry-run validation now mirrors runtime semantics by evaluating assets (not folders), skipping non-addressable matches, and reporting a count of addressable targets instead of failing immediately on the first non-addressable path.
+
+### Protocol
+- Bumped to `v16` — Addressables bridge handler updates require re-deploying editor payload scripts; re-run `/init` after upgrading.
+
+### Officialized
+- Officialized `2.21.0` by closing the development cycle suffix.
+
+## 2.20.1 - 2026-03-29
+
+### Fixes
+- **`EditorDependencyInitializerService`**: register all 12 Unity editor payload files that were embedded in the CLI binary but never extracted during `/init`. The missing files were: all 6 `DaemonProjectService.*` partial class files (`AssetCreation`, `Build`, `DryRun`, `Prefab`, `Transaction`, `TypeQuery`), plus `DaemonBuildReportService`, `DaemonDiagService`, `DaemonImportTimingStore`, `DaemonValidateService`, and `DaemonDryRunAssetModificationProcessor`. The most visible symptom was `CS0246: The type or namespace name 'BuildRuntimeState' could not be found` on every fresh `/init` because `DaemonProjectService.Build.cs` (which defines `BuildRuntimeState`) was never written to the project package directory.
+- **`DaemonImportTimingStore`**: remove unused `using System.Diagnostics` (caused `Debug` ambiguity with `UnityEngine.Debug`); qualify nested `ImportBatchEntry` as `DaemonImportTimingStore.ImportBatchEntry` when referenced from the sibling `UnifoclImportTimingCapture` class.
+- **`DaemonBuildReportService`**: replace deprecated `BuildReport.files` with `BuildReport.GetFiles()`.
+
+### Protocol
+- Bumped to `v15` — corrected bridge payload now deploys all partial service files; re-run `/init` to pick up the fix.
+
+### Officialized
+- Officialized `2.20.1` by closing the development cycle suffix.
+
 ## 2.20.0 - 2026-03-29
 
 ### Added
