@@ -48,7 +48,7 @@ namespace UniFocl.EditorBridge
             // approach below for async batches, but for correctness the batch entry is
             // always written here with durationMs == 0.  A future iteration can use
             // AssetImportContext timing from Unity 2022.2+ (AssetImportContext.mainObject).
-            var entry = new ImportBatchEntry
+            var entry = new DaemonImportTimingStore.ImportBatchEntry
             {
                 timestamp = DateTime.UtcNow.ToString("O"),
                 assetPaths = tracked,
@@ -90,7 +90,7 @@ namespace UniFocl.EditorBridge
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[unifocl] failed to write import timing store: {ex.Message}");
+                    UnityEngine.Debug.LogWarning($"[unifocl] failed to write import timing store: {ex.Message}");
                 }
             }
         }
