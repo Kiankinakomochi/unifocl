@@ -121,7 +121,32 @@ internal static class CliCommandCatalog
             new("/diag prefab-deps", "Show asset dependencies per prefab (capped at 100)", "/diag prefab-deps"),
             new("/diag all", "Run all diagnostics", "/diag all"),
             new("/diag asset-size", "List all project assets sorted by file size, with dependency counts", "/diag asset-size"),
-            new("/diag import-hotspots", "Show most-frequently-re-imported assets from recorded import history", "/diag import-hotspots")
+            new("/diag import-hotspots", "Show most-frequently-re-imported assets from recorded import history", "/diag import-hotspots"),
+
+            // Asset operations (ExecV2)
+            new("/asset rename <path> <new-name>", "Rename an asset at the given path (DestructiveWrite, requires approval)", "/asset rename"),
+            new("/asset remove <path>", "Delete an asset at the given path (DestructiveWrite, requires approval)", "/asset remove"),
+            new("/asset create <type> <path>", "Create a new asset of the given type at path", "/asset create"),
+            new("/asset create-script <name> <path>", "Create a new C# script at path", "/asset create-script"),
+
+            // Build scene management (ExecV2)
+            new("/build scenes set <json-array>", "Set the build scene list programmatically from a JSON array of paths", "/build scenes set"),
+
+            // Compile operations (ExecV2)
+            new("/compile request", "Trigger a Unity script recompilation", "/compile request"),
+            new("/compile status", "Check the result of the last compilation pass", "/compile status"),
+
+            // Console operations (ExecV2)
+            new("/console clear", "Clear the Unity console log", "/console clear"),
+
+            // Scene operations (ExecV2)
+            new("/scene load <path>", "Load a scene by path (replaces current)", "/scene load"),
+            new("/scene add <path>", "Additively load a scene by path", "/scene add"),
+            new("/scene unload <path>", "Unload an additively-loaded scene", "/scene unload"),
+            new("/scene remove <path>", "Remove a scene from the loaded set", "/scene remove"),
+
+            // Hierarchy snapshot (ExecV2)
+            new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot")
         ];
     }
 
@@ -197,7 +222,29 @@ internal static class CliCommandCatalog
             new("prefab apply <idx>", "Push instance overrides back to source Prefab Asset", "prefab apply"),
             new("prefab revert <idx>", "Discard local overrides, revert to source Prefab Asset", "prefab revert"),
             new("prefab unpack <idx> [--completely]", "Break prefab connection, turn into regular GameObject", "prefab unpack"),
-            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant")
+            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant"),
+
+            // Asset operations (ExecV2)
+            new("asset rename <path> <new-name>", "Rename an asset at the given path", "asset rename"),
+            new("asset remove <path>", "Delete an asset at the given path", "asset remove"),
+            new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create"),
+            new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script"),
+
+            // Compile operations
+            new("compile request", "Trigger a Unity script recompilation", "compile request"),
+            new("compile status", "Check the result of the last compilation pass", "compile status"),
+
+            // Console
+            new("console clear", "Clear the Unity console log", "console clear"),
+
+            // Scene management
+            new("scene load <path>", "Load a scene by path (replaces current)", "scene load"),
+            new("scene add <path>", "Additively load a scene by path", "scene add"),
+            new("scene unload <path>", "Unload an additively-loaded scene", "scene unload"),
+            new("scene remove <path>", "Remove a scene from the loaded set", "scene remove"),
+
+            // Hierarchy snapshot
+            new("hierarchy snapshot", "Dump the current scene hierarchy as structured data", "hierarchy snapshot")
         ];
     }
 

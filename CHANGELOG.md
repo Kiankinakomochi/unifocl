@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.22.0 - 2026-04-02
+
+### Added
+- **Addressable ExecV2 routing**: Wired 13 addressable operations (`init`, `profile.list`, `profile.set`, `group.list`, `group.create`, `group.remove`, `entry.add`, `entry.remove`, `entry.rename`, `entry.label`, `bulk.add`, `bulk.label`, `analyze`) to ExecV2 structured dispatch via the `addressables-cli` daemon action.
+- **UPM ExecV2 routing**: Wired `upm.list`, `upm.install`, and `upm.update` to ExecV2 structured dispatch alongside the existing `upm.remove`.
+- **Build subcommand ExecV2 routing**: Wired `build.addressables`, `build.cancel`, and `build.targets` to ExecV2 structured dispatch. (`build.logs` skipped — uses direct HTTP, not project command routing.)
+- **MCP command catalog parity**: Added catalog entries for `asset rename/remove/create/create-script`, `build scenes set`, `compile request/status`, `console clear`, `scene load/add/unload/remove`, and `hierarchy snapshot` to both root and project scopes in `CliCommandCatalog`, making them discoverable via MCP `list_commands`/`lookup_command`.
+
+### Officialized
+- Officialized `2.22.0` by closing the development cycle suffix.
+
 ## 2.21.4 - 2026-04-02
 
 ### Fixes
