@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.21.4 - 2026-04-02
+
+### Fixes
+- **TUI flicker from full-screen clear**: `HierarchyTui`, `InspectorTuiRenderer`, `ProjectViewService`, and `BuildLogTailService` called `Console.Clear()` / `AnsiConsole.Clear()` on every render frame, causing a blank-screen flash between frames. Replaced with the ANSI sequence `ESC[H ESC[0J` (cursor home + clear to end of screen), which overwrites old content in place without a visible blank transition.
+
+### Officialized
+- Officialized `2.21.4` by closing the development cycle suffix.
+
 ## 2.21.3 - 2026-03-30
 
 ### Fixes

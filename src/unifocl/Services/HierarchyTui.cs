@@ -912,7 +912,10 @@ internal sealed partial class HierarchyTui
         string cwdPath,
         bool focusModeEnabled = false)
     {
-        Console.Clear();
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Write("\u001b[H\u001b[0J");
+        }
 
         var frameWidth = ResolveFrameWidth();
         var borderTop = $"┌{new string('─', frameWidth)}┐";

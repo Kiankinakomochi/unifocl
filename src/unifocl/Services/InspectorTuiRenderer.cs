@@ -17,7 +17,11 @@ internal sealed class InspectorTuiRenderer
         string? highlightedFieldName = null,
         bool focusModeEnabled = false)
     {
-        AnsiConsole.Clear();
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Write("\u001b[H\u001b[0J");
+        }
+
         var innerWidth = ResolveInnerWidth();
 
         var bodyLayout = BuildBodyRows(context, highlightedComponentIndex, highlightedFieldName, innerWidth);
