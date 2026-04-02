@@ -37,6 +37,10 @@ internal sealed class ExecCommandRegistry
         ["validate.asmdef"]          = ExecRiskLevel.SafeRead,
         ["validate.asset-refs"]      = ExecRiskLevel.SafeRead,
         ["validate.addressables"]    = ExecRiskLevel.SafeRead,
+        // build subcommands (sprint C)
+        ["build.addressables"]       = ExecRiskLevel.SafeWrite,
+        ["build.cancel"]             = ExecRiskLevel.SafeWrite,
+        ["build.targets"]            = ExecRiskLevel.SafeRead,
         // build workflow operations
         ["build.snapshot-packages"]  = ExecRiskLevel.SafeWrite,
         ["build.preflight"]          = ExecRiskLevel.SafeRead,
@@ -257,6 +261,35 @@ internal sealed class ExecCommandRegistry
                 var base_ = new ProjectCommandRequestDto("upm-install", null, null, content, req.RequestId);
                 var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
                 dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "build.addressables":
+            {
+                var clean = req.Args is not null
+                    && req.Args.Value.TryGetProperty("clean", out var cleanProp)
+                    && cleanProp.ValueKind == JsonValueKind.True;
+                var update = req.Args is not null
+                    && req.Args.Value.TryGetProperty("update", out var updateProp)
+                    && updateProp.ValueKind == JsonValueKind.True;
+                var content = $"{{\"clean\":{(clean ? "true" : "false")},\"update\":{(update ? "true" : "false")}}}";
+                var base_ = new ProjectCommandRequestDto("build-addressables", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "build.cancel":
+            {
+                var base_ = new ProjectCommandRequestDto("build-cancel", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "build.targets":
+            {
+                dto = new ProjectCommandRequestDto("build-targets", null, null, null, req.RequestId);
                 return true;
             }
 
