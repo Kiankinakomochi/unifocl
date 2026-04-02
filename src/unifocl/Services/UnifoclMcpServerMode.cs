@@ -701,12 +701,39 @@ public static class UnifoclAgentWorkflowTools
               "3. The tools are now directly callable as MCP tools."
             ],
             "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then load_category again for new categories.",
-            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first."
+            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first.",
+            "built_in_categories": {
+              "profiling": {
+                "description": "Lazy-loaded profiling category. Provides capture, analysis, and live telemetry tools backed by Unity Profiler, MemoryProfiler, and ProfilerRecorder APIs.",
+                "load": "load_category('profiling')",
+                "tools": [
+                  "profiling.capabilities — feature probe (SafeRead)",
+                  "profiling.inspect — profiler state + memory stats (SafeRead)",
+                  "profiling.start_recording / stop_recording — capture control (PrivilegedExec)",
+                  "profiling.save_profile / load_profile — .data capture I/O (SafeWrite)",
+                  "profiling.take_snapshot — memory snapshot .snap (SafeWrite)",
+                  "profiling.frames — frame range stats: CPU/GPU/FPS avg/p50/p95/max (SafeRead)",
+                  "profiling.threads / counters — thread enum + counter series (SafeRead)",
+                  "profiling.markers — hotspot analysis by total/self time (SafeRead)",
+                  "profiling.sample — raw per-sample timing + callstacks (SafeRead)",
+                  "profiling.gc_alloc — GC allocation tracking (SafeRead)",
+                  "profiling.compare — baseline vs candidate delta (SafeRead)",
+                  "profiling.budget_check — CI pass/fail budget rules (SafeRead)",
+                  "profiling.export_summary — write stats JSON to disk (SafeRead)",
+                  "profiling.live_start / live_stop — ProfilerRecorder telemetry (PrivilegedExec)",
+                  "profiling.recorders_list — enumerate available counters (SafeRead)",
+                  "profiling.frame_timing — FrameTimingManager CPU/GPU (SafeRead)",
+                  "profiling.binary_log_start / binary_log_stop — .raw streaming (PrivilegedExec)",
+                  "profiling.annotate_session / annotate_frame — emit metadata (SafeWrite)",
+                  "profiling.gpu_capture_begin / gpu_capture_end — RenderDoc/PIX (PrivilegedExec, optional)"
+                ]
+              }
+            }
           },
           "command_discovery": {
             "description": "Use list_commands and lookup_command to explore all built-in unifocl commands without reading the README.",
             "list_commands": {
-              "scope_root": "list_commands(scope='root') — lifecycle commands: /open, /close, /init, /new, /clone, /build, /upm, /mutate, /dump, etc.",
+              "scope_root": "list_commands(scope='root') — lifecycle commands: /open, /close, /init, /new, /clone, /build, /upm, /mutate, /dump, /profiler, etc.",
               "scope_project": "list_commands(scope='project') — project-mode commands: mk, load, rm, rn, set, upm, build, etc.",
               "scope_inspector": "list_commands(scope='inspector') — inspector-mode commands: set, toggle, comp add/remove, etc.",
               "query": "list_commands(query='build') — filter by keyword across all scopes."

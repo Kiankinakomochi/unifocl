@@ -89,7 +89,7 @@ namespace UniFocl.EditorBridge
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[unifocl] failed to write import timing store: {ex.Message}");
+                    UnityEngine.Debug.LogWarning($"[unifocl] failed to write import timing store: {ex.Message}");
                 }
             }
         }

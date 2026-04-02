@@ -146,7 +146,33 @@ internal static class CliCommandCatalog
             new("/scene remove <path>", "Remove a scene from the loaded set", "/scene remove"),
 
             // Hierarchy snapshot (ExecV2)
-            new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot")
+            new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot"),
+
+            // Profiler (lazy-loaded category)
+            new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect"),
+            new("/profiler start [--deep] [--editor] [--keep-frames]", "Start profiler recording", "/profiler start"),
+            new("/profiler stop", "Stop profiler recording, return frame range summary", "/profiler stop"),
+            new("/profiler load <path> [--keep-existing]", "Load a profiler capture (.data) into the editor session", "/profiler load"),
+            new("/profiler save <path>", "Save current editor profiler session to disk", "/profiler save"),
+            new("/profiler snapshot <path>", "Take a memory snapshot (.snap)", "/profiler snapshot"),
+            new("/profiler frames --from <a> --to <b>", "Frame range statistics (CPU/GPU/FPS avg/p50/p95/max)", "/profiler frames"),
+            new("/profiler counters --from <a> --to <b> [--names <list>]", "Extract counter series for a frame range", "/profiler counters"),
+            new("/profiler threads --frame <n>", "Enumerate profiler threads for a frame", "/profiler threads"),
+            new("/profiler markers --frame <n>", "Top markers by time for a single frame", "/profiler markers"),
+            new("/profiler markers --from <a> --to <b>", "Aggregated marker hotspot table for a frame range", "/profiler markers"),
+            new("/profiler sample --frame <n> --thread <idx>", "Raw sample details for a frame/thread", "/profiler sample"),
+            new("/profiler gc-alloc --from <a> --to <b>", "GC allocation analysis for a frame range", "/profiler gc-alloc"),
+            new("/profiler compare <baseline> <candidate>", "Compare two captures or frame ranges", "/profiler compare"),
+            new("/profiler budget-check <expressions...>", "Check performance budgets (CI-friendly pass/fail)", "/profiler budget-check"),
+            new("/profiler export-summary <path>", "Export analysis summary to file", "/profiler export-summary"),
+            new("/profiler live start [--counters <list>] [--duration <seconds>]", "Start low-overhead live counter recording", "/profiler live start"),
+            new("/profiler live stop", "Stop live counter recording and return stats", "/profiler live stop"),
+            new("/profiler recorders", "List available profiler recorders/counters", "/profiler recorders"),
+            new("/profiler frame-timing", "CPU/GPU frame timing from FrameTimingManager", "/profiler frame-timing"),
+            new("/profiler binary-log start <path>", "Start raw binary log (.raw) via Profiler.logFile", "/profiler binary-log start"),
+            new("/profiler binary-log stop", "Stop raw binary logging", "/profiler binary-log stop"),
+            new("/profiler annotate session <json>", "Emit session metadata into the profiler stream", "/profiler annotate session"),
+            new("/profiler annotate frame <json>", "Emit frame metadata into the profiler stream", "/profiler annotate frame")
         ];
     }
 

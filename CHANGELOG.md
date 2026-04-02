@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.23.0 - 2026-04-02
+
+### Added
+- **`profiling` lazy-loaded category**: 28 new MCP tools for Unity Profiler capture, analysis, and live telemetry. Load via `load_category('profiling')`.
+  - **Capture control**: `profiling.inspect`, `profiling.start_recording`, `profiling.stop_recording` — profiler state inspection and recording lifecycle.
+  - **File I/O**: `profiling.save_profile` / `profiling.load_profile` (`.data` editor captures), `profiling.take_snapshot` (`.snap` memory snapshots), `profiling.binary_log_start` / `profiling.binary_log_stop` (`.raw` streaming).
+  - **Frame analysis**: `profiling.frames` (CPU/GPU/FPS range stats with avg/p50/p95/max), `profiling.threads` (thread enumeration), `profiling.counters` (counter series extraction).
+  - **Marker analysis**: `profiling.markers` (hotspot table by total/self time), `profiling.sample` (raw per-sample timing + callstacks), `profiling.gc_alloc` (GC allocation tracking).
+  - **Comparison & CI**: `profiling.compare` (baseline vs candidate deltas), `profiling.budget_check` (pass/fail budget expressions), `profiling.export_summary`.
+  - **Live telemetry**: `profiling.live_start` / `profiling.live_stop` (ProfilerRecorder), `profiling.recorders_list`, `profiling.frame_timing` (FrameTimingManager).
+  - **Metadata**: `profiling.annotate_session` / `profiling.annotate_frame` (emit metadata into profiler stream).
+  - **GPU capture**: `profiling.gpu_capture_begin` / `profiling.gpu_capture_end` (optional, RenderDoc/PIX).
+- **MCP workflow guide**: `built_in_categories.profiling` section added to `get_agent_workflow_guide` for agent discoverability.
+- **CLI command catalog**: 26 `/profiler` commands added to `list_commands` / `lookup_command` surface.
+
+### Fixes
+- **DaemonImportTimingStore**: resolved `Debug` ambiguity (`UnityEngine.Debug` vs `System.Diagnostics.Debug`) and qualified nested `ImportBatchEntry` type reference.
+- **DaemonBuildReportService**: replaced obsolete `report.files` with `report.GetFiles()`.
+
+### Protocol
+- Bumped to `v18` (new `profiling` category editor scripts; run `/init` to deploy updated bridge payload).
+
+### Officialized
+- Officialized `2.23.0` by closing the development cycle suffix.
+
 ## 2.22.0 - 2026-04-02
 
 ### Added
