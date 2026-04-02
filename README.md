@@ -523,6 +523,72 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`docs/project-diagnostics.md`](docs/project-diagnostics.md)
 
+### 10. Profiling (Lazy-Loaded Category)
+
+The `profiling` category provides capture, analysis, and live telemetry tools backed by Unity's Profiler, MemoryProfiler, ProfilerRecorder, and FrameTimingManager APIs. It is **lazy-loaded** — call `load_category('profiling')` to register the tools as live MCP tools.
+
+**CLI commands:**
+
+```
+/profiler inspect
+/profiler start [--deep] [--editor] [--keep-frames]
+/profiler stop
+/profiler save <path>
+/profiler load <path> [--keep-existing]
+/profiler snapshot <path>
+/profiler frames --from <a> --to <b>
+/profiler counters --from <a> --to <b> [--names <list>]
+/profiler threads --frame <n>
+/profiler markers --frame <n>
+/profiler markers --from <a> --to <b>
+/profiler sample --frame <n> --thread <idx>
+/profiler gc-alloc --from <a> --to <b>
+/profiler compare <baseline> <candidate>
+/profiler budget-check <expressions...>
+/profiler export-summary <path>
+/profiler live start [--counters <list>] [--duration <seconds>]
+/profiler live stop
+/profiler recorders
+/profiler frame-timing
+/profiler binary-log start <path>
+/profiler binary-log stop
+/profiler annotate session <json>
+/profiler annotate frame <json>
+```
+
+**Agent / MCP operations (after `load_category('profiling')`):**
+
+| Operation | Risk | Description |
+| --- | --- | --- |
+| `profiling.capabilities` | SafeRead | Feature probe for current editor/runtime context |
+| `profiling.inspect` | SafeRead | Profiler state, frame range, memory stats |
+| `profiling.start_recording` | PrivilegedExec | Start profiler recording (deep, editor, keepFrames) |
+| `profiling.stop_recording` | PrivilegedExec | Stop recording, return frame range summary |
+| `profiling.save_profile` | SafeWrite | Save editor profiler session as `.data` capture |
+| `profiling.load_profile` | SafeWrite | Load `.data` capture into editor session |
+| `profiling.take_snapshot` | SafeWrite | Take memory snapshot (`.snap`) |
+| `profiling.frames` | SafeRead | Frame range stats: CPU/GPU/FPS avg/p50/p95/max |
+| `profiling.counters` | SafeRead | Counter series extraction for a frame range |
+| `profiling.threads` | SafeRead | Thread enumeration for a given frame |
+| `profiling.markers` | SafeRead | Top markers by total/self time |
+| `profiling.sample` | SafeRead | Raw per-sample timing, metadata, callstacks |
+| `profiling.gc_alloc` | SafeRead | GC allocation tracking by marker and frame |
+| `profiling.compare` | SafeRead | Baseline vs candidate frame range deltas |
+| `profiling.budget_check` | SafeRead | CI-friendly pass/fail budget rules |
+| `profiling.export_summary` | SafeRead | Write stats JSON summary to disk |
+| `profiling.live_start` | PrivilegedExec | Start ProfilerRecorder counter collection |
+| `profiling.live_stop` | PrivilegedExec | Stop live collection, return stats + samples |
+| `profiling.recorders_list` | SafeRead | Enumerate available ProfilerRecorder counters |
+| `profiling.frame_timing` | SafeRead | FrameTimingManager CPU/GPU timing |
+| `profiling.binary_log_start` | PrivilegedExec | Start raw binary log (`.raw`) streaming |
+| `profiling.binary_log_stop` | PrivilegedExec | Stop binary logging, return file path and size |
+| `profiling.annotate_session` | SafeWrite | Emit session-level metadata into profiler stream |
+| `profiling.annotate_frame` | SafeWrite | Emit frame-level metadata into profiler stream |
+| `profiling.gpu_capture_begin` | PrivilegedExec | Begin external GPU capture (RenderDoc/PIX) |
+| `profiling.gpu_capture_end` | PrivilegedExec | End external GPU capture |
+
+**Important:** Editor capture save/load (`.data` via `ProfilerDriver`) and runtime binary logging (`.raw` via `Profiler.logFile`) are separate flows — do not confuse them.
+
 ## Human Interface: TUI & Keybindings
 
 For developers using the interactive CLI, unifocl features a composer with Intellisense and keyboard-driven navigation.
