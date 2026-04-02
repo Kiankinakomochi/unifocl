@@ -87,19 +87,13 @@ namespace UniFocl.EditorBridge.Profiling
                         catch { /* metadata format mismatch — ignore */ }
                     }
 
-                    // Callstack
+                    // Callstack (API takes List<ulong> out param)
                     try
                     {
-                        var callstackStr = view.GetSampleCallstack(i);
-                        if (!string.IsNullOrEmpty(callstackStr))
-                        {
-                            foreach (var line in callstackStr.Split('\n'))
-                            {
-                                var trimmed = line.Trim();
-                                if (!string.IsNullOrEmpty(trimmed))
-                                    entry.callstack.Add(trimmed);
-                            }
-                        }
+                        var callstackAddrs = new List<ulong>();
+                        view.GetSampleCallstack(i, callstackAddrs);
+                        foreach (var addr in callstackAddrs)
+                            entry.callstack.Add($"0x{addr:X}");
                     }
                     catch { /* callstack not available for this sample */ }
 
@@ -156,16 +150,10 @@ namespace UniFocl.EditorBridge.Profiling
 
                         try
                         {
-                            var cs = view.GetSampleCallstack(i);
-                            if (!string.IsNullOrEmpty(cs))
-                            {
-                                foreach (var line in cs.Split('\n'))
-                                {
-                                    var trimmed = line.Trim();
-                                    if (!string.IsNullOrEmpty(trimmed))
-                                        entry.callstack.Add(trimmed);
-                                }
-                            }
+                            var callstackAddrs = new List<ulong>();
+                            view.GetSampleCallstack(i, callstackAddrs);
+                            foreach (var addr in callstackAddrs)
+                                entry.callstack.Add($"0x{addr:X}");
                         }
                         catch { /* callstack not available */ }
 

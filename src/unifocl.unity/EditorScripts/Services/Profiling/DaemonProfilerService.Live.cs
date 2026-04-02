@@ -1,7 +1,6 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
-using Unity.Collections;
 using Unity.Profiling;
 using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
@@ -49,7 +48,7 @@ namespace UniFocl.EditorBridge.Profiling
             {
                 try
                 {
-                    var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Any, name, capacity);
+                    var recorder = ProfilerRecorder.StartNew(default(ProfilerCategory), name, capacity);
                     if (recorder.Valid)
                     {
                         s_liveRecorders[name] = recorder;
@@ -146,7 +145,8 @@ namespace UniFocl.EditorBridge.Profiling
 
             try
             {
-                var handles = ProfilerRecorderHandle.GetAvailable(Allocator.Temp);
+                var handles = new List<ProfilerRecorderHandle>();
+                ProfilerRecorderHandle.GetAvailable(handles);
                 foreach (var handle in handles)
                 {
                     var desc = ProfilerRecorderHandle.GetDescription(handle);
@@ -157,7 +157,6 @@ namespace UniFocl.EditorBridge.Profiling
                         unit     = desc.UnitType.ToString(),
                     });
                 }
-                handles.Dispose();
             }
             catch (Exception ex)
             {
