@@ -342,7 +342,11 @@ internal sealed partial class ProjectViewService
             return;
         }
 
-        AnsiConsole.Clear();
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Write("\u001b[H\u001b[0J");
+        }
+
         var lines = _renderer.Render(state, highlightedEntryIndex, focusModeEnabled);
         foreach (var line in lines)
         {
