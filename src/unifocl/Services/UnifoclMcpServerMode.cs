@@ -736,6 +736,134 @@ public sealed record UseCategoryResult(
 [McpServerToolType]
 public static class UnifoclAgentWorkflowTools
 {
+    private const string QuickStartJson = """
+        {
+          "overview": "unifocl controls Unity projects via CLI. Commands run through exec calls with structured JSON output.",
+          "preferred_method": "Use the 'exec' MCP tool directly — it handles session state and returns clean JSON. No shell escaping needed.",
+          "fallback_method": "unifocl exec '<command>' --agentic --format json --project <path> --session-seed <seed>",
+          "common_patterns": {
+            "open_project": "exec commands=[\"/open /path/to/project\"] project=\"/path/to/project\"",
+            "dump_hierarchy": "exec commands=[\"/dump hierarchy --depth 2\"]",
+            "mutate_scene": "exec commands=[\"/mutate [{\\\"op\\\":\\\"create\\\",\\\"type\\\":\\\"canvas\\\",\\\"name\\\":\\\"HUD\\\"}]\"]",
+            "inspect_object": "exec commands=[\"inspect /Canvas\", \"set renderMode ScreenSpaceOverlay\"]"
+          },
+          "modes_summary": "project (default, asset ops) | inspector (per-object mutations) | hierarchy (TUI-only, avoid in agentic)",
+          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, or 'all'"
+        }
+        """;
+
+    private const string ExecFlagsJson = """
+        {
+          "exec_flags": {
+            "--agentic": "Enable structured JSON output. Required for all agent usage.",
+            "--format": "Output format: json (default) or yaml.",
+            "--project <path>": "Absolute path to the Unity project directory. Starts daemon if needed.",
+            "--mode <mode>": "Initial context: project | inspector | hierarchy. Defaults to 'project' when --project is set.",
+            "--session-seed <key>": "Persistence key. Saves/restores mode, inspector target, daemon port, and project path across exec calls. Use a stable per-workflow key (e.g. 'wf-build-ui'). Avoids repeating --project on every call.",
+            "--attach-port <port>": "Attach to a specific daemon port instead of auto-discovering.",
+            "--request-id <id>": "Custom request identifier echoed in response meta. Useful for correlation.",
+            "--dry-run": "Preview mutations without applying (supported by /mutate and inspector set commands)."
+          }
+        }
+        """;
+
+    private const string ModesJson = """
+        {
+          "mode_guidance": {
+            "project": "Default after /open. Used for asset operations (mk script/material/prefab, load scene, upm).",
+            "inspector": "Used for per-object mutations: rename, remove, move, comp add/remove, set/toggle fields. Target is preserved in session state via --session-seed.",
+            "hierarchy": "TUI-only. Contextual commands (rm/rn/mv) do NOT execute in agentic exec. Use inspector mode or /mutate instead."
+          }
+        }
+        """;
+
+    private const string MutateJson = """
+        {
+          "batch_mutations": {
+            "description": "Prefer /mutate for multi-object scene builds. It infers hierarchy vs inspector context per op and avoids multi-call overhead.",
+            "example": "exec '/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"canvas\",\"name\":\"HUD\"},{\"op\":\"rename\",\"target\":\"/OldName\",\"name\":\"NewName\"}]' --agentic --format json --project /path/to/project"
+          },
+          "full_schema": "Call get_mutate_schema() for the complete op catalog, required/optional fields, path format, and response shape."
+        }
+        """;
+
+    private const string CategoriesJson = """
+        {
+          "custom_commands": {
+            "description": "Custom tools defined with [UnifoclCommand] on static C# methods in Unity editor scripts.",
+            "discovery_flow": [
+              "1. Call get_categories — returns available categories in the loaded manifest.",
+              "2. Call load_category with the category name — registers those tools as live MCP tools.",
+              "3. The tools are now directly callable as MCP tools."
+            ],
+            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then load_category again for new categories.",
+            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first.",
+            "built_in_categories": {
+              "profiling": {
+                "description": "Lazy-loaded profiling category. Provides capture, analysis, and live telemetry tools backed by Unity Profiler, MemoryProfiler, and ProfilerRecorder APIs.",
+                "load": "load_category('profiling')",
+                "tools": [
+                  "profiling.capabilities — feature probe (SafeRead)",
+                  "profiling.inspect — profiler state + memory stats (SafeRead)",
+                  "profiling.start_recording / stop_recording — capture control (PrivilegedExec)",
+                  "profiling.save_profile / load_profile — .data capture I/O (SafeWrite)",
+                  "profiling.take_snapshot — memory snapshot .snap (SafeWrite)",
+                  "profiling.frames — frame range stats: CPU/GPU/FPS avg/p50/p95/max (SafeRead)",
+                  "profiling.threads / counters — thread enum + counter series (SafeRead)",
+                  "profiling.markers — hotspot analysis by total/self time (SafeRead)",
+                  "profiling.sample — raw per-sample timing + callstacks (SafeRead)",
+                  "profiling.gc_alloc — GC allocation tracking (SafeRead)",
+                  "profiling.compare — baseline vs candidate delta (SafeRead)",
+                  "profiling.budget_check — CI pass/fail budget rules (SafeRead)",
+                  "profiling.export_summary — write stats JSON to disk (SafeRead)",
+                  "profiling.live_start / live_stop — ProfilerRecorder telemetry (PrivilegedExec)",
+                  "profiling.recorders_list — enumerate available counters (SafeRead)",
+                  "profiling.frame_timing — FrameTimingManager CPU/GPU (SafeRead)",
+                  "profiling.binary_log_start / binary_log_stop — .raw streaming (PrivilegedExec)",
+                  "profiling.annotate_session / annotate_frame — emit metadata (SafeWrite)",
+                  "profiling.gpu_capture_begin / gpu_capture_end — RenderDoc/PIX (PrivilegedExec, optional)"
+                ]
+              }
+            }
+          }
+        }
+        """;
+
+    private const string SessionJson = """
+        {
+          "multi_step_pattern": {
+            "description": "Use --session-seed to chain stateful exec calls without repeating context flags.",
+            "example": [
+              "exec '/open /path/to/project' --agentic --format json --session-seed s1",
+              "exec 'inspect /Canvas' --agentic --format json --session-seed s1",
+              "exec 'rn HUD_Canvas' --agentic --format json --session-seed s1",
+              "exec '/dump hierarchy --depth 2 --format json' --agentic --format json --session-seed s1"
+            ]
+          },
+          "newline_batching": {
+            "description": "A single exec call can run multiple commands separated by newlines. State flows across lines.",
+            "example": "exec $'inspect /Canvas\\nrn HUD_Canvas\\ncomp add CanvasScaler' --agentic --format json --project /path/to/project"
+          },
+          "session_storage": ".unifocl-runtime/agentic/sessions/<seed>.json (relative to CWD or project root)"
+        }
+        """;
+
+    private const string DiscoveryJson = """
+        {
+          "command_discovery": {
+            "description": "Use list_commands and lookup_command to explore all built-in unifocl commands without reading the README.",
+            "list_commands": {
+              "scope_root": "list_commands(scope='root') — lifecycle commands: /open, /close, /init, /new, /clone, /build, /upm, /mutate, /dump, /profiler, etc.",
+              "scope_project": "list_commands(scope='project') — project-mode commands: mk, load, rm, rn, set, upm, build, etc.",
+              "scope_inspector": "list_commands(scope='inspector') — inspector-mode commands: set, toggle, comp add/remove, etc.",
+              "query": "list_commands(query='build') — filter by keyword across all scopes."
+            },
+            "lookup_command": "lookup_command('/open') — exact match + fuzzy fallback; returns signature and description for the best match.",
+            "when_to_use": "Call list_commands(scope='root') at session start to understand available lifecycle commands before issuing exec calls."
+          }
+        }
+        """;
+
     private const string WorkflowGuideJson = """
         {
           "exec_flags": {
@@ -823,10 +951,38 @@ public static class UnifoclAgentWorkflowTools
         }
         """;
 
+    private static readonly Dictionary<string, string> _sections = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["quick_start"] = QuickStartJson,
+        ["exec_flags"] = ExecFlagsJson,
+        ["modes"] = ModesJson,
+        ["mutate"] = MutateJson,
+        ["categories"] = CategoriesJson,
+        ["session"] = SessionJson,
+        ["discovery"] = DiscoveryJson,
+        ["all"] = WorkflowGuideJson
+    };
+
     [McpServerTool, Description(
-        "Returns the unifocl agentic exec workflow guide: all exec flags (including --session-seed), " +
-        "multi-step session patterns, newline batching, /mutate preference guidance, and mode semantics. " +
-        "Call this once at the start of any agentic workflow to understand how to chain exec calls " +
-        "without repeating context flags.")]
-    public static string GetAgentWorkflowGuide() => WorkflowGuideJson;
+        "Returns unifocl agentic workflow guidance. Call with no section for a quick-start summary (~200 tokens). " +
+        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery. " +
+        "Replaces the need to read docs or call /help.")]
+    public static string GetAgentWorkflowGuide(
+        [Description("Section to retrieve: quick_start (default, minimal getting-started), " +
+                     "exec_flags (all --flag details), modes (project/inspector/hierarchy semantics), " +
+                     "mutate (/mutate batch guidance), categories (custom tool loading), " +
+                     "session (--session-seed patterns), discovery (list_commands/lookup_command usage), " +
+                     "or 'all' for the complete guide.")]
+        string section = "quick_start")
+    {
+        var key = (section ?? "quick_start").Trim();
+        if (_sections.TryGetValue(key, out var content))
+            return content;
+
+        return JsonSerializer.Serialize(new
+        {
+            error = $"unknown section '{key}'",
+            available = _sections.Keys.ToList()
+        });
+    }
 }
