@@ -24,10 +24,13 @@ Steps:
    `unifocl exec "/doctor" --agentic --format json`
 
 MCP server tools available when daemon is up:
-  - `ListCommands(scope, query, limit)` — discover all unifocl commands by scope (root/project/inspector/all)
+  - `ListCommands(category, scope, query, limit)` — discover commands; category filter: core (default), setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, or 'all'
   - `LookupCommand(command, scope)` — exact or fuzzy command lookup with signature and description
   - `GetMutateSchema()` — full /mutate op schema with all supported fields and types
   - `ValidateMutateBatch(opsJson)` — pre-validate a mutation batch without executing
   - `GetAgentWorkflowGuide()` — complete agentic workflow reference, version-matched to this binary
   - `GetCategories()` — list custom tool categories from the project manifest
   - `LoadCategory(name)` — register a category's [UnifoclCommand] tools as live MCP tools
+  - `UseCategory(name)` — load manifest + register category tools in one step (preferred over GetCategories+LoadCategory)
+  - `UnloadCategory(name)` — remove a loaded category's tools from the active MCP tool list
+  - `ReloadManifest()` — refresh the manifest after Unity recompiles new [UnifoclCommand] methods

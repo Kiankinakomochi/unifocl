@@ -21,3 +21,15 @@ Steps:
 
 5. If environment issues are suspected:
    `unifocl exec "/doctor" --agentic --format json`
+
+MCP tools available when daemon is up:
+  - `ListCommands(category, scope, query, limit)` — category filter: core (default), setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, or 'all'
+  - `LookupCommand(command, scope)` — command lookup with signature and description
+  - `GetMutateSchema()` — full /mutate op schema
+  - `ValidateMutateBatch(opsJson)` — pre-validate a mutation batch
+  - `GetAgentWorkflowGuide()` — agentic workflow reference
+  - `UseCategory(name)` — load manifest + register category tools in one step
+  - `GetCategories()` — list available categories from the project manifest
+  - `LoadCategory(name)` — register a category's tools as live MCP tools
+  - `UnloadCategory(name)` — remove a loaded category's tools
+  - `ReloadManifest()` — refresh manifest after Unity recompiles

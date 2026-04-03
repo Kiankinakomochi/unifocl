@@ -144,8 +144,8 @@ internal static class CliCommandCatalog
             new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot", "scene"),
 
             // ── compile ───────────────────────────────────────────────────
-            new("/compile request", "Trigger a Unity script recompilation", "/compile request", "compile"),
-            new("/compile status", "Check the result of the last compilation pass", "/compile status", "compile"),
+            new("/compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile request", "compile"),
+            new("/compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile status", "compile"),
             new("/console clear", "Clear the Unity console log", "/console clear", "compile"),
 
             // ── eval ──────────────────────────────────────────────────────
@@ -266,8 +266,8 @@ internal static class CliCommandCatalog
             new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
 
             // ── compile ───────────────────────────────────────────────────
-            new("compile request", "Trigger a Unity script recompilation", "compile request", "compile"),
-            new("compile status", "Check the result of the last compilation pass", "compile status", "compile"),
+            new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
+            new("compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "compile status", "compile"),
             new("console clear", "Clear the Unity console log", "console clear", "compile"),
 
             // ── scene ─────────────────────────────────────────────────────

@@ -18,7 +18,10 @@ Standard session pattern:
    - Follow context workflow before planning mutations.
 
 4. Discover commands
-   - Use `ListCommands(scope="all")` and `LookupCommand(command="...")`.
+   - `ListCommands(category="all")` for full catalog, or filter by category:
+     core (default), setup, build, validate, diag, test, upm, addressable, asset,
+     scene, compile, eval, profiling, prefab.
+   - `LookupCommand(command="...")` for a specific command's signature.
 
 5. Mutate safely
    - Follow mutate workflow (validate + dry-run first).
