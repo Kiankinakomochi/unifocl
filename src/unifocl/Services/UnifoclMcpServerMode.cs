@@ -4,9 +4,11 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 internal static class UnifoclMcpServerMode
 {
@@ -751,3 +753,243 @@ public static class UnifoclAgentWorkflowTools
         "without repeating context flags.")]
     public static string GetAgentWorkflowGuide() => WorkflowGuideJson;
 }
+
+// ── Native exec tool ──────────────────────────────────────────────────────────
+
+[McpServerToolType]
+public static class McpExecTools
+{
+    // Connection-scoped implicit session state
+    private static string _implicitSessionSeed = $"mcp-{Guid.NewGuid():N}";
+    private static string? _lastProject;
+
+    [McpServerTool, Description(
+        "Executes one or more unifocl commands and returns structured JSON results. " +
+        "Commands run sequentially with shared session state — no need for --session-seed or shell escaping. " +
+        "First call should include 'project' to open a Unity project. Subsequent calls reuse the session automatically.")]
+    public static async Task<McpExecResult> Exec(
+        [Description("Array of command strings to execute sequentially. State flows between commands. " +
+                     "Examples: [\"/open /path/to/project\"], [\"inspect /Canvas\", \"set renderMode ScreenSpaceOverlay\"], " +
+                     "[\"/mutate [{...}]\"], [\"/dump hierarchy --depth 2\"]")]
+        string[] commands,
+        [Description("Absolute path to Unity project. Required on first call, remembered for subsequent calls.")]
+        string? project = null,
+        [Description("Preview mutations without applying.")]
+        bool dryRun = false,
+        CancellationToken ct = default)
+    {
+        if (commands is null || commands.Length == 0)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: ["No commands provided. Pass at least one command string."],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        // Resolve project: explicit param > remembered > null
+        var resolvedProject = project ?? _lastProject;
+        if (project is not null)
+            _lastProject = project;
+
+        // Join commands with newline for batch execution
+        var joinedCommands = string.Join("\n", commands);
+
+        var processPath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(processPath))
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: ["Cannot resolve unifocl binary path (Environment.ProcessPath is null)."],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        var psi = new ProcessStartInfo(processPath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        // Use ArgumentList to avoid shell escaping entirely
+        psi.ArgumentList.Add("exec");
+        psi.ArgumentList.Add(joinedCommands);
+        psi.ArgumentList.Add("--agentic");
+        psi.ArgumentList.Add("--format");
+        psi.ArgumentList.Add("json");
+        if (resolvedProject is not null)
+        {
+            psi.ArgumentList.Add("--project");
+            psi.ArgumentList.Add(resolvedProject);
+        }
+        psi.ArgumentList.Add("--session-seed");
+        psi.ArgumentList.Add(_implicitSessionSeed);
+        if (dryRun)
+            psi.ArgumentList.Add("--dry-run");
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return new McpExecResult(
+                    Ok: false,
+                    Status: "error",
+                    Data: null,
+                    Errors: ["Failed to start unifocl process."],
+                    Warnings: null,
+                    SessionSeed: _implicitSessionSeed,
+                    Mode: null);
+            }
+
+            // Read stdout and stderr concurrently to avoid deadlocks
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+            // Timeout: 30 seconds
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                return new McpExecResult(
+                    Ok: false,
+                    Status: "error",
+                    Data: null,
+                    Errors: ["Command execution timed out after 30 seconds."],
+                    Warnings: null,
+                    SessionSeed: _implicitSessionSeed,
+                    Mode: null);
+            }
+
+            var stdout = StripAnsi(await stdoutTask);
+            var stderr = await stderrTask;
+
+            // Remember project from successful /open calls
+            if (resolvedProject is not null && process.ExitCode == 0)
+                _lastProject = resolvedProject;
+
+            // Parse the JSON envelope from stdout
+            return ParseEnvelope(stdout, stderr, process.ExitCode);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // propagate cancellation
+        }
+        catch (Exception ex)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"Process execution failed: {ex.Message}"],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+    }
+
+    private static McpExecResult ParseEnvelope(string stdout, string stderr, int exitCode)
+    {
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            var errors = new List<string> { $"No output from unifocl (exit code {exitCode})." };
+            if (!string.IsNullOrWhiteSpace(stderr))
+                errors.Add($"stderr: {stderr.Trim()}");
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: errors,
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        // Find the first '{' to skip any non-JSON prefix
+        var jsonStart = stdout.IndexOf('{');
+        if (jsonStart < 0)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"No JSON found in output (exit code {exitCode}). Raw: {stdout[..Math.Min(stdout.Length, 500)]}"],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        var jsonText = stdout[jsonStart..];
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<AgenticResponseEnvelope>(
+                jsonText, UnifoclMcpServerMode._jsonOpts);
+
+            if (envelope is null)
+            {
+                return new McpExecResult(
+                    Ok: false,
+                    Status: "error",
+                    Data: null,
+                    Errors: ["Failed to deserialize response envelope."],
+                    Warnings: null,
+                    SessionSeed: _implicitSessionSeed,
+                    Mode: null);
+            }
+
+            var ok = string.Equals(envelope.Status, "success", StringComparison.OrdinalIgnoreCase);
+            var errors = envelope.Errors?.Count > 0
+                ? envelope.Errors.Select(e => string.IsNullOrEmpty(e.Hint) ? e.Message : $"{e.Message} (hint: {e.Hint})").ToList()
+                : null;
+            var warnings = envelope.Warnings?.Count > 0
+                ? envelope.Warnings.Select(w => w.Message).ToList()
+                : null;
+
+            return new McpExecResult(
+                Ok: ok,
+                Status: envelope.Status,
+                Data: envelope.Data,
+                Errors: errors,
+                Warnings: warnings,
+                SessionSeed: _implicitSessionSeed,
+                Mode: envelope.Mode);
+        }
+        catch (JsonException ex)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"JSON parse error: {ex.Message}. Raw start: {jsonText[..Math.Min(jsonText.Length, 300)]}"],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+    }
+
+    private static string StripAnsi(string input)
+        => Regex.Replace(input, @"\x1b\[[0-9;]*[mJKH]", "");
+}
+
+public sealed record McpExecResult(
+    bool Ok,
+    string Status,
+    object? Data,
+    List<string>? Errors,
+    List<string>? Warnings,
+    string? SessionSeed,
+    string? Mode);
