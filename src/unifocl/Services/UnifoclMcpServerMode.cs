@@ -621,6 +621,79 @@ public static class UnifoclCategoryTools
     }
 
     [McpServerTool, Description(
+        "Activates a tool category in one step: loads the manifest if needed, then registers all tools " +
+        "from the named category as live MCP tools. Returns the list of activated tool names. " +
+        "Equivalent to calling get_categories + load_category, but in a single round-trip. " +
+        "If the category is already loaded, returns success with the existing tool list.")]
+    public static UseCategoryResult UseCategory(
+        [Description("Category name (e.g. 'profiling'). Call get_categories to discover available names, " +
+                     "or try the name directly — this tool will return an error with available categories if not found.")]
+        string categoryName,
+        McpServer server,
+        UnifoclManifestService manifest)
+    {
+        // Step 1: Ensure manifest is loaded
+        if (!manifest.IsManifestLoaded)
+        {
+            var projectPath = UnifoclManifestService.ResolveActiveProjectPath();
+            if (string.IsNullOrEmpty(projectPath))
+            {
+                return new UseCategoryResult(false,
+                    "No active project. Open a project first, then retry.",
+                    0, [], null);
+            }
+            manifest.EnsureLoaded(projectPath);
+        }
+
+        // Step 2: Check if category exists
+        var infos = manifest.GetCategoryInfos();
+        var categoryExists = false;
+        var alreadyActive = false;
+        foreach (var info in infos)
+        {
+            if (string.Equals(info.Name, categoryName, StringComparison.OrdinalIgnoreCase))
+            {
+                categoryExists = true;
+                alreadyActive = info.Active;
+                break;
+            }
+        }
+
+        if (!categoryExists)
+        {
+            var available = infos.Select(i => i.Name).ToList();
+            return new UseCategoryResult(false,
+                $"Category '{categoryName}' not found in manifest.",
+                0, [], available);
+        }
+
+        // Step 3: Load if not already active
+        if (!alreadyActive)
+        {
+            manifest.LoadCategory(categoryName);
+            var tools = manifest.GetToolsForCategory(categoryName);
+            var toolNames = new List<string>();
+            foreach (var tool in tools)
+            {
+                var mcpTool = new ManifestMcpServerTool(tool, categoryName);
+                server.ServerOptions.ToolCollection!.TryAdd(mcpTool);
+                toolNames.Add(tool.Name);
+            }
+
+            return new UseCategoryResult(true,
+                $"Category '{categoryName}' activated: {toolNames.Count} tool(s) registered.",
+                toolNames.Count, toolNames, null);
+        }
+
+        // Already loaded — return tool names
+        var existingTools = manifest.GetToolsForCategory(categoryName);
+        var existingNames = existingTools.Select(t => t.Name).ToList();
+        return new UseCategoryResult(true,
+            $"Category '{categoryName}' was already active: {existingNames.Count} tool(s) available.",
+            existingNames.Count, existingNames, null);
+    }
+
+    [McpServerTool, Description(
         "Force-reloads the tool manifest from disk for the active Unity project, " +
         "even if the manifest was already loaded. " +
         "Call this after Unity recompiles (e.g. you added a new [UnifoclCommand] method) " +
@@ -651,6 +724,12 @@ public sealed record GetCategoriesResult(bool ManifestLoaded, List<CategoryInfo>
 public sealed record LoadCategoryResult(bool Ok, string Message, int ToolsAdded);
 public sealed record UnloadCategoryResult(bool Ok, string Message, int ToolsRemoved);
 public sealed record ReloadManifestResult(bool Ok, string Message, int CategoryCount, int TotalTools);
+public sealed record UseCategoryResult(
+    bool Ok,
+    string Message,
+    int ToolCount,
+    List<string> Tools,
+    List<string>? AvailableCategories);
 
 // ── Agentic workflow guide tool ───────────────────────────────────────────────
 
