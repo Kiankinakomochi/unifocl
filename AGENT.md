@@ -48,6 +48,10 @@ The agent must treat the following as **non-negotiable principles**:
 - **Contract Strategy (Primary):** Shared transport contracts between CLI and Unity are plain C# records serialized as JSON. No protobuf dependency in the CLI build. Hierarchy `mk` types are defined as a CLI-local string catalog; the Unity side uses a normalized switch for built-in types with `TypeCache.GetTypesDerivedFrom<MonoBehaviour>()` as the open-ended fallback for custom types.
 - **Build Versioning Rule:** Development builds must use `aX` incremental suffixes in `CliVersion.SemVer` (for example: `0.3.2a1` -> `0.3.2a2`)
 - **PR Finalization Version Rule:** When finalizing changes for PR (push/PR creation), harden the version by closing the active dev-cycle suffix (set `CliVersion.DevCycle` to empty) and add an `Officialized` release entry in `CHANGELOG.md`.
+- **PR Finalization Build & Docs Rule:** Before pushing/creating a PR, always run these two steps in order:
+  1. **Compatcheck build:** `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
+  2. **Full documentation regeneration:** `scripts/build-full-docs.sh`
+  Commit any resulting changes to `full-documentation.md` alongside the PR.
 - **Bridge Protocol Rule:** If a change requires users to re-run `/init` (for example editor payload/package content changes), bump `CliVersion.Protocol` and include `/init` re-run guidance in the task summary/PR description.
 - **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in English
 - **Mainline Sync Rule:** Before finalizing work (push/PR), merge latest `main` (or `origin/main`) to detect upstream leading changes early and resolve any conflicts before continuing
