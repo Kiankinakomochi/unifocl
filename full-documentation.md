@@ -1,0 +1,2819 @@
+# unifocl
+
+![unifocl logo](https://github.com/user-attachments/assets/1bae1b33-b120-4ba2-bb34-77aa1250e7f7)
+
+**The programmable operations layer for Unity—built for keyboard-driven developers and autonomous AI agents.**
+
+Unity is a powerful engine, but its graphical, mouse-driven Editor can introduce friction for automation, LLM workflows, and developers who prefer the terminal. unifocl solves this by providing a structured, deterministic way to interact with, navigate, and mutate your Unity projects without relying on the GUI.
+
+Whether you are a developer looking for a snappy Terminal User Interface (TUI) to manipulate scenes, or you are hooking up an AI agent via the Model Context Protocol (MCP) to autonomously write code and edit prefabs, unifocl provides the bridge.
+
+unifocl is an independent project and is not associated with, affiliated with, or endorsed by Unity Technologies.
+
+## Why unifocl?
+
+- **Native Agentic Tooling (MCP):** Comes with a built-in MCP server. AI agents (like Claude) can seamlessly read your hierarchy, inspect components, and safely mutate assets using strict JSON/YAML response envelopes.
+- **Lean & Token-Efficient:** LLMs struggle with massive, unstructured context windows. unifocl is specifically designed to keep its API surface streamlined, feeding agents exactly the project state they need. This saves tokens, reduces costs, and keeps your agents focused.
+- **Safe, Deterministic Mutations:** Never let an AI break your project. Every single mutation command features mandatory dry-run capabilities and transactional safety (Undo/Redo integration), ensuring predictability before anything touches the disk.
+- **Instantly Extensible:** Need a custom tool for your agent? Add the `[UnifoclCommand]` attribute to your C# editor methods. unifocl automatically discovers them and exposes them as live MCP tools with built-in dry-run sandboxing.
+- **Dual-Interface:** A clean, keyboard-driven Spectre.Console TUI for humans, alongside a stateless, headless execution path for multi-agent workflows.
+- **Zero-Touch Compilation:** Deploy new editor scripts and let unifocl trigger Unity recompilation automatically—no manual window focusing required.
+
+## Installation
+
+### macOS (Apple Silicon & Intel)
+
+**Shell Installer:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Kiankinakomochi/unifocl/main/scripts/install.sh | sh
+```
+
+**Homebrew:**
+
+```sh
+brew tap Kiankinakomochi/unifocl
+brew install unifocl
+```
+
+### Windows (x64)
+
+**Winget:**
+
+```
+winget install unifocl
+```
+
+**PowerShell Installer:**
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Kiankinakomochi/unifocl/main/scripts/install.ps1 | iex
+```
+
+### Manual Download
+
+Download pre-built archives from the [latest GitHub release](https://github.com/Kiankinakomochi/unifocl/releases/latest) and place the binary anywhere in your `PATH`.
+
+### Agent Plugins (Codex + Claude Code)
+
+unifocl provides a built-in installer for agent integrations:
+
+```sh
+# Codex
+unifocl agent install codex
+
+# Claude Code
+unifocl agent install claude
+```
+
+This replaces manual MCP JSON edits and plugin management. Same command works for Homebrew, Winget, and release-binary users. Idempotent install/update flow versioned with the CLI lifecycle.
+
+## Quick Start
+
+### For Humans (The TUI)
+
+Launch the interactive shell to navigate your project at the speed of thought.
+
+```sh
+# Start the unifocl bridge in your project
+unifocl
+
+> /open ./MyUnityProject
+> /hierarchy
+> f PlayerController        # Fuzzy find
+> mk Cube                   # Create a GameObject
+> /inspect 12               # Inspect the object
+> set speed 5               # Change a component field
+```
+
+### For AI (The MCP Server & Agentic Execution)
+
+Agents can use the built-in MCP server or the one-shot `exec` path to read deterministic state and make safe changes.
+
+```sh
+# Run an agentic dry-run to see what will change
+unifocl exec "rename 3 PlayerController --dry-run" --agentic --format json
+```
+
+unifocl returns a structured diff payload, letting the LLM verify the change before committing it:
+
+```json
+{
+  "status": "success",
+  "action": "rename",
+  "diff": {
+    "format": "unified",
+    "summary": "Rename GameObject index 3",
+    "lines": ["--- before", "+++ after", "-  name: \"Cube\"", "+  name: \"PlayerController\""]
+  }
+}
+```
+
+Every mutation command supports `--dry-run`. The operation executes inside a Unity Undo group, captures a before/after diff, and immediately reverts—nothing touches the disk until you confirm.
+
+### Custom MCP Tools with `[UnifoclCommand]`
+
+Expose your own C# editor methods as live MCP tools:
+
+```csharp
+[UnifoclCommand("myteam.reset-player", "Reset player to spawn point")]
+public static void ResetPlayer(UnifoclCommandContext ctx)
+{
+    var player = GameObject.FindWithTag("Player");
+    player.transform.position = Vector3.zero;
+    ctx.Return("Player reset to origin");
+}
+```
+
+unifocl discovers these at runtime and makes them available as MCP tools—complete with automatic dry-run sandboxing. See [`docs/custom-commands.md`](docs/custom-commands.md) for the full guide.
+
+### Dynamic C# Eval
+
+Execute arbitrary C# directly in the Unity Editor context—no script files needed:
+
+```sh
+# Simple read query
+unifocl eval 'return Application.productName;'
+
+# Dry-run: execute and revert all Unity Undo-tracked changes
+unifocl eval 'Undo.RecordObject(Camera.main, "t"); Camera.main.name = "CHANGED";' --dry-run
+```
+
+Eval uses a dual-compiler strategy (Unity `AssemblyBuilder` in Bridge mode, bundled Roslyn in Host mode) and supports `async`/`await`, custom declarations, timeout protection, and `--dry-run` sandboxing. The entry point is always `async Task<object>`, so `await` works naturally.
+
+## Documentation Reference
+
+To keep this README clean, detailed technical specifications and command lists have been split into dedicated documents:
+
+| Document | Description |
+| --- | --- |
+| [Command & TUI Reference](docs/command-reference.md) | Full list of slash commands, contextual operations, keyboard shortcuts, dry-run mechanics, and eval details. |
+| [Agentic Workflow & Architecture](docs/agentic-workflow.md) | Deep dive into the daemon architecture, JSON envelopes, ExecV2 endpoints, concurrent worktrees, and the Persistence Safety Contract. |
+| [Custom Commands Guide](docs/custom-commands.md) | How to expose your C# methods as MCP tools with `[UnifoclCommand]`. |
+| [MCP Server Architecture](docs/mcp-server-architecture.md) | Built-in MCP server setup, agent JSON configuration, and multi-client guide. |
+| [Editor Compilation](docs/editor-compilation.md) | Details on headless/CI compilation behavior and zero-touch recompilation. |
+| [Validate & Build Workflow](docs/validate-build-workflow.md) | Project validation checks and build workflow commands. |
+| [Test Orchestration](docs/test-orchestration.md) | Unity test runner integration (EditMode/PlayMode). |
+| [Project Diagnostics](docs/project-diagnostics.md) | Assembly graphs, scene deps, compile errors, and other read-only introspection. |
+
+## Contributing & License
+
+External contributions are accepted for version 0.3.0 and later.
+
+Unless explicitly stated otherwise, any Contribution intentionally submitted for inclusion in version 0.3.0 and later is licensed under the Apache License 2.0.
+
+Apache License 2.0 applies to version 0.3.0 and all later versions.
+
+All content before version 0.3.0 is proprietary and all rights reserved.
+
+---
+
+# Agentic One-Shot Playbook (Current State)
+
+This note captures the current, post-fix behavior for `unifocl` one-shot agentic mode and how to run steps 4-6 reliably.
+
+## What Is Fixed
+
+1. `/hierarchy` now works in one-shot flows and updates context correctly.
+2. Hierarchy-mode one-shot commands are routed without interactive TUI.
+3. UI object parenting is stable when creating under a canvas (scene move + parent ordering fixed).
+4. Inspector one-shot path resolution is more robust:
+   - scene-root-prefixed paths are normalized
+   - Unity-style suffixes like `Name (1)` are resolved leniently
+5. Root-level `set <field> <value>` works when the field is uniquely resolvable across components.
+6. Step 5-6 layout/scaler changes were verified to persist in scene YAML.
+
+## One-Shot Golden Path (Steps 4-6)
+
+1. Keep a single session context across the full chain:
+   - use the same `--session-seed`
+   - keep daemon/attach target stable for the sequence
+2. Use this mode ordering:
+   - `/open <project>`
+   - `load <scene>`
+   - `/hierarchy`
+   - hierarchy `mk` operations
+   - `/inspect <path-or-id>` for component/property mutations
+3. After each mutation group, verify with:
+   - `/dump hierarchy`
+   - `/dump inspector`
+   - scene YAML spot-check for persisted values
+4. For FHD height-match canvas in one-shot:
+   - `CanvasScaler.uiScaleMode = ScaleWithScreenSize`
+   - `CanvasScaler.referenceResolution = 1920x1080`
+   - `CanvasScaler.matchWidthOrHeight = 1`
+5. For start screen layout, set anchored positions/sizes explicitly for title and buttons instead of relying on defaults.
+
+## Concrete Transport Use Cases
+
+1. Native unifocl mutation workflow (recommended default):
+   - Path: `Agent -> unifocl CLI -> daemon HTTP -> Unity`
+   - Use durable lifecycle: `submit -> get_status -> get_result`.
+2. Built-in MCP server workflow (for automation context/lookup):
+   - Start `unifocl --mcp-server` (stdio transport).
+   - Use MCP tools to query command signatures/descriptions without parsing README/help in prompts.
+   - Keep actual Unity mutations routed through the daemon durable HTTP mutation contract.
+
+## Best Practices For Future Agents
+
+1. If build/type issues appear around shared contracts, run:
+   - `git submodule sync --recursive`
+   - `git submodule update --init --recursive`
+2. Treat one-shot success as provisional until state is verified from dumps or YAML.
+3. Prefer path-based targeting over index-only targeting when possible.
+4. Keep hierarchy and inspector actions grouped by intent:
+   - create/parent in hierarchy mode
+   - mutate component fields in inspector mode
+5. When running via `dotnet run`, parse the JSON envelope from first `{` because build logs may precede it.
+
+## Token-Efficient, Robust Profile (Recommended)
+
+1. Keep one stable chain:
+   - same `--session-seed`
+   - same daemon attach target/port
+   - same project path
+2. Use the built-in MCP server for lookup/context and native daemon HTTP for mutation execution.
+3. For mutations, always use durable request lifecycle:
+   - `submit -> get_status -> get_result`
+   - this remains queryable through Unity compile/reload interruptions
+4. Minimize token usage by batching related operations:
+   - group hierarchy create/parent operations
+   - group inspector field mutations
+   - run verification dumps per batch instead of per single command
+5. For multi-agent reliability:
+   - one mutating agent per worktree
+   - one daemon port per worktree
+   - never share mutable worktree state across parallel agents
+
+## Session-Seed Stability Rules
+
+1. **Never rotate `--session-seed` mid-workflow.** Changing the seed drops the daemon attachment and forces a new `/open` cycle.
+2. **Derive seeds deterministically** from suite/case identity:
+   - Test suites: `{suite}-{case-id}` (auto-derived by `run-testcases.sh`)
+   - Manual workflows: human-readable stable identifier (e.g., `mission-console-001`)
+3. **Session snapshots persist across process exits** at `.unifocl-runtime/agentic/sessions/{seed}.json`. A resumed seed skips `/open` and reuses the attached daemon port.
+4. **If you get `E_PROJECT_LOCKED` (exit code 5):**
+   - Another agent/process holds the project lock.
+   - Do not retry — provision an isolated worktree instead:
+     ```bash
+     agent-worktree.sh provision --repo-root <repo> --worktree-path <dir> \
+       --branch <name>/<task> --source-project <project> --seed-library
+     ```
+5. **If the daemon dies mid-session** (stale session, crash):
+   - Run `/close` with the same seed to detach cleanly.
+   - Run `/open` again with the same seed to restart the daemon.
+   - The session-seed ensures the new daemon binds to the same session context.
+
+## Residual Risks / Caveats
+
+1. Daemon warmup/attach latency still exists right after `/open`; immediate follow-up commands may need retry logic in scripts.
+2. Index-based `inspect <idx>` remains cwd-sensitive; path-based inspect is safer for deterministic runs.
+3. Name collisions can still introduce suffixes (`(1)`, `(2)`); validate the final object path from hierarchy dump before inspector mutations.
+
+## What Made Earlier Attempts Hard
+
+These are practical friction points, not user mistakes:
+
+1. Pure one-shot + no TUI removed fallback flows while core one-shot hierarchy/inspector paths were still maturing.
+2. Full UI composition plus layout persistence in a single agentic run exposed multiple codepaths (routing, parenting, path resolution, serialization) at once.
+3. Validation needed both runtime dumps and YAML checks, which increases token/tool overhead but is required for confidence.
+
+## Recommended Next Hardening
+
+1. Add a CLI-level one-shot smoke test that covers:
+   - `/hierarchy`
+   - parented `mk`
+   - inspector `set` persistence for `CanvasScaler` and `RectTransform`
+2. Add a command to print current hierarchy cwd + selected node in one-shot mode.
+3. Add an optional strict mode that fails a mutation command when expected post-state does not match.
+
+---
+
+# Agentic Workflow & Architecture
+
+unifocl treats machine execution as a first-class citizen. It provides an **agentic execution path** specifically designed for LLMs, automations, and tool wrappers that require deterministic I/O instead of interactive TUI behavior.
+
+Core principles:
+
+- Structured response envelope for every command.
+- No Spectre/TUI rendering in agentic one-shot mode.
+- Standardized error taxonomy and process exit codes.
+- Explicit state serialization commands for context hydration.
+
+## 1. One-Shot CLI for Agents
+
+Use `exec` to run a single command and exit, suppressing all human UI:
+
+```
+unifocl exec "<command>" [--agentic] [--format json|yaml] [--project <path>] [--mode <project|hierarchy|inspector>] [--attach-port <port>] [--request-id <id>]
+```
+
+Examples:
+
+```
+unifocl exec "/version" --agentic --format json
+unifocl exec "/protocol" --agentic --format yaml
+unifocl exec "/dump project --format json --depth 2 --limit 5000" --agentic --project /path/to/UnityProject
+unifocl exec "upm list --outdated" --agentic --project /path/to/UnityProject --mode project
+```
+
+Notes:
+
+- `agentic` enables machine output (single response payload).
+- `format` controls payload encoding (`json` or `yaml`).
+- `project`, `mode`, and `attach-port` seed runtime context so commands can execute without interactive setup.
+
+Agentic best-practice profile (native bridge + built-in MCP server):
+
+- Use native durable daemon HTTP mutation lifecycle for writes (`submit -> status -> result`).
+- Use `unifocl --mcp-server` when automation needs compact command lookup/context tools over stdio.
+- For project mutations, prefer durable lifecycle calls (`submit -> status -> result`) instead of relying on a single long HTTP response.
+- Reuse one `--session-seed` and one daemon attach target per workflow chain to avoid context rehydration churn.
+- For deterministic edits, prefer path-based targeting and perform grouped verification (`/dump hierarchy` + `/dump inspector`) after each mutation batch.
+- For concurrent agents, use one worktree and one daemon port per agent; do not run multiple mutating agents in the same worktree.
+
+## 2. Unified Agentic Envelope
+
+`agentic` responses adhere to a strict machine-readable schema:
+
+```json
+{
+  "status": "success|error",
+  "requestId": "string",
+  "mode": "project|hierarchy|inspector|none",
+  "action": "string",
+  "data": {},
+  "errors": [{ "code": "E_*", "message": "string", "hint": "string|null" }],
+  "warnings": [{ "code": "W_*", "message": "string" }],
+  "diff": {
+    "format": "unified",
+    "summary": "string|null",
+    "lines": ["--- before", "+++ after", "..."]
+  },
+  "meta": {
+    "schemaVersion": "agentic.v1",
+    "protocol": "v3",
+    "exitCode": 0,
+    "timestampUtc": "ISO-8601 UTC",
+    "extra": {}
+  }
+}
+```
+
+Field semantics:
+
+- `status`: high-level outcome (`success` or `error`).
+- `requestId`: caller-supplied correlation id (or generated if omitted).
+- `mode`: effective runtime context after command execution.
+- `action`: normalized command family (e.g. `version`, `dump`, `upm`).
+- `data`: command payload (shape varies by action).
+- `errors`: deterministic machine errors (empty on success).
+- `warnings`: non-fatal issues.
+- `diff`: optional dry-run diff payload (present when `dry-run` preview is returned).
+- `meta`: schema/protocol/exit metadata plus optional command-specific extras.
+
+Agentic VCS setup guard:
+
+- Agentic project mutations short-circuit with `E_VCS_SETUP_REQUIRED` when UVCS is detected but project VCS setup is incomplete.
+- Non-mutation agentic commands continue to run.
+
+## 3. Agentic Exit Codes
+
+| **Exit Code** | **Meaning** |
+| --- | --- |
+| `0` | Success |
+| `2` | Validation / parse / context-state error |
+| `3` | Daemon/bridge availability or timeout class failure |
+| `4` | Internal execution error |
+| `6` | Escalation required (likely sandbox/network restriction prevented execution) |
+
+`E_VCS_SETUP_REQUIRED` is classified under exit code `2`. `E_ESCALATION_REQUIRED` is classified under exit code `6`.
+
+## 4. `/dump` State Serialization
+
+`/dump` is uniquely designed for agent context-window transfer and deterministic snapshots:
+
+```
+/dump <hierarchy|project|inspector> [--format json|yaml] [--compact] [--depth n] [--limit n]
+```
+
+Current behavior:
+
+- `hierarchy`: fetches hierarchy snapshot from attached daemon.
+- `project`: serializes deterministic `Assets` tree entries.
+- `inspector`: serializes inspector components/fields from attached bridge path.
+
+Context handling:
+
+- If required runtime state is missing (for example no attached daemon for `hierarchy`), response returns `E_MODE_INVALID` with a corrective hint.
+- Unsupported category returns `E_VALIDATION`.
+
+## 5. Daemon ExecV2 Endpoints
+
+Daemon service mode exposes structured agent endpoints over **UDS** by default (socket at `~/.unifocl-runtime/daemon-{port}.sock`). HTTP access requires `--unsafe-http` at daemon start and the `X-Unifocl-Token` request header.
+
+Endpoint list:
+
+- `POST /agent/exec` — structured ExecV2 command dispatch (see schema below)
+- `GET /agent/capabilities` — returns supported operations and risk levels
+- `GET /agent/status?requestId=<id>` — poll approval or execution status by request ID
+- `GET /agent/dump/{hierarchy|project|inspector}?format=json|yaml` — deterministic state dump
+
+**ExecV2 request schema** (`POST /agent/exec`):
+
+```json
+{
+  "operation": "asset.rename",
+  "requestId": "req-001",
+  "args": {
+    "assetPath": "Assets/Scripts/OldName.cs",
+    "newAssetPath": "Assets/Scripts/NewName.cs"
+  }
+}
+```
+
+**ExecV2 response schema:**
+
+```json
+{
+  "status": "Completed | Failed | Rejected | ApprovalRequired",
+  "requestId": "req-001",
+  "result": {},
+  "error": "string (on failure)",
+  "pendingApprovalToken": "string (when ApprovalRequired)"
+}
+```
+
+**Supported operations:**
+
+| Operation | Risk | Required args |
+| --- | --- | --- |
+| `asset.rename` | DestructiveWrite | `assetPath`, `newAssetPath` |
+| `asset.remove` | DestructiveWrite | `assetPath` |
+| `asset.create` | SafeWrite | `assetPath`, `content?` |
+| `asset.create_script` | SafeWrite | `assetPath`, `content?` |
+| `build.run` | PrivilegedExec | _(none)_ |
+| `build.exec` | PrivilegedExec | `method` |
+| `build.scenes.set` | SafeWrite | `scenes` (array of paths) |
+| `upm.remove` | DestructiveWrite | `packageId` |
+| `prefab.create` | SafeWrite | `nodeSelector`, `assetPath` |
+| `prefab.apply` | SafeWrite | `nodeSelector` |
+| `prefab.revert` | SafeWrite | `nodeSelector` |
+| `prefab.unpack` | DestructiveWrite | `nodeSelector`, `completely?` |
+| `prefab.variant` | SafeWrite | `sourcePath`, `newPath` |
+| `eval.run` | PrivilegedExec | `code`, `declarations?`, `timeoutMs?` |
+| `test.list` | SafeRead | _(none)_ |
+| `test.run` | PrivilegedExec | `platform` (`EditMode`\|`PlayMode`), `timeoutSeconds?` |
+| `hierarchy.snapshot` | SafeRead | _(none)_ |
+| `session.open` | SafeRead | _(none)_ |
+| `session.close` | SafeRead | _(none)_ |
+| `session.status` | SafeRead | _(none)_ |
+
+`DestructiveWrite` and `PrivilegedExec` operations return `ApprovalRequired` on first call. Re-send the same request with `"intent": {"approvalToken": "<token>"}` to confirm execution.
+
+**Approval confirmation example:**
+
+```json
+{
+  "operation": "asset.rename",
+  "requestId": "req-001",
+  "args": { "assetPath": "Assets/Old.cs", "newAssetPath": "Assets/New.cs" },
+  "intent": { "approvalToken": "<token-from-ApprovalRequired-response>" }
+}
+```
+
+The daemon-side agent endpoint routes through the typed ExecV2 operation router — free-form `commandText` execution has been removed.
+
+## 6. Error Taxonomy
+
+| **Error Code** | **Meaning** |
+| --- | --- |
+| `E_PARSE` | Command parse/payload syntax failure |
+| `E_MODE_INVALID` | Command cannot run in current context |
+| `E_NOT_FOUND` | Requested object/asset/component not found |
+| `E_TIMEOUT` | Operation timed out |
+| `E_UNITY_API` | Daemon/bridge Unity execution path failure |
+| `E_VCS_SETUP_REQUIRED` | Mutation blocked until interactive UVCS setup is completed |
+| `E_ESCALATION_REQUIRED` | Command likely blocked by sandbox/network and needs elevated rerun |
+| `E_VALIDATION` | Semantic validation failed |
+| `E_INTERNAL` | Unhandled runtime error |
+
+## 7. Capability Discovery and OpenAPI
+
+Runtime capability discovery:
+
+```
+unifocl exec "/protocol" --agentic --format json
+# HTTP (requires --unsafe-http daemon flag and token header):
+curl -H "X-Unifocl-Token: $(cat ~/.unifocl-runtime/http-token-8080.txt)" \
+  "http://127.0.0.1:8080/agent/capabilities"
+```
+
+Static OpenAPI contract:
+
+- [`openapi-agentic.yaml`](openapi-agentic.yaml)
+
+## 8. Concurrent Worktree Integration (Parallel Agents)
+
+Agentic mode is designed to run safely across multiple autonomous agents by isolating each agent in its own worktree and daemon port.
+
+Use the built-in orchestration scripts:
+
+- Bash: `src/unifocl/scripts/agent-worktree.sh`
+- PowerShell: `src/unifocl/scripts/agent-worktree.ps1`
+
+Recommended flow (bash example):
+
+```sh
+# 1) Provision isolated worktree + branch from origin/main
+src/unifocl/scripts/agent-worktree.sh provision \
+  --repo-root . \
+  --worktree-path ../unifocl-agent-a \
+  --branch codex/agent-a
+
+# 2) Scaffold a minimal Unity project for agentic smoke tests
+src/unifocl/scripts/agent-worktree.sh setup-smoke-project \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project
+
+# 3) Run bridge init via one-shot agentic execution (no interactive shell)
+src/unifocl/scripts/agent-worktree.sh init-smoke-agentic \
+  --worktree-path ../unifocl-agent-a \
+  --project-path .local/agentic-smoke-project \
+  --format json
+
+# 4) Open project (provisions/attaches daemon via /open)
+dotnet run --project src/unifocl/unifocl.csproj -- \
+  exec "/open $(pwd)/../unifocl-agent-a/.local/agentic-smoke-project" \
+  --agentic --project "$(pwd)/../unifocl-agent-a/.local/agentic-smoke-project" --mode project
+
+# 5) Execute deterministic machine command in that isolated workspace
+cd ../unifocl-agent-a
+dotnet run --project src/unifocl/unifocl.csproj -- \
+  exec "/dump project --format json --depth 2 --limit 2000" \
+  --agentic --project "$(pwd)/.local/agentic-smoke-project" --mode project
+```
+
+Concurrency safeguards:
+
+- one agent = one branch + one worktree.
+- one worktree = one daemon port.
+- never let multiple agents mutate the same worktree concurrently.
+- tear down completed worktrees via script (`teardown`) or `git worktree remove --force`.
+
+Operating boundaries: no cross-worktree edits, no shared mutable daemon state, no daemon port reuse assumptions.
+
+Smoke project default: `setup-smoke-project` seeds `Packages/manifest.json` with `com.unity.modules.imageconversion`.
+
+## Architecture & Core Systems
+
+### Application Architecture
+
+unifocl is a .NET console application built for cross-platform compatibility (Windows, macOS, Linux). The architecture seamlessly supports both the human CLI and the agentic machine interfaces. It is divided into four primary layers:
+
+1. **CLI Layer:** Handles commands, Spectre.Console human interactions, and stateless agentic routing.
+2. **Mode System:** Manages the context-aware environments (Hierarchy, Project, Inspector).
+3. **Daemon Layer:** A persistent background coordinator that tracks project state and serves as the backend API.
+4. **Bridge Mode Channel:** The communication interface between the daemon and an active Unity Editor/runtime.
+
+### The unifocl Daemon
+
+The daemon is a localhost control process, not a kernel/OS-level file mutation service.
+
+Current implementation summary:
+
+- **External transport (CLI <-> unifocl daemon):** The CLI and agents communicate with the unifocl daemon over a **Unix Domain Socket** (`~/.unifocl-runtime/daemon-{port}.sock`, chmod 0600) by default. An HTTP listener on `127.0.0.1:<port>` is only started when the daemon is launched with `--unsafe-http`, and requires the `X-Unifocl-Token` header (token written to `~/.unifocl-runtime/http-token-{port}.txt` at startup, chmod 0600). Request body size is capped at 1 MB on the HTTP path.
+- **Internal transport (unifocl daemon <-> Unity Editor):** The unifocl daemon communicates internally with the Unity Editor-side bridge (`CLIDaemon`) over a separate localhost HTTP channel — this is always local-only and not exposed to agents.
+- The daemon keeps a project-scoped session warm so commands do not need to cold-start Unity every time.
+- Mode selection is runtime-based:
+    - **Host mode:** If no suitable GUI editor bridge is attached, unifocl starts Unity in batch/no-graphics mode (`headless`) and serves commands through that Unity process.
+    - **Bridge mode:** If a GUI Unity editor for the same project is already active and attachable, unifocl routes commands to that live editor bridge endpoint.
+- Project operations are executed by Unity-side services/contracts (`CLIDaemon`/`DaemonProjectService`), then reported back to the CLI/Agent as typed ExecV2 responses.
+- If an endpoint is reachable but unhealthy (for example ping works but project commands do not), unifocl restarts and re-attaches the managed daemon path.
+- Daemon state is tracked per project (deterministic port + local `.unifocl` config/session metadata).
+
+What this means in practice:
+
+- unifocl does not bypass Unity with privileged OS hooks.
+- It either executes through a Host-mode Unity runtime or through a Bridge-mode attached editor runtime, depending on what is available.
+
+## Persistence Safety Contract
+
+unifocl enforces a mutation safety contract across `hierarchy`, `inspector`, and `project` modes, crucial for safe autonomous agent execution and human user error prevention. The implementation is split into four layers.
+
+### 1. Transactional Envelope (Daemon Core)
+
+All mutating requests carry a required `MutationIntent` envelope before Unity API or filesystem execution.
+
+Current envelope fields:
+
+- `transactionId`
+- `target`
+- `property`
+- `oldValue`
+- `newValue`
+- `flags.dryRun`
+- `flags.requireRollback` (must be `true`)
+- `flags.vcsMode` (optional: `uvcs_all` or `uvcs_hybrid_gitignore`)
+- `flags.vcsOwnedPaths[]` (optional per-path owner metadata used for checkout policy)
+
+Daemon-side validation is centralized in `DaemonMutationTransactionCoordinator` and rejects mutation requests that are missing or invalid. Valid intents are routed to a deterministic safety handler by mode:
+
+- `hierarchy` / `inspector` -> `memory`
+- `project` -> `filesystem`
+
+Each mutation entrypoint returns a unified transaction decision envelope (`success|error`) before command execution continues.
+
+### 2. Memory Layer Safety (Hierarchy & Inspector)
+
+Inspector and hierarchy property writes are routed through Unity serialized APIs and guarded for idempotency:
+
+- Mutations use `SerializedObject` / `SerializedProperty`.
+- Read-before-write checks skip no-op writes.
+- `Undo.RecordObject(...)` + `ApplyModifiedProperties()` execute only when values actually change.
+
+Lifecycle and multi-step memory mutations are wrapped in Undo boundaries:
+
+- Creates use `Undo.RegisterCreatedObjectUndo(...)`.
+- Deletes use `Undo.DestroyObjectImmediate(...)`.
+- Multi-step operations use grouped Undo with `Undo.CollapseUndoOperations(groupId)` on success.
+- Failures revert via `Undo.RevertAllDownToGroup(groupId)`.
+
+Persistence hooks for scene/prefab integrity:
+
+- Prefab instances are tracked with `PrefabUtility.RecordPrefabInstancePropertyModifications(...)`.
+- Successful scene mutations mark and save through `EditorSceneManager.MarkSceneDirty(...)` and scene persistence services.
+- Dry-run mode suppresses durable scene writes.
+
+### 3. Filesystem Layer Safety (Project Mode)
+
+Project-mode mutations that bypass Unity Undo are protected with transactional stashing and VCS-aware preflight:
+
+- Before execution, UVCS-owned paths are preflighted for checkout (checkout-first policy; mutation fails if checkout is unavailable).
+- Ownership mode is resolved per project:
+    - `uvcs_all`: all mutation targets are treated as UVCS-owned.
+    - `uvcs_hybrid_gitignore`: ownership is resolved from `.gitignore` rules at path level.
+- Before execution, target assets and matching `.meta` files are shadow-copied into runtime stash storage under `$(UNIFOCL_PROJECT_STASH_ROOT || <temp>/unifocl-stash)/<project-hash>/...`.
+- On success, stash contents are removed (commit path).
+- On failure or exception, the stash is restored and cleanup targets are removed, then `AssetDatabase.Refresh(ForceUpdate)` is called to re-sync Unity state.
+
+Unity Version Control (formerly Plastic SCM) behavior:
+
+- UVCS uses checkout semantics, so writable filesystem state alone is not treated as authority for safe mutation.
+- unifocl resolves ownership per target path, then performs checkout preflight before any file mutation is attempted.
+- Paths classified as UVCS-owned must pass checkout preflight first; otherwise the mutation is rejected before file I/O begins.
+- In `uvcs_hybrid_gitignore` mode, `.gitignore` is used as a pragmatic ownership split so UVCS checkout is enforced only for paths considered UVCS-owned.
+- Dry-run includes ownership and checkout hints so automation can validate mutation viability before execution.
+
+Interactive setup guard:
+
+- When UVCS is auto-detected but unconfigured, the first project mutation prompts for one-time VCS setup and stores `.unifocl/vcs-config.json`.
+- If setup is declined, mutation is aborted with actionable guidance.
+
+Critical filesystem mutation sections are serialized with `SemaphoreSlim` to avoid concurrent race conditions during stash/restore and mutation execution.
+
+### 4. Dry-Run & Preview Mechanics
+
+Dry-run behavior is wired end-to-end from CLI parsing to daemon execution and agentic responses.
+
+Memory dry-run (`hierarchy` / `inspector`):
+
+- Snapshot pre-mutation state with `EditorJsonUtility.ToJson(...)`.
+- Execute mutation inside an Undo group.
+- Snapshot post-mutation state.
+- Immediately revert with Undo.
+- Return a structured unified diff payload.
+
+Filesystem dry-run (`project`):
+
+- No `System.IO` mutation occurs.
+- Daemon returns proposed path and metadata changes (including `.meta` side effects), plus ownership/checkout hints for each path change.
+
+CLI / agentic integration:
+
+- Interactive outputs append unified dry-run diff lines in Spectre command logs.
+- `agentic.v1` envelopes include optional `diff` payloads (`format`, `summary`, `lines`) for machine consumers.
+
+---
+
+# Command & TUI Reference
+
+Full reference of all unifocl commands, keybindings, dry-run mechanics, and dynamic C# eval.
+
+unifocl operates through a unified command set. Humans can launch the interactive shell (boot screen) to use **slash commands** (e.g., `/open`) for lifecycle operations and **standard commands** (e.g., `ls`, `cd`) for contextual actions. AI agents access these exact same commands via the stateless `exec` pathway or the built-in MCP server.
+
+## 1. System & Lifecycle Commands
+
+These commands manage your session, project loading, and configuration. In the interactive shell, they are prefixed with a slash (`/`).
+
+| **Command** | **Alias** | **Description** |
+| --- | --- | --- |
+| `/open <path> [--allow-unsafe]` | `/o` | Open a Unity project. Starts/attaches to the daemon and loads metadata. |
+| `/close` | `/c` | Detach from the current project and stop the attached daemon. |
+| `/quit` | `/q`, `/exit` | Exit the CLI client (leaves the daemon running). |
+| `/daemon <start\|stop\|restart\|ps\|attach\|detach>` | `/d` | Manage daemon lifecycle commands. |
+| `/new <name> [version]` |  | Bootstrap a new Unity project. |
+| `/clone <git-url>` |  | Clone a repository and set up local CLI bridge-mode config. |
+| `/recent [idx]` |  | List recent projects or open one by index. |
+| `/config <get/set/list/reset>` | `/cfg` | Manage CLI preferences (e.g., themes). |
+| `/status` | `/st` | Show daemon, mode, editor, project, and session status summary. |
+| `/doctor` |  | Run environment and tooling diagnostics. |
+| `/scan [--root <dir>] [--depth <n>]` |  | Scan directories for Unity projects. |
+| `/info <path?>` |  | Inspect Unity project metadata and protocol details. |
+| `/logs [daemon\|unity] [-f]` |  | Show daemon runtime summary or follow logs. |
+| `/examples` |  | Show common operational command flows. |
+| `/update` |  | Show installed CLI version and update guidance. |
+| `/install-hook` |  | Run bridge dependency install flow (`/init`) against current/open project. |
+| `/agent install <codex\|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]` |  | Install/update MCP integration for Codex or Claude. |
+| `/unity detect` |  | List installed Unity editors. |
+| `/unity set <path>` |  | Set default Unity editor path. |
+| `/build run [target] [--dev] [--debug] [--clean] [--path <output-path>]` | `/b` | Trigger a Unity player build. If target is omitted, choose from an interactive target selector. |
+| `/build exec <Method>` | `/bx` | Execute a static build method (e.g., `CI.Builder.BuildAndroidProd`). |
+| `/build scenes` |  | Open an interactive TUI to view, toggle, and reorder build scenes. |
+| `/build addressables [--clean] [--update]` | `/ba` | Trigger an Addressables content build (full or update mode). |
+| `/build cancel` |  | Request cancellation for the active build process via daemon. |
+| `/build targets` |  | List platform build support currently available in this Unity Editor. |
+| `/build logs` |  | Reopen live build log tail (restartable, with error filtering). |
+| `/build snapshot-packages` |  | Snapshot `Packages/manifest.json` to a timestamped file under `.unifocl-runtime/snapshots/`. |
+| `/build preflight` |  | Run scene-list + build-settings + packages validators sequentially and report aggregated pass/fail before a build. |
+| `/build artifact-metadata` |  | Show file list, sizes, and target from the last captured build report. |
+| `/build failure-classify` |  | Classify errors from the last build into CompileError / LinkerError / MissingAsset / ScriptError / Timeout categories. |
+| `/build report` |  | Render a consolidated build summary: preflight + artifacts + classified failures. |
+| `/upm` |  | Show Unity Package Manager command usage and options. |
+| `/upm list [--outdated] [--builtin] [--git]` | `/upm ls` | List installed Unity packages (with optional outdated/builtin/git filters). |
+| `/upm install <target>` | `/upm add`, `/upm i` | Install a package by package ID, Git URL, or `file:` target. |
+| `/upm remove <id>` | `/upm rm`, `/upm uninstall` | Remove a package by package ID. |
+| `/upm update <id> [version]` | `/upm u` | Update a package to latest or a specified version. |
+| `/prefab create <idx\|name> <asset-path>` |  | Convert a scene GameObject into a new Prefab Asset on disk. |
+| `/prefab apply <idx>` |  | Push instance overrides back to the source Prefab Asset. |
+| `/prefab revert <idx>` |  | Discard local overrides, revert to the source Prefab Asset. |
+| `/prefab unpack <idx> [--completely]` |  | Break the prefab connection, turning the instance into a regular GameObject. |
+| `/prefab variant <source-path> <new-path>` |  | Create a Prefab Variant inheriting from a base prefab. |
+| `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
+| `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
+| `/version` |  | Show CLI and protocol version. |
+| `/protocol` |  | Show supported JSON schema capabilities. |
+| `/dump <hierarchy\|project\|inspector> [--format json\|yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
+| `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
+| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `all`). |
+| `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`). No daemon required. |
+| `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `all`). All ops are read-only and require the daemon. See [`project-diagnostics.md`](project-diagnostics.md). |
+| `/clear` |  | Clear and redraw the boot screen and log. |
+| `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
+
+**Behavior Notes & Protocol Hardening:**
+
+- `/daemon` without a subcommand returns usage plus process summary.
+- Unsupported slash-command routes return explicit `unsupported route` messaging.
+- **Host-mode hierarchy fallback** is available when no GUI bridge is attached:
+    - `HIERARCHY_GET` returns an `Assets` root snapshot.
+    - `HIERARCHY_FIND` fuzzy-searches node names/paths.
+    - `HIERARCHY_CMD` supports `mk`, `rm`, `rename`, `mv`, `toggle` with guardrails.
+    - *Host-mode fallback safety constraints:* All mutations are constrained within `Assets`; move/rename path-escape is rejected; moving a directory into itself/descendants is rejected; `mk` validates names and supports typed placeholders (`Empty`, `EmptyChild`, `EmptyParent`, `Text/TMP`, `Sprite`, default prefab).
+- Durable project mutations are supported (`submit -> status -> result`) so mutation outcomes remain queryable even if Unity refresh/compile/domain reload interrupts an in-flight HTTP response.
+- Durable mutations use native daemon HTTP endpoints by default and no longer require the external Unity-MCP package/runtime dependencies.
+- Built-in MCP server mode is available for automation tooling: start with `unifocl --mcp-server` (stdio transport, .NET MCP SDK).
+- MCP command lookup tools are exposed by the built-in server so agents can discover usage without reading full docs:
+    - `ListCommands(scope, query, limit)`
+    - `LookupCommand(command, scope)`
+- **Custom tool category tools** allow agents to discover and load user-defined `[UnifoclCommand]` methods on demand:
+    - `get_categories()` — list available tool categories from the project manifest
+    - `load_category(name)` — register a category's tools as live MCP tools (`tools/list_changed` is fired)
+    - `unload_category(name)` — remove a category's tools from the active list
+    - Full guide: [`custom-commands.md`](custom-commands.md)
+- MCP server architecture + agent JSON configuration guide:
+    - [`mcp-server-architecture.md`](mcp-server-architecture.md)
+    - Quick multi-client setup helper: `scripts/setup-mcp-agents.sh`
+- **Durable HTTP fallback endpoints:** `POST /project/mutation/submit`, `GET /project/mutation/status?requestId=<id>`, `GET /project/mutation/result?requestId=<id>`, `POST /project/mutation/cancel?requestId=<id>`
+
+## 2. Daemon Management
+
+The daemon acts as the persistent backend coordinator for both human operators and agentic workflows. Manage it using the `/daemon` (or `/d`) command suite.
+
+| **Subcommand** | **Description** |
+| --- | --- |
+| `start` | Start a daemon. Accepts flags: `--port`, `--unity <path>`, `--project <path>`, `--headless` (Host mode), `--allow-unsafe`, `--unsafe-http` (enable HTTP listener in addition to UDS). |
+| `stop` | Stop the daemon instance controlled by this CLI. |
+| `restart` | Restart the currently attached daemon. |
+| `ps` | List running daemon instances, ports, uptimes, and associated projects. |
+| `attach <port>` | Attach the CLI to an existing daemon at the specified port. |
+| `detach` | Detach the CLI but keep the daemon alive in the background. |
+
+**Concurrent Autonomous Agents Notes:** For concurrent autonomous agents, provision isolated git worktrees and run daemon boot per worktree with dynamic port mapping. See [`agentic-workflow.md`](agentic-workflow.md) for full details.
+
+## 3. Context & Mode Switching
+
+Switch the active operational context for your session or agent execution.
+
+| **Command** | **Alias** | **Description** |
+| --- | --- | --- |
+| `/project` | `/p` | Switch to Project mode (asset structure navigation). |
+| `/hierarchy` | `/h` | Switch to Hierarchy mode (scene structure TUI/tree). |
+| `/inspect <idx/path>` | `/i` | Switch to Inspector mode and focus a target. |
+
+## 4. Contextual Operations (Non-Slash Commands)
+
+Interact directly with the active environment. Mutating operations are safely routed through Bridge mode when available, or Host mode fallback when applicable, ensuring deterministic behavior for both humans and AI.
+
+| **Command** | **Alias** | **Description** |
+| --- | --- | --- |
+| `list` | `ls` | List entries in the current active context. |
+| `enter <idx>` | `cd` | Enter the selected node, folder, or component by index. |
+| `up` | `..` | Navigate up one level to the parent. |
+| `make <type> <name>` | `mk` | Create an item (e.g., `mk script Player`, `mk gameobject`). |
+| `load <idx/name>` |  | Load/open a scene, prefab, or script. |
+| `remove <idx>` | `rm` | Remove the selected item. |
+| `rename <idx> <new>` | `rn` | Rename the selected item. |
+| `set <field> <val>` | `s` | Set a field or property value. |
+| `toggle <target>` | `t` | Toggle boolean/active/enabled flags. |
+| `move <...>` | `mv` | Move, reparent, or reorder an item. |
+| `f [--type <type>\|t:<type>] <query>` | `ff` | Run fuzzy find in the active mode. |
+| `go find <query>` |  | Hierarchy-mode fuzzy find alias for `f`. |
+| `go duplicate <idx> [name]` |  | Duplicate a hierarchy GameObject. |
+| `asset find <query>` |  | Project-mode fuzzy find alias for `f`. |
+| `asset duplicate <idx\|name> [new-path]` |  | Duplicate an asset in project mode. |
+| `inspect [idx\|path]` |  | Enter inspector root target from inspector context. |
+| `edit <field> <value...>` | `e` | Edit serialized field value for the selected component (inspector). |
+| `component add <type>` | `comp add <type>` | Add a component to the inspected object. |
+| `component find <query>` |  | Find components on the inspected object. |
+| `component duplicate <index\|name>` |  | Duplicate a component on the inspected object. |
+| `component remove <index\|name>` | `comp remove <index\|name>` | Remove a component from the inspected object. |
+| `scroll [body\|stream] <up\|down> [count]` |  | Scroll inspector body or command stream. |
+| `upm list [--outdated] [--builtin] [--git]` | `upm ls` | List installed Unity packages in project mode. |
+| `upm install <target>` | `upm add`, `upm i` | Install package by ID, Git URL, or `file:` target in project mode. |
+| `upm remove <id>` | `upm rm`, `upm uninstall` | Remove package by package ID in project mode. |
+| `upm update <id> [version]` | `upm u` | Update package to latest or specified version in project mode. |
+| `build run [target] [--dev] [--debug] [--clean] [--path <output-path>]` | `b` | Run Unity build in project mode. |
+| `build exec <Method>` | `bx` | Execute static build method in project mode. |
+| `build scenes` |  | Open scene build-settings TUI in project mode. |
+| `build addressables [--clean] [--update]` | `ba` | Build Addressables content in project mode. |
+| `build cancel` |  | Request cancellation for active build in project mode. |
+| `build targets` |  | List Unity build support targets in project mode. |
+| `build logs` |  | Open restartable build log tail in project mode. |
+| `build snapshot-packages` |  | Snapshot package manifest to `.unifocl-runtime/snapshots/` in project mode. |
+| `build preflight` |  | Run pre-build validation suite in project mode. |
+| `build artifact-metadata` |  | Show last build artifact files and sizes in project mode. |
+| `build failure-classify` |  | Classify last build errors by category in project mode. |
+| `build report` |  | Consolidated build report in project mode. |
+| `addressable init` |  | Create Addressables settings and default groups if missing. |
+| `addressable profile list` |  | List all profiles and evaluated variables. |
+| `addressable profile set <name>` |  | Set active Addressables profile. |
+| `addressable group list` |  | List groups with packing/compression details. |
+| `addressable group create <name> [--default]` |  | Create a group and optionally set it as default for new entries. |
+| `addressable group remove <name>` |  | Remove a group and unmark contained entries safely. |
+| `addressable entry add <asset-path> <group-name>` |  | Mark an asset as Addressable and place it in a group. |
+| `addressable entry remove <asset-path>` |  | Remove Addressable flag from an asset entry. |
+| `addressable entry rename <asset-path> <new-address>` |  | Change an entry's address key. |
+| `addressable entry label <asset-path> <label> [--remove]` |  | Add/remove a label on a specific Addressable entry. |
+| `addressable bulk add --folder <path> --group <name> [--type <T>]` |  | Add all matching assets in a folder to a group in one operation. |
+| `addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]` |  | Add/remove labels for matching folder assets in one operation. |
+| `addressable analyze [--duplicate]` |  | Output structured Addressables analysis or duplicate dependency report. |
+| `test list` |  | List all available edit-mode tests (name + assembly). No daemon required. |
+| `test run editmode [--timeout <s>]` |  | Run all EditMode tests via Unity subprocess; returns structured JSON results. Default timeout 600s. |
+| `test run playmode [--timeout <s>]` |  | Run all PlayMode tests via Unity subprocess. May trigger player build. Default timeout 1800s. |
+| `diag script-defines` |  | Show scripting define symbols per build target group in project mode. |
+| `diag compile-errors` |  | Show compiler messages from last compilation pass in project mode. |
+| `diag assembly-graph` |  | Show asmdef-level assembly dependency graph in project mode. |
+| `diag scene-deps` |  | Show transitive asset dependencies per enabled build scene in project mode. |
+| `diag prefab-deps` |  | Show transitive asset dependencies per prefab (capped at 100) in project mode. |
+| `prefab create <idx\|name> <asset-path>` |  | Convert scene GameObject to new Prefab Asset on disk in project mode. |
+| `prefab apply <idx>` |  | Push instance overrides back to source Prefab Asset in project mode. |
+| `prefab revert <idx>` |  | Discard local overrides, revert to source Prefab Asset in project mode. |
+| `prefab unpack <idx> [--completely]` |  | Break prefab connection in project mode. |
+| `prefab variant <source-path> <new-path>` |  | Create Prefab Variant from base prefab in project mode. |
+
+## 5. Profiling (Lazy-Loaded Category)
+
+The `profiling` category provides capture, analysis, and live telemetry tools backed by Unity's Profiler, MemoryProfiler, ProfilerRecorder, and FrameTimingManager APIs. It is **lazy-loaded** — call `load_category('profiling')` to register the tools as live MCP tools.
+
+**CLI commands:**
+
+```
+/profiler inspect
+/profiler start [--deep] [--editor] [--keep-frames]
+/profiler stop
+/profiler save <path>
+/profiler load <path> [--keep-existing]
+/profiler snapshot <path>
+/profiler frames --from <a> --to <b>
+/profiler counters --from <a> --to <b> [--names <list>]
+/profiler threads --frame <n>
+/profiler markers --frame <n>
+/profiler markers --from <a> --to <b>
+/profiler sample --frame <n> --thread <idx>
+/profiler gc-alloc --from <a> --to <b>
+/profiler compare <baseline> <candidate>
+/profiler budget-check <expressions...>
+/profiler export-summary <path>
+/profiler live start [--counters <list>] [--duration <seconds>]
+/profiler live stop
+/profiler recorders
+/profiler frame-timing
+/profiler binary-log start <path>
+/profiler binary-log stop
+/profiler annotate session <json>
+/profiler annotate frame <json>
+```
+
+**Agent / MCP operations (after `load_category('profiling')`):**
+
+| Operation | Risk | Description |
+| --- | --- | --- |
+| `profiling.capabilities` | SafeRead | Feature probe for current editor/runtime context |
+| `profiling.inspect` | SafeRead | Profiler state, frame range, memory stats |
+| `profiling.start_recording` | PrivilegedExec | Start profiler recording (deep, editor, keepFrames) |
+| `profiling.stop_recording` | PrivilegedExec | Stop recording, return frame range summary |
+| `profiling.save_profile` | SafeWrite | Save editor profiler session as `.data` capture |
+| `profiling.load_profile` | SafeWrite | Load `.data` capture into editor session |
+| `profiling.take_snapshot` | SafeWrite | Take memory snapshot (`.snap`) |
+| `profiling.frames` | SafeRead | Frame range stats: CPU/GPU/FPS avg/p50/p95/max |
+| `profiling.counters` | SafeRead | Counter series extraction for a frame range |
+| `profiling.threads` | SafeRead | Thread enumeration for a given frame |
+| `profiling.markers` | SafeRead | Top markers by total/self time |
+| `profiling.sample` | SafeRead | Raw per-sample timing, metadata, callstacks |
+| `profiling.gc_alloc` | SafeRead | GC allocation tracking by marker and frame |
+| `profiling.compare` | SafeRead | Baseline vs candidate frame range deltas |
+| `profiling.budget_check` | SafeRead | CI-friendly pass/fail budget rules |
+| `profiling.export_summary` | SafeRead | Write stats JSON summary to disk |
+| `profiling.live_start` | PrivilegedExec | Start ProfilerRecorder counter collection |
+| `profiling.live_stop` | PrivilegedExec | Stop live collection, return stats + samples |
+| `profiling.recorders_list` | SafeRead | Enumerate available ProfilerRecorder counters |
+| `profiling.frame_timing` | SafeRead | FrameTimingManager CPU/GPU timing |
+| `profiling.binary_log_start` | PrivilegedExec | Start raw binary log (`.raw`) streaming |
+| `profiling.binary_log_stop` | PrivilegedExec | Stop binary logging, return file path and size |
+| `profiling.annotate_session` | SafeWrite | Emit session-level metadata into profiler stream |
+| `profiling.annotate_frame` | SafeWrite | Emit frame-level metadata into profiler stream |
+| `profiling.gpu_capture_begin` | PrivilegedExec | Begin external GPU capture (RenderDoc/PIX) |
+| `profiling.gpu_capture_end` | PrivilegedExec | End external GPU capture |
+
+**Important:** Editor capture save/load (`.data` via `ProfilerDriver`) and runtime binary logging (`.raw` via `Profiler.logFile`) are separate flows — do not confuse them.
+
+## 6. Safe Mutation: Dry-Run Previews
+
+Both human operators and AI agents can validate mutations safely before execution. `--dry-run` is supported for mutation commands in all interactive and agentic modes:
+
+- `Hierarchy` mutations (`mk`, `toggle`, `rm`, `rename`, `mv`, `go duplicate`)
+- `Inspector` mutations (`set`, `toggle`, `component add/duplicate/remove`, `make`, `remove`, `rename`, `move`)
+- `Project` filesystem mutations (`mk-script`, `rename-asset`, `duplicate-asset`, `remove-asset`, `prefab-create`, `prefab-apply`, `prefab-revert`, `prefab-unpack`, `prefab-variant`)
+- `Addressables` mutations (`addressable init`, `profile set`, `group create/remove`, `entry add/remove/rename/label`, `bulk add`, `bulk label`)
+- **Custom `[UnifoclCommand]` tools** — pass `dryRun: true` in the tool arguments; unifocl wraps the call in a Unity Undo group and reverts all in-memory and AssetDatabase changes automatically (see [`custom-commands.md`](custom-commands.md))
+- **`/eval` dynamic C# execution** — pass `--dry-run` to execute code inside the Undo sandbox; all Unity-tracked changes are reverted after execution completes
+
+**Behavior:**
+
+- **Hierarchy / Inspector (memory layer):** unifocl captures pre/post state snapshots, executes inside an Undo group, immediately reverts, and returns a structured diff preview.
+- **Project (filesystem layer):** unifocl returns proposed path/meta changes without performing file I/O.
+- **TUI/Agentic rendering:** When `dry-run` is appended, unified diff lines are shown in the transcript output for humans, or nested in the `diff` payload for agents.
+
+**Examples:**
+
+```
+# hierarchy mode
+mk Cube --dry-run
+rename 12 NewName --dry-run
+
+# inspector mode
+set speed 5 --dry-run
+component add Rigidbody --dry-run
+
+# project mode
+rename 3 PlayerController --dry-run
+rm 7 --dry-run
+```
+
+## 7. Dynamic C# Eval
+
+The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities — all without creating script files.
+
+```
+/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]
+```
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--declarations '<decl>'` | Additional C# declarations (classes, using directives) injected before the entry point. |
+| `--timeout <ms>` | Maximum execution time in milliseconds (default: 10000). |
+| `--dry-run` | Execute inside a Unity Undo sandbox; all Undo-tracked changes are reverted after execution. |
+| `--json` | Request JSON-formatted output. |
+
+**Examples:**
+
+```sh
+# Simple read query
+unifocl eval 'return Application.productName;'
+
+# Void side-effect
+unifocl eval 'Debug.Log("hello from eval");'
+
+# Async code with cancellation support
+unifocl eval 'await Task.Delay(10, cancellationToken); return "done";'
+
+# Timeout protection
+unifocl eval 'while(true){}' --timeout 200
+
+# Dry-run: execute and revert all Unity Undo-tracked changes
+unifocl eval 'Undo.RecordObject(Camera.main, "t"); Camera.main.name = "CHANGED";' --dry-run
+
+# Custom declarations
+unifocl eval 'return new Msg().text;' --declarations 'public class Msg { public string text = "hi"; }'
+
+# Return a UnityEngine.Object (serialized via EditorJsonUtility)
+unifocl eval 'return Camera.main;'
+```
+
+**Compilation:**
+
+Eval uses a dual-compiler strategy that selects the best backend for the current environment:
+
+| Mode | Compiler | Detail |
+| --- | --- | --- |
+| Bridge (GUI editor) | Unity `AssemblyBuilder` | Async — yields to the editor update loop while `buildFinished` fires on the next tick. Same C# language version as the project. |
+| Host (batchmode) | Unity-bundled Roslyn `csc` | Out-of-process via `Process.Start` using the `dotnet` and `csc.dll` shipped inside the Unity editor install. No dependency on the editor update loop. |
+
+Both paths resolve assembly references from `AppDomain.CurrentDomain.GetAssemblies()`, so project scripts, packages, and plugins are available. Temporary eval DLLs are self-filtered to avoid stale references.
+
+- The entry point is always `async Task<object>`, so `await` works naturally without special flags or detection heuristics.
+- A `CancellationToken cancellationToken` parameter is available inside eval code, wired to the `--timeout` value.
+- Default usings cover the most common scenarios: `System`, `System.IO`, `System.Linq`, `System.Collections.Generic`, `System.Text.RegularExpressions`, `System.Threading.Tasks`, `UnityEngine`, and `UnityEditor`.
+
+**Execution model:**
+
+Eval is dispatched through the same durable mutation protocol as all other project-mutating commands (submit -> poll -> result). This avoids blocking the main thread during compilation and allows the editor update loop to continue processing internal callbacks.
+
+The `SynchronizationContext` is temporarily cleared before invoking user code, so `await` expressions inside eval do not deadlock by posting continuations back to the occupied main thread — they resume on the thread pool instead.
+
+**Result serialization:**
+
+unifocl uses a multi-tier serialization strategy to produce the most informative output for each return type:
+
+| Return type | Serialization strategy |
+| --- | --- |
+| `null` / void | `"null"` |
+| `string` | Raw string value |
+| Primitives (`int`, `float`, `bool`, ...) | Literal value with full numeric precision (`float` G9, `double` G17) |
+| `IDictionary` | JSON object with string keys |
+| `IEnumerable` (arrays, lists, sets, ...) | JSON array |
+| `UnityEngine.Object` | Full editor serialization via `EditorJsonUtility.ToJson` |
+| `[Serializable]` types | Unity's fast `JsonUtility.ToJson` path |
+| Structured objects | Depth-limited reflection walk over public fields and readable properties |
+| Other | `obj.ToString()` |
+
+The reflection serializer is depth-limited (max 8 levels) to safely handle cyclic or deeply nested object graphs without risking stack overflows.
+
+**Safety and approval:**
+
+- `eval.run` is classified as `PrivilegedExec` in the ExecV2 API. Like `build.run` and `build.exec`, it requires two-step approval before execution — agents cannot silently evaluate code without explicit confirmation.
+- `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
+- The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
+
+## 8. Human Interface: TUI & Keybindings
+
+For developers using the interactive CLI, unifocl features a composer with Intellisense and keyboard-driven navigation.
+
+- Type `/` to open the slash-command suggestion palette.
+- Type any standard text to receive project-mode suggestions.
+- **Fuzzy Finding:** Use the `f` or `ff` command to trigger fuzzy search (e.g., `f --type script PlayerController`).
+
+**Global Keybinds**
+
+- **`F7`**: Toggle focus for Hierarchy TUI, Project navigator, Recent projects list, and Inspector.
+- **`Esc`**: Dismiss Intellisense, or clear input if already dismissed.
+- **`Up` / `Down`**: Navigate fuzzy/Intellisense candidates.
+- **`Enter`**: Insert selected suggestion or commit input.
+
+**Context-Specific Focus Navigation**
+
+Once focused (`F7`), the arrow keys and tab behave contextually:
+
+| **Action** | **Hierarchy Focus** | **Project Focus** | **Inspector Focus** |
+| --- | --- | --- | --- |
+| **`Up` / `Down`** | Move highlighted GameObject | Move highlighted file/folder | Move highlighted component/field |
+| **`Tab`** | Expand selected node | Reveal/open selected entry | Inspect selected component |
+| **`Shift+Tab`** | Collapse selected node | Move to parent folder | Back to component list |
+| **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
+
+## 9. Project Validation
+
+The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
+
+```
+/validate <subcommand>
+```
+
+| Subcommand | Requires Daemon | Description |
+| --- | --- | --- |
+| `scene-list` | Yes | Checks that all `EditorBuildSettings.scenes` paths exist on disk. Flags disabled and empty entries. |
+| `missing-scripts` | Yes | Scans loaded scenes and all prefab assets for null `MonoBehaviour` components (missing script references). |
+| `packages` | No | Compares `manifest.json` vs `packages-lock.json` — detects missing lock entries, version mismatches, and missing files. |
+| `build-settings` | Yes | Checks `PlayerSettings` sanity — bundle ID, product/company name, version format, active build target, enabled scenes, scripting backend. |
+| `asmdef` | No | Parses all `.asmdef` files under `Assets/`, builds a dependency graph, and checks for duplicate assembly names, undefined references, and circular dependencies. |
+| `asset-refs` | Yes | Scans `.unity`, `.prefab`, `.asset`, `.mat`, and `.controller` files for GUID references that do not resolve to any known asset in `AssetDatabase`. Caps output at 500 findings. |
+| `addressables` | Yes | Checks whether the Addressables package is installed, then validates the settings asset, groups directory, and basic settings structure. |
+| `all` | Mixed | Runs all validators sequentially. |
+
+Every diagnostic carries: `severity` (Error/Warning/Info), `errorCode` (e.g. `VSC003`, `VASD004`, `VAR001`), `message`, optional `assetPath`/`objectPath`, and a `fixable` flag.
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/validate packages" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/validate asmdef" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/validate asset-refs" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations (all `SafeRead` — no approval required):
+`validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings`, `validate.asmdef`, `validate.asset-refs`, `validate.addressables`
+
+Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
+
+## 10. Build Workflow
+
+The build workflow commands extend `/build` with pre-build validation, post-build introspection, and a unified report surface. Build reports are automatically captured after every build via a `IPostprocessBuildWithReport` hook and stored at `Library/unifocl-last-build-report.json`.
+
+```
+/build <snapshot-packages|preflight|artifact-metadata|failure-classify|report>
+```
+
+| Subcommand | Requires Daemon | Description |
+| --- | --- | --- |
+| `snapshot-packages` | No | Reads `Packages/manifest.json` and writes a timestamped snapshot to `.unifocl-runtime/snapshots/packages-{timestamp}.json`. |
+| `preflight` | Yes | Orchestrates `validate scene-list` + `validate build-settings` + `validate packages` sequentially and reports aggregated pass/fail. |
+| `artifact-metadata` | Yes | Returns the file list, roles, sizes, output path, build target, and duration from the last captured build report. |
+| `failure-classify` | Yes | Reads the last build report and classifies each error message into one of five categories: `CompileError`, `LinkerError`, `MissingAsset`, `ScriptError`, `Timeout`. |
+| `report` | Yes | Runs preflight, then reads artifact-metadata and failure-classify, and renders a consolidated summary. |
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/build preflight" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/build artifact-metadata" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/build report" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations (all `SafeRead` — no approval required):
+`build.snapshot-packages`, `build.preflight`, `build.artifact-metadata`, `build.failure-classify`, `build.report`
+
+Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
+
+## 11. Test Orchestration
+
+The `test` commands run Unity's built-in test runner as a **direct subprocess** — no daemon, no running editor required. This makes them safe to call from CI, parallel agent sessions, or any headless environment.
+
+```
+/test list
+/test run <editmode|playmode> [--timeout <seconds>]
+```
+
+| Subcommand | Platform flag | Default timeout | Description |
+| --- | --- | --- | --- |
+| `list` | EditMode | 5 min | Lists all available tests. Output: `[{ testName, assembly }]`. |
+| `run editmode` | EditMode | 10 min | Runs all EditMode tests. |
+| `run playmode` | PlayMode | 30 min | Runs all PlayMode tests. May trigger a player build. |
+
+**Output contract (`test run`):**
+
+```json
+{
+  "total": 42,
+  "passed": 40,
+  "failed": 2,
+  "skipped": 0,
+  "durationMs": 8340,
+  "artifactsPath": "<project>/Logs/unifocl-test",
+  "failures": [
+    { "testName": "MyTests.SomeTest", "message": "Expected 1 but was 2", "stackTrace": "...", "durationMs": 12 }
+  ]
+}
+```
+
+Results come from the NUnit v3 XML file Unity writes to `Logs/unifocl-test/`. If Unity crashes before writing results, the envelope still returns with all counters at zero and an empty failures array.
+
+**Agentic usage:**
+
+```sh
+# List tests (no project open required)
+unifocl exec "test list" --agentic --format json --project ./my-project
+
+# Run EditMode suite
+unifocl exec "test run editmode" --agentic --format json --project ./my-project --session-seed my-seed
+
+# Run PlayMode suite with extended timeout
+unifocl exec "test run playmode --timeout 3600" --agentic --format json --project ./my-project
+```
+
+ExecV2 operations: `test.list` (`SafeRead`) and `test.run` (`PrivilegedExec` — requires approval on first call).
+
+Full reference: [`test-orchestration.md`](test-orchestration.md)
+
+## 12. Project Diagnostics
+
+The `diag` command family provides read-only structural introspection of the project — assembly topology, define symbols, and asset dependency trees. Unlike `/validate`, `diag` commands are data dumps rather than pass/fail checks.
+
+```
+/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|all>
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `script-defines` | Scripting define symbols per build target group (`PlayerSettings.GetScriptingDefineSymbolsForGroup`). |
+| `compile-errors` | Compiler messages from the last compilation pass (`CompilationPipeline.GetAssemblies` + `.compilerMessages`). |
+| `assembly-graph` | Asmdef-level assembly dependency graph (`assemblyReferences` per assembly). |
+| `scene-deps` | Transitive `AssetDatabase.GetDependencies` per enabled build scene. |
+| `prefab-deps` | Transitive `AssetDatabase.GetDependencies` per prefab under `Assets/` (capped at 100). |
+
+All operations require the daemon. All are `SafeRead` — no approval gating.
+
+**Agentic usage:**
+
+```sh
+unifocl exec "/diag assembly-graph" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/diag script-defines" --agentic --format json --project ./my-project --session-seed my-seed
+unifocl exec "/diag scene-deps" --agentic --format json --project ./my-project --session-seed my-seed
+```
+
+ExecV2 operations (all `SafeRead` — no approval required):
+`diag.script-defines`, `diag.compile-errors`, `diag.assembly-graph`, `diag.scene-deps`, `diag.prefab-deps`
+
+Full reference: [`project-diagnostics.md`](project-diagnostics.md)
+
+## Development & Contributing
+
+### Local Compatcheck Bootstrap
+
+When you need to run Unity editor compatibility checks locally (especially after bridge/editor code changes), use:
+
+```
+./scripts/setup-compatcheck-local.sh
+```
+
+What this command does:
+
+- Detects a local Unity editor install.
+- Creates/bootstraps a benchmark Unity project under `.local/compatcheck-benchmark`.
+- Writes local path settings to `local.config.json`.
+- Runs: `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
+
+Local artifacts are intentionally uncommitted (`local.config.json`, `.local/`).
+
+---
+
+# Custom MCP Commands
+
+unifocl lets you expose your own Unity editor methods as MCP tools, discoverable and callable by any connected AI agent. Methods are registered at compile time via the `[UnifoclCommand]` attribute, grouped into named categories, and loaded on demand by the agent through three built-in MCP tools: `get_categories`, `load_category`, and `unload_category`.
+
+## Quick Start
+
+```csharp
+using UniFocl.EditorBridge;
+using UnityEditor;
+
+public static class GameDataTools
+{
+    [UnifoclCommand(
+        name: "export_balance_sheet",
+        description: "Exports a CSV of all ScriptableObject balance values to the given path.",
+        category: "GameData")]
+    public static string ExportBalanceSheet(string outputPath)
+    {
+        // ... your editor logic here
+        return $"Exported to {outputPath}";
+    }
+}
+```
+
+After the next Unity Editor compilation, this method is available to any MCP agent as:
+
+```
+get_categories()                  → ["GameData"]
+load_category("GameData")         → registers export_balance_sheet as a live MCP tool
+export_balance_sheet(outputPath)  → calls your method, returns the result string
+unload_category("GameData")       → removes the tool from the active list
+```
+
+## The `[UnifoclCommand]` Attribute
+
+```csharp
+[UnifoclCommand(name, description, category = "Default")]
+public static ReturnType MethodName(ParamType param, ...) { ... }
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | `string` | yes | Tool name as it appears to the MCP client. Use `snake_case`. |
+| `description` | `string` | yes | Shown to the agent as the tool description. Be specific. |
+| `category` | `string` | no | Groups related tools. Defaults to `"Default"`. |
+
+**Constraints:**
+- The method must be `static`.
+- The method must be in a class visible to Unity's type cache (i.e., in a compiled editor assembly, inside an `#if UNITY_EDITOR` guard or an `Editor` asmdef).
+- Return type should be `string`. Other types are coerced via `.ToString()`.
+- Supported parameter types: `string`, `int`, `long`, `float`, `double`, `bool`. Complex types receive the raw JSON string.
+
+## Manifest Generation
+
+When Unity finishes a compilation cycle, `UnifoclManifestGenerator` scans all assemblies via `TypeCache.GetMethodsWithAttribute<UnifoclCommandAttribute>()` and writes a manifest to:
+
+```
+<ProjectRoot>/.local/unifocl-manifest.json
+```
+
+The manifest is also regenerated on demand via **unifocl → Regenerate Tool Manifest** in the Unity menu bar.
+
+Each entry in the manifest captures the tool name, description, declaring type, method name, and a JSON Schema for the input parameters (derived from the method signature). This schema is what the MCP client uses to know what arguments to send.
+
+The `.local/` directory is local-only and should not be committed. Add it to `.gitignore` if it isn't already.
+
+## MCP Discovery Flow
+
+The unifocl MCP server exposes three built-in tools for managing custom tool categories. An agent typically follows this pattern:
+
+```
+1. get_categories()
+   → { manifestLoaded: true, categories: [{ name: "GameData", toolCount: 3, active: false }] }
+
+2. load_category("GameData")
+   → { ok: true, message: "category 'GameData' loaded: 3 tool(s) registered", toolsAdded: 3 }
+   → MCP client receives tools/list_changed notification
+   → Agent's tool list now includes the 3 registered tools
+
+3. ... agent calls custom tools ...
+
+4. unload_category("GameData")   (optional: frees slots, triggers list_changed)
+```
+
+`get_categories` and `load_category` both attempt auto-loading the manifest if it hasn't been loaded yet. The project path is resolved from `UNIFOCL_UNITY_PROJECT_PATH` (env var) or from the first live daemon in `~/.unifocl-runtime`.
+
+### Setting the project path explicitly
+
+When running `unifocl --mcp-server` in contexts where the env var is not set and no daemon is running:
+
+```json
+{
+  "mcpServers": {
+    "unifocl": {
+      "command": "unifocl",
+      "args": ["--mcp-server"],
+      "env": {
+        "UNIFOCL_UNITY_PROJECT_PATH": "/absolute/path/to/YourUnityProject"
+      }
+    }
+  }
+}
+```
+
+## Dry-Run Sandbox
+
+Custom tools support `dryRun: true` in their input arguments without any code changes on your part. Pass it alongside the tool's normal arguments:
+
+```json
+{ "outputPath": "Assets/Data/balance.csv", "dryRun": true }
+```
+
+When `dryRun` is `true`, unifocl wraps the invocation in a three-layer sandbox before calling your method:
+
+### Layer 1 — Unity Undo group (in-memory mutations)
+
+An Undo group is opened immediately before your method runs and `Undo.RevertAllDownToGroup` is called immediately after. Any component or scene changes made via `Undo.RecordObject` are fully reverted. `AssetDatabase.Refresh()` is called afterwards to resync Unity state.
+
+**Covered:** all standard `Undo.RecordObject`-tracked modifications to GameObjects, components, and ScriptableObjects.
+
+### Layer 2 — AssetDatabase modification interceptor
+
+`DaemonDryRunAssetModificationProcessor` is active during the invocation. It intercepts:
+
+| AssetDatabase operation | Effect during dry-run |
+|---|---|
+| `AssetDatabase.SaveAssets()` | Returns 0 paths saved — no files written |
+| `AssetDatabase.MoveAsset()` | Returns `FailedMove` |
+| `AssetDatabase.DeleteAsset()` | Returns `FailedDelete` |
+| `AssetDatabase.CreateAsset()` | Not blockable — use `Undo.RegisterCreatedObjectUndo` so Layer 1 reverts it |
+
+**Covered:** all AssetDatabase-level write operations except CreateAsset (see note above).
+
+### Layer 3 — `DaemonDryRunContext.IsActive` (opt-in runtime guard)
+
+Your method can check `DaemonDryRunContext.IsActive` to suppress any writes that the Undo system or AssetModificationProcessor cannot intercept:
+
+```csharp
+[UnifoclCommand("export_balance_sheet", "Exports balance data.", "GameData")]
+public static string ExportBalanceSheet(string outputPath)
+{
+    var csv = BuildCsv();
+
+    if (DaemonDryRunContext.IsActive)
+    {
+        // Return a preview without writing anything
+        return $"[dry-run] would write {csv.Length} bytes to {outputPath}";
+    }
+
+    File.WriteAllText(outputPath, csv);
+    return $"Exported {csv.Length} bytes to {outputPath}";
+}
+```
+
+### Coverage summary
+
+| Write type | Layer 1: Undo | Layer 2: AssetDB | Layer 3: manual guard |
+|---|---|---|---|
+| `Undo.RecordObject` mutations | ✅ auto-reverted | — | — |
+| `AssetDatabase.SaveAssets()` | — | ✅ blocked | — |
+| `AssetDatabase.MoveAsset/DeleteAsset()` | — | ✅ blocked | — |
+| `AssetDatabase.CreateAsset()` | ⚠️ only with `RegisterCreatedObjectUndo` | — | optional |
+| `System.IO.File.WriteAllText()` etc. | ❌ | ❌ | ✅ your responsibility |
+
+## UNIFOCL001 Analyzer: Compile-Time Warning for Raw I/O
+
+To catch `System.IO` writes at compile time, unifocl ships a Roslyn analyzer that emits **UNIFOCL001** on any `[UnifoclCommand]` method that calls write-capable I/O APIs directly:
+
+```
+warning UNIFOCL001: 'ExportBalanceSheet' calls 'File.WriteAllText' which writes to the
+file system and will NOT be reverted by the unifocl Undo-based dry-run. Prefer AssetDatabase
+APIs, or guard with DaemonDryRunContext.IsActive and skip the write manually.
+```
+
+**Detected operations:** `File.WriteAllText/Bytes/Lines`, `File.AppendAll*`, `File.Create/Delete/Move/Copy/Replace`, `Directory.CreateDirectory/Delete/Move`, `new StreamWriter(...)`, `new BinaryWriter(...)`, `new FileStream(...)`.
+
+**Not detected:** writes performed inside helper methods outside the annotated method body, or P/Invoke.
+
+### Installing the analyzer in your Unity project
+
+1. Build `src/unifocl.unity.analyzer/unifocl.unity.analyzer.csproj`:
+   ```
+   dotnet build src/unifocl.unity.analyzer/unifocl.unity.analyzer.csproj -c Release
+   ```
+
+2. Copy the output DLL into your Unity project:
+   ```
+   src/unifocl.unity.analyzer/bin/Release/netstandard2.0/UniFocl.Unity.Analyzer.dll
+   → <YourUnityProject>/Assets/Editor/Analyzers/UniFocl.Unity.Analyzer.dll
+   ```
+
+3. In the Unity Editor, select the DLL in the Project window and set its **Asset Label** to `RoslynAnalyzer`.
+
+Unity 2022.2 and later will run the analyzer on every script compilation. Warnings appear in the Console window and in your IDE if it is connected to the Unity project.
+
+**Suppressing a specific call:** if a raw I/O call is intentional and guarded manually, suppress inline:
+
+```csharp
+#pragma warning disable UNIFOCL001
+File.WriteAllText(path, data);
+#pragma warning restore UNIFOCL001
+```
+
+## Best Practices
+
+**Prefer AssetDatabase APIs over System.IO.** Methods like `AssetDatabase.CreateAsset`, `AssetDatabase.MoveAsset`, and `AssetDatabase.ImportAsset` go through Unity's tracking pipeline and are protected by Layer 2. Direct `File.*` calls bypass all three layers unless guarded with `DaemonDryRunContext.IsActive`.
+
+**Always register created objects with Undo.** If your tool creates assets or GameObjects:
+
+```csharp
+var obj = ScriptableObject.CreateInstance<MyData>();
+AssetDatabase.CreateAsset(obj, path);
+Undo.RegisterCreatedObjectUndo(obj, "create MyData");  // Layer 1 can now revert this
+```
+
+**Return structured output.** The tool result is returned as a string to the MCP client. Return a short JSON payload for complex results so the agent can parse it:
+
+```csharp
+return $"{{\"ok\":true,\"path\":\"{path}\",\"bytes\":{data.Length}}}";
+```
+
+**Keep categories focused.** Group tools that are always needed together. Agents load and unload categories as a unit — a bloated category adds unnecessary tools to the agent's context window.
+
+## Limitations
+
+- **`AssetDatabase.CreateAsset` during dry-run** — cannot be blocked by the AssetModificationProcessor hook. Use `Undo.RegisterCreatedObjectUndo` immediately after so Layer 1 reverts the created object.
+- **Indirect I/O** — the UNIFOCL001 analyzer only inspects the annotated method body directly. Writes inside helper methods called from the annotated method are not flagged.
+- **`System.IO` raw writes** — not reverted automatically. Guard them with `DaemonDryRunContext.IsActive` and annotate the result string accordingly.
+- **Main thread only** — Unity editor APIs require the main thread. The unifocl dispatcher already ensures methods are called from the HTTP request handler on the main Unity thread; do not dispatch to background threads inside your tool.
+- **No async methods** — `[UnifoclCommand]` methods must be synchronous `static` methods. Async is not supported by the dispatcher.
+
+---
+
+# Editor Compilation & Window Activation
+
+This document covers how unifocl triggers Unity Editor recompilation after deploying `.cs` files, why manual window focus is not required, and how to configure the behaviour for CI/headless environments.
+
+## Background: The "Two Compiles" Problem
+
+Unity's file-watcher only ticks when the Editor window has OS-level focus. If unifocl copies new `.cs` files into the project (e.g. on `/init` or when deploying custom tools) while Unity is running in the background, Unity will not detect the new files until the user manually clicks the Editor window.
+
+Previously, the `UnifoclManifestGenerator` subscribed to `CompilationPipeline.compilationFinished` from its `[InitializeOnLoad]` static constructor. This created a subtle timing race:
+
+1. First compile (after the `.cs` files land) → `compilationFinished` fires, but the `[InitializeOnLoad]` static constructor has not run yet, so the event handler is not subscribed → manifest is not written.
+2. User triggers a second compile manually → `compilationFinished` fires again, the handler is now subscribed → manifest is finally written.
+
+## Permanent Fix
+
+`UnifoclManifestGenerator` now calls `GenerateManifest()` directly inside the `[InitializeOnLoad]` static constructor, in addition to subscribing to `compilationFinished`:
+
+```csharp
+[InitializeOnLoad]
+internal static class UnifoclManifestGenerator
+{
+    static UnifoclManifestGenerator()
+    {
+        CompilationPipeline.compilationFinished += OnCompilationFinished;
+        // Regenerate immediately on every domain reload — eliminates the "two compiles" race.
+        GenerateManifest();
+    }
+}
+```
+
+After every compile Unity performs a domain reload. `[InitializeOnLoad]` types are constructed during that reload, so `GenerateManifest()` is guaranteed to run once per compile cycle, whether or not the event fired first.
+
+## UnifoclCompilationService
+
+`UnifoclCompilationService` is a global editor-side utility that combines two mechanisms:
+
+1. **OS-level editor window activation** — causes Unity's file-watcher to tick and detect newly copied `.cs` files immediately, without requiring manual user focus.
+2. **`CompilationPipeline.RequestScriptCompilation()`** — queues a script-only recompile. This is significantly cheaper than `AssetDatabase.Refresh()` on large projects because it skips asset reimporting entirely.
+
+### API
+
+```csharp
+UnifoclCompilationService.RequestRecompile();
+```
+
+Call this after writing any `.cs` files that Unity must pick up. unifocl's `/init` flow calls this automatically.
+
+### Platform-Specific Window Activation
+
+| Platform | Mechanism |
+|---|---|
+| macOS | `osascript -e 'tell application "Unity" to activate'` |
+| Windows | PowerShell `Shell.Application.AppActivate("Unity")` (COM, no P/Invoke) |
+| Linux | `xdotool search --name 'Unity' windowactivate` with `wmctrl -a Unity` fallback |
+
+Window activation is fire-and-forget: if it fails (e.g. Unity is not running as a windowed process) the error is logged as a non-fatal warning and `RequestScriptCompilation()` is still called.
+
+## UnifoclEditorConfig
+
+Per-project editor configuration is stored at `<projectRoot>/.unifocl/editor-config.json` and loaded by `UnifoclEditorConfig.Load()`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `allowWindowGrab` | `bool` | `true` | When `false`, the OS window-activation step is skipped. |
+
+### Disabling Window Grab for CI / Headless Runners
+
+On headless CI agents there is no windowed Unity process to activate, and the activation attempt may produce noisy warnings. Set `allowWindowGrab` to `false` in your project config:
+
+```json
+// <projectRoot>/.unifocl/editor-config.json
+{
+  "allowWindowGrab": false
+}
+```
+
+`RequestScriptCompilation()` is still called even when window grab is disabled, so compilation is triggered normally on headless batch-mode Unity processes.
+
+### Committing the Config
+
+`editor-config.json` is safe to commit. The default (`allowWindowGrab: true`) is appropriate for all developer machines. Override it to `false` only on CI-specific config branches or via environment-based scripting.
+
+---
+
+# ExecV2 実装進捗ドキュメント
+
+次のエージェントが読むことを想定した引き継ぎ資料。
+
+---
+
+## ゴール
+
+`/agent/exec` のフリーフォーム CommandText 実行を廃止し、スキーマ化された ExecV2 に置き換える。
+承認フロー・リスク分類・セッション管理を段階的に追加し、最終的に IPC (UDS) に移行する。
+
+詳細設計: `~/.claude/plans/partitioned-conjuring-curry.md`
+
+---
+
+## 作業ルール
+
+- worktree: `/Users/makinokinichianju/Documents/GitHub/unifocl-exec-v2`
+- ブランチ命名: `feature/exec-v2-sprint{N}-{short}`
+- 各 Sprint 完了でブランチをコミット→プッシュ→PR 作成 (Sprint 単位)
+
+---
+
+## Sprint 進捗
+
+### ✅ Sprint 1: 構造化 exec 基盤 + 危険操作承認制御
+**ブランチ**: `feature/exec-v2-sprint1-structured-exec`
+**コミット**: `c93871a`
+
+**追加ファイル**:
+- `src/unifocl/Models/ExecV2Models.cs` — ExecV2Request/Response, ExecRiskLevel, ExecV2Status, ExecV2Intent
+- `src/unifocl/Services/ExecCommandRegistry.cs` — operation→risk マッピング + ProjectCommandRequestDto 変換
+- `src/unifocl/Services/ExecApprovalService.cs` — approval ticket 発行・消費 (in-memory)
+- `src/unifocl/Services/ExecOperationRouter.cs` — validation → approval gate → dispatch
+
+**変更ファイル**:
+- `src/unifocl/Services/DaemonControlService.cs`
+  - `RunDaemonServiceAsync`: ExecCommandRegistry, ExecApprovalService, ExecOperationRouter をインスタンス化
+  - `HandleDaemonRequestAsync`: 引数に `ExecOperationRouter execRouter` 追加
+  - `/agent/exec` ハンドラー: JSON body に `operation` フィールドがあれば ExecV2 ルーター経由、なければ legacy (要 `UNIFOCL_LEGACY_EXEC=1`)
+
+**動作確認済みフロー**:
+1. `POST /agent/exec {"requestId":"...", "operation":"asset.rename", "args":{"assetPath":"...","newAssetPath":"..."}}`
+   → `{"status":"ApprovalRequired", "approvalToken":"<token>", ...}`
+2. 同エンドポイントに `"intent":{"approvalToken":"<token>"}` 付きで再送
+   → `{"status":"Completed", ...}`
+
+**対応 operation**:
+- `asset.rename` (destructive_write) — 要承認
+- `asset.remove` (destructive_write) — 要承認
+- `asset.create_script` (safe_write) — session 未信頼時は要承認
+- `asset.create` (safe_write) — 同上
+- `build.run` (privileged_exec) — 要承認
+- `approval.confirm` (safe_read) — pending ticket 消費して実行
+
+---
+
+### ✅ Sprint 2: 既存処理統合 + Session 導入
+**ブランチ**: `feature/exec-v2-sprint2-session`
+**コミット**: 最新
+
+**完了タスク**:
+1. ExecCommandRegistry に追加:
+   - `build.exec` (privileged_exec), `upm.remove` (destructive_write)
+   - `build.scenes.set` (safe_write), `hierarchy.snapshot` (safe_read)
+   - `session.open / close / status` (safe_read)
+2. `ExecSessionService.cs` 実装
+   - `session.open(projectPath, runtimeType)` → sessionId 発行 (in-memory registry)
+   - Trusted フラグで safe_write の承認要否を制御
+3. `CliSessionState.SessionId` フィールド追加 + ResetToBoot でクリア
+4. ExecOperationRouter: session.* のインライン処理 + IsTrusted で approval 制御
+5. DaemonControlService: ExecSessionService をインスタンス化・注入
+
+**未完了 (次スプリントへ)**:
+- CLIDaemon.cs の `/project/command` Adapter 化 (CLIDaemon は Unity 側のため Sprint 3 以降)
+- DaemonControlService の attach ロジック → session.open 置換
+
+**新規ファイル**:
+- `src/unifocl/Services/ExecSessionService.cs`
+
+**変更ファイル**:
+- `src/unifocl/Models/CliSessionState.cs` (SessionId 追加)
+- `src/unifocl/Services/ExecCommandRegistry.cs` (operation 拡張)
+- `src/unifocl/Services/ExecOperationRouter.cs` (session 注入・制御)
+- `src/unifocl/Services/DaemonControlService.cs` (ExecSessionService 追加)
+
+**キーファイル (次スプリント変更対象)**:
+- `src/unifocl.unity/EditorScripts/CLIDaemon.cs`
+- `src/unifocl/Models/CliSessionState.cs` (AttachedPort 維持 + SessionId 追加)
+- `src/unifocl/Services/DaemonControlService.cs` (attach → session.open 移行部分)
+- 新規: `src/unifocl/Services/ExecSessionService.cs`
+
+---
+
+### ✅ Sprint 3: Transport 抽象化
+**ブランチ**: `feature/exec-v2-sprint3-transport`
+**PR**: #126
+
+**追加ファイル**:
+- `src/unifocl/Services/Transport/IExecRequestContext.cs`
+- `src/unifocl/Services/Transport/IExecTransportClient.cs`
+- `src/unifocl/Services/Transport/IExecTransportServer.cs`
+- `src/unifocl/Services/Transport/HttpExecRequestContext.cs`
+- `src/unifocl/Services/Transport/HttpExecTransportServer.cs`
+- `src/unifocl/Services/Transport/Uds/UdsExecRequestContext.cs`
+- `src/unifocl/Services/Transport/Uds/UdsExecTransportServer.cs`
+
+---
+
+### ✅ Sprint 4: Session 移行完了
+**ブランチ**: `feature/exec-v2-sprint4-session-migration`
+
+**完了タスク**:
+1. `CliSessionState.AttachedPort` に `[Obsolete]` 追加 — Sprint 5 で削除予定
+2. `ExecSession` レコードに `Port` (int?) フィールド追加
+3. `ExecSessionService` に port ベースのメソッド追加:
+   - `OpenForPort(port, projectPath)` — port に紐づくセッションを開く (既存は置換)
+   - `CloseByPort(port)` — port に紐づくセッションを閉じる
+   - `GetByPort(port)` — port からセッションを検索
+4. `ExecSessionService` にオーファンクリーンアップ実装:
+   - `CleanupOrphans(TimeSpan maxIdle)` メソッド
+   - バックグラウンドタイマー (5分間隔、30分アイドルで削除)
+   - `IDisposable` 実装
+5. `DaemonControlService` を更新:
+   - `_sessionService` をフィールドに昇格 (旧: `RunDaemonServiceAsync` のローカル変数)
+   - `SetAttachedPort(session, port, projectPath)` ヘルパー追加 — `AttachedPort` + `SessionId` を同期
+   - `ClearAttachedPort(session)` ヘルパー追加 — `AttachedPort` + `SessionId` をクリア
+   - 全 `session.AttachedPort = port` / `session.AttachedPort = null` をヘルパー経由に統一
+   - `#pragma warning disable CS0618` を追加 (移行中ファイルのため)
+
+**変更ファイル**:
+- `src/unifocl/Models/CliSessionState.cs` (AttachedPort に `[Obsolete]`)
+- `src/unifocl/Services/ExecSessionService.cs` (Port フィールド、port 系メソッド、orphan cleanup)
+- `src/unifocl/Services/DaemonControlService.cs` (`_sessionService` フィールド化、sync helpers)
+
+---
+
+### ✅ Sprint 4.5: Sprint 3 残作業 — Transport Client 完成 (Sprint 5 前提条件)
+**ブランチ**: `feature/exec-v2-sprint4-session-migration` (Sprint 4 コミットに追加)
+
+**背景**: Sprint 3 で `IExecTransportClient` インターフェースは作成されたが、具体実装と
+`HierarchyDaemonClient` の移行が未完了だった。Sprint 5 の HTTP Opt-in 化の前提として完了させる。
+
+**完了タスク**:
+1. `HttpExecTransportClient.cs` 追加 (`Transport/` フォルダ)
+   - `IExecTransportClient` の具体実装
+   - `HierarchyDaemonClient.ExecuteDurableMutationOverHttpAsync` に委譲
+2. `HierarchyDaemonClient` 更新:
+   - private `IProjectMutationTransport` / `HttpProjectMutationTransport` を削除
+   - `internal static IExecTransportClient MutationTransport = new HttpExecTransportClient()` に置換
+   - `ExecuteDurableMutationOverHttpAsync` を `internal static` に変更
+
+**今後の展開**: Unity 側が UDS に対応したら `UdsExecTransportClient` を実装し、
+`HierarchyDaemonClient.MutationTransport` を差し替えるだけで CLI→Unity の transport が切り替わる。
+
+---
+
+### ✅ Sprint 5: HTTP Opt-in 化
+**ブランチ**: `feature/exec-v2-sprint5-http-optout`
+
+**完了タスク**:
+1. UDS を Windows でも有効化
+   - `!OperatingSystem.IsWindows()` ガードを削除 (Windows 10 1803+ / .NET 5+ で UDS 動作確認済み)
+   - Named Pipe 実装は不要と判断 (UDS が全プラットフォームで機能するため)
+2. HTTP を `--unsafe-http` フラグ時のみ起動
+   - `DaemonServiceOptions` に `bool UnsafeHttp = false` 追加
+   - `TryParseDaemonServiceArgs` に `--unsafe-http` ケース追加
+   - `RunDaemonServiceAsync`: `httpServer` を `options.UnsafeHttp` 時のみ生成・起動
+   - UDS を起動の第一優先に変更 (ループ順序も UDS → HTTP)
+3. `UNIFOCL_LEGACY_EXEC=1` フラグと CommandText 実行コードを削除
+   - `/agent/exec` の legacy 分岐を完全除去
+   - `operation` フィールドなしのリクエストは即 rejection
+4. `/touch`, `/stop` を internal-only に縮退
+   - `IExecRequestContext` に `bool IsInternal` プロパティ追加
+   - `HttpExecRequestContext.IsInternal = false`
+   - `UdsExecRequestContext.IsInternal = true`
+   - `/touch`, `/stop` は `IsInternal = false` のリクエストに 403 を返す
+
+**変更ファイル**:
+- `src/unifocl/Models/CommandModels.cs` (`DaemonServiceOptions` に `UnsafeHttp`)
+- `src/unifocl/Services/Transport/IExecRequestContext.cs` (`IsInternal` 追加)
+- `src/unifocl/Services/Transport/HttpExecRequestContext.cs` (`IsInternal = false`)
+- `src/unifocl/Services/Transport/Uds/UdsExecRequestContext.cs` (`IsInternal = true`)
+- `src/unifocl/Services/DaemonControlService.cs` (全変更の適用先)
+
+---
+
+### ✅ Sprint 6: セキュリティ強化
+**ブランチ**: `feature/exec-v2-sprint6-hardening`
+**PR**: #129
+**コミット**: `bfceb6c`
+
+**完了タスク**:
+1. UDS ソケットファイルの明示的 `chmod 0600`
+   - `UdsExecTransportServer.Start()` で `File.SetUnixFileMode(_socketPath, UserRead | UserWrite)` を呼ぶ
+   - Windows は RuntimeInformation でスキップ
+2. `--unsafe-http` 時のトークン認証
+   - 起動時に `Guid.NewGuid().ToString("N")` でトークン生成
+   - `~/.unifocl-runtime/http-token-{port}.txt` に書き出し (chmod 0600)
+   - `HttpExecTransportServer` に `requiredToken` を渡す
+   - `AcceptAsync`: `X-Unifocl-Token` ヘッダー不一致は 401 で拒否してループ継続
+   - シャットダウン時にトークンファイルを削除
+3. HTTP リクエストボディサイズ制限 (1 MB)
+   - `HttpExecRequestContext.ReadBodyAsync` に上限チェック追加
+   - 超過時は `RequestTooLargeException` をスロー → `HandleDaemonRequestAsync` で 413 を返す
+4. `ExecApprovalService` のディスク永続化
+   - コンストラクタに `storePath?` 追加
+   - `CreatePendingApproval` / `TryConsume` / `Reject` の都度 JSON フラッシュ
+   - 起動時ロード (24h 超のエントリは破棄)
+   - `Dispose()` でファイル削除
+5. ビルドエラー修正 (Sprint 5 未解決)
+   - `_sessionService` / `SetAttachedPort` / `ClearAttachedPort` を `static` に変更
+   - `static RunDaemonServiceAsync` からの呼び出しエラーを解消
+
+**変更ファイル**:
+- `src/unifocl/Services/Transport/Uds/UdsExecTransportServer.cs`
+- `src/unifocl/Services/Transport/HttpExecTransportServer.cs`
+- `src/unifocl/Services/Transport/HttpExecRequestContext.cs` (`RequestTooLargeException` 追加含む)
+- `src/unifocl/Services/ExecApprovalService.cs`
+- `src/unifocl/Services/DaemonControlService.cs`
+
+---
+
+### ✅ Sprint 7: AttachedPort 削除 + CLIDaemon ExecV2 Adapter
+**ブランチ**: `feature/exec-v2-sprint7-cleanup-adapter`
+**PR**: (作成待ち)
+
+**完了タスク**:
+1. `CliSessionState.AttachedPort` の完全削除
+   - `DaemonControlService` に `internal static int? GetPort(CliSessionState)` を追加 (`_sessionService` 経由)
+   - `SetAttachedPort` / `ClearAttachedPort` を `internal static` に昇格
+   - `CliSessionState.cs` から `AttachedPort` プロパティと `[Obsolete]` を削除
+   - 影響 9 ファイル (BuildCommandService, InspectorModeService, ProjectLifecycleService 等) で呼び出し箇所を全て `DaemonControlService.GetPort(session)` に置換
+2. CLIDaemon ExecV2 adapter
+   - `CLIDaemon.cs` に `POST /agent/exec` エンドポイント追加
+   - `ExecV2AdapterRequest` / `ExecV2AdapterArgs` を `DaemonBridgeModels.cs` に追加 (`[Serializable]`)
+   - `HandleExecV2Async` で operation を switch し、`ProjectCommandRequest` JSON を構築して `DaemonProjectService.ExecuteAsync` に渡す
+   - 対応 operation: `asset.rename/remove/create/create_script`, `build.run/exec/scenes.set`, `upm.remove`
+   - レスポンス形式: `{"status":"Completed","requestId":"...","result":{...}}` or `{"status":"Failed","error":"..."}`
+
+**変更ファイル**:
+- `src/unifocl/Models/CliSessionState.cs`
+- `src/unifocl/Services/DaemonControlService.cs`
+- `src/unifocl/Services/AgenticStatePersistenceService.cs`
+- `src/unifocl/Services/ProjectViewService.cs`
+- `src/unifocl/Services/CliDumpService.cs`
+- `src/unifocl/Services/CliOneShotExecutionService.cs`
+- `src/unifocl/Services/HierarchyTui.cs`
+- `src/unifocl/Services/BuildCommandService.cs`
+- `src/unifocl/Services/InspectorModeService.cs`
+- `src/unifocl/Services/ProjectLifecycleService.cs`
+- `src/unifocl.unity/EditorScripts/CLIDaemon.cs`
+- `src/unifocl.unity/EditorScripts/Models/DaemonBridgeModels.cs`
+
+---
+
+## 次エージェントへの引き継ぎ
+
+**Sprint 1–7 完了済み。** ExecV2 のコア実装は全て完了。
+
+残る検討事項 (優先度低):
+- Unity 側 CLIDaemon が現在も HTTP のみ (CLIDaemon は Unity Editor に内蔵 → UDS は CLI 側との間)
+- `ExecV2AdapterArgs.scenes` の JsonUtility デシリアライズ: `string[]` はサポートされているが、JSON の `args.scenes` が素の配列ではなく ExecV2AdapterArgs のフィールドとして届くことを前提としている。ExecOperationRouter 側のシリアライズが合っていることを E2E テストで確認推奨
+- `build.scenes.set` のみ `args` がネストした配列を持つ — CLI 側の `ExecCommandRegistry` は `JsonElement` の raw text を使っているが CLIDaemon 側は `string[]` でデシリアライズするため、フォーマットが合っているか確認
+
+worktree の作成方法 (次 Sprint がある場合):
+```
+git -C /Users/makinokinichianju/Documents/GitHub/unifocl worktree add \
+  /Users/makinokinichianju/Documents/GitHub/unifocl-exec-v2 \
+  -b feature/exec-v2-sprint8-<short> \
+  origin/feature/exec-v2-sprint7-cleanup-adapter
+```
+
+---
+
+## 重要な設計メモ
+
+### ExecOperationRouter の dispatch 先
+- `ExecCommandRegistry.TryBuildProjectRequest()` で ExecV2Request → ProjectCommandRequestDto に変換
+- `ProjectDaemonBridge.TryHandle("PROJECT_CMD <json>")` に渡す (既存インフラ再利用)
+- `MutationIntentFactory.EnsureProjectIntent()` で IntentEnvelope を自動生成 (DryRun フラグは ExecV2 側から上書き)
+
+### 承認フロー
+- ApprovalService は in-memory (プロセス再起動で消える) — Sprint 2 以降でディスク永続化検討
+- token は requestId + operation にバインドされており、operation 不一致は拒否
+
+### 既存コードとの互換
+- `ProjectDaemonBridge` は CLI 側の stub bridge (Unity 未接続時用)
+- 実際の Unity 接続時は `CLIDaemon` の `/project/command` または `/project/mutation/submit` 経由
+- Sprint 2 で CLIDaemon 側にも ExecV2 adapter を追加する
+
+### feature flag
+- `UNIFOCL_LEGACY_EXEC=1` — 旧 CommandText フリーフォーム実行を許可
+- Sprint 5 でこの flag ごと削除する
+
+---
+
+# unifocl Built-in MCP Server Architecture
+
+This document explains how `unifocl --mcp-server` is structured, what it is for, and how to connect agent clients by editing their JSON config files.
+
+## Purpose
+
+The built-in MCP server is designed to reduce prompt/token overhead for automation agents by exposing compact command lookup tools instead of requiring agents to read `README.md` or run broad `/help` exploration first.
+
+- Transport: stdio
+- Server process: `unifocl --mcp-server`
+- SDK: .NET MCP C# SDK (`ModelContextProtocol` + `Microsoft.Extensions.Hosting`)
+- Mutation business logic: remains in unifocl daemon HTTP endpoints (not moved into MCP tools)
+
+## Runtime Architecture
+
+```mermaid
+flowchart LR
+    A["Agent Client (MCP-capable)"] -->|stdio MCP| B["unifocl --mcp-server"]
+    B --> C["Command Lookup Tools"]
+    C --> D["CliCommandCatalog (root/project/inspector)"]
+    A -->|exec /open /dump /...| E["unifocl CLI / agentic mode"]
+    E --> F["unifocl Daemon HTTP"]
+    F --> G["Unity Editor Bridge"]
+```
+
+Architecture boundary:
+
+1. MCP server scope:
+   - command discovery and lookup (`ListCommands`, `LookupCommand`)
+   - low-token context hydration for agents
+2. Daemon scope:
+   - project/hierarchy/inspector/build mutation execution
+   - durable mutation lifecycle (`submit -> status -> result`)
+
+## MCP Tools
+
+Current tools exposed by the server:
+
+1. `ListCommands(scope, query, limit)`
+   - returns command list from `CliCommandCatalog`
+   - use for discovery and filtered browsing
+2. `LookupCommand(command, scope)`
+   - returns best command matches with signature and description
+   - use for exact/near-exact lookup before execution planning
+
+Scopes:
+
+- `root`
+- `project`
+- `inspector`
+- `all` (default)
+
+## Agent JSON Config
+
+Most MCP-capable clients use a JSON object where each MCP server entry defines:
+
+- executable `command`
+- launch `args`
+- optional `cwd`
+- optional `env`
+
+Use this baseline:
+
+```json
+{
+  "mcpServers": {
+    "unifocl": {
+      "command": "unifocl",
+      "args": ["--mcp-server"],
+      "cwd": "/absolute/path/to/your/workspace",
+      "env": {
+        "UNIFOCL_CONFIG_ROOT": "/absolute/path/to/your/workspace/.local/unifocl-config"
+      }
+    }
+  }
+}
+```
+
+If `unifocl` is not on PATH, use an absolute binary path:
+
+```json
+{
+  "mcpServers": {
+    "unifocl": {
+      "command": "/absolute/path/to/unifocl",
+      "args": ["--mcp-server"]
+    }
+  }
+}
+```
+
+## Automation Script
+
+To speed up setup across multiple agent clients, use:
+
+`scripts/setup-mcp-agents.sh`
+
+Examples:
+
+```bash
+# 1) Configure Codex only
+scripts/setup-mcp-agents.sh --workspace . --codex
+
+# 2) Configure Cursor + Claude Code JSON configs in one run
+scripts/setup-mcp-agents.sh \
+  --workspace . \
+  --cursor-config ~/.cursor/mcp.json \
+  --claude-config ~/.claude/mcp.json
+
+# 3) Preview changes without writing
+scripts/setup-mcp-agents.sh --workspace . --codex --cursor-config ~/.cursor/mcp.json --dry-run
+```
+
+Script behavior:
+
+1. Creates workspace-local `UNIFOCL_CONFIG_ROOT` (default: `<workspace>/.local/unifocl-config`).
+2. Registers or updates `mcpServers.unifocl` idempotently.
+3. Uses `unifocl --mcp-server` if `unifocl` is on PATH; otherwise falls back to:
+   - `dotnet run --project <workspace>/src/unifocl/unifocl.csproj -- --mcp-server`
+4. For JSON targets, writes a `.bak` backup before updating.
+
+## Per-Agent Notes
+
+Different agent apps store config in different JSON files and may add extra fields (for example, per-server enable flags, startup timeouts, or tool allowlists). The critical part is always the same:
+
+1. register an MCP server named `unifocl`
+2. run `unifocl --mcp-server` over stdio
+3. keep `cwd` and `env` aligned with the workspace where the agent executes commands
+
+## Verification
+
+After updating agent config:
+
+1. Restart the agent app/session.
+2. Confirm tools include `ListCommands` and `LookupCommand`.
+3. Run:
+   - `LookupCommand("/open", "root")`
+   - `ListCommands("project", "build", 20)`
+
+If tools do not appear, re-check:
+
+1. `command` path is valid
+2. `args` includes `--mcp-server`
+3. client actually supports stdio MCP servers
+
+---
+
+# Project Diagnostics
+
+unifocl ships a `/diag` command family for deep project introspection. Where `/validate` answers "is this project healthy?", `/diag` answers "what is this project made of?" — it dumps structural data about assemblies, defines, and asset dependencies without pass/fail judgements.
+
+All `diag` operations **require the daemon** and are `SafeRead` — they never mutate project state.
+
+---
+
+## Output Contracts
+
+Each `diag` subcommand returns a different JSON payload (serialized into the `content` field of the response envelope). Schemas are documented per-command below.
+
+---
+
+## Commands
+
+### `diag script-defines`
+
+Reads `PlayerSettings.GetScriptingDefineSymbolsForGroup()` for every major build target group and returns the define symbols as a per-platform list.
+
+**Output:**
+
+```json
+{
+  "op": "script-defines",
+  "targetCount": 9,
+  "targets": [
+    { "buildTarget": "Standalone", "group": "Standalone", "defines": "MY_DEFINE;ANOTHER_FLAG" },
+    { "buildTarget": "iOS",        "group": "iOS",        "defines": "MY_DEFINE;IOS_SPECIFIC" },
+    { "buildTarget": "Android",    "group": "Android",    "defines": "MY_DEFINE" }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `buildTarget` | `BuildTargetGroup` enum name (e.g. `Standalone`, `iOS`, `Android`, `WebGL`, `tvOS`, `PS4`, `PS5`, `XboxOne`, `Switch`) |
+| `group` | Same as `buildTarget` (mirrors the enum) |
+| `defines` | Semicolon-separated define symbols for that target group. Empty string if none set. |
+
+**Use case:** audit define drift across platforms, verify CI define injection landed correctly, or diff symbols before/after a package install.
+
+```sh
+/diag script-defines
+unifocl exec "/diag script-defines" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `diag compile-errors`
+
+Reads `CompilationPipeline.GetAssemblies()` and collects all `CompilerMessage` entries from the last compilation pass.
+
+> **Note:** This reflects the messages stored on the compiled assembly objects from Unity's last full compile — it does not trigger a recompilation.
+
+**Output:**
+
+```json
+{
+  "op": "compile-errors",
+  "assemblyCount": 12,
+  "errorCount": 1,
+  "warningCount": 3,
+  "messages": [
+    {
+      "assembly": "Assembly-CSharp",
+      "file": "Assets/Scripts/Player.cs",
+      "line": 42,
+      "message": "error CS0246: The type or namespace name 'Foo' could not be found",
+      "type": "Error"
+    }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `assemblyCount` | Total number of assemblies discovered by the compilation pipeline |
+| `errorCount` | Messages with `type == "Error"` |
+| `warningCount` | Messages with `type == "Warning"` |
+| `messages[].assembly` | Name of the assembly the message belongs to |
+| `messages[].file` | Source file path |
+| `messages[].line` | Line number in the source file |
+| `messages[].type` | `Error`, `Warning`, or `Information` |
+
+**Use case:** surface compile errors and warnings without opening the Unity editor console. Useful as a quick CI probe after a script change.
+
+```sh
+/diag compile-errors
+unifocl exec "/diag compile-errors" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `diag assembly-graph`
+
+Reads `CompilationPipeline.GetAssemblies()` and maps each assembly's direct `assemblyReferences` (the asmdef-level dependencies, not all compiled `.dll` references).
+
+**Output:**
+
+```json
+{
+  "op": "assembly-graph",
+  "assemblyCount": 8,
+  "assemblies": [
+    { "name": "Assembly-CSharp",       "refs": "Game.Core;Game.UI" },
+    { "name": "Game.Core",             "refs": "" },
+    { "name": "Game.UI",               "refs": "Game.Core" }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `assemblyCount` | Total number of assemblies in the compilation pipeline |
+| `assemblies[].name` | Assembly name (matches `.asmdef` name field) |
+| `assemblies[].refs` | Semicolon-separated names of directly referenced assemblies. Empty if no asmdef references. |
+
+Assemblies are sorted alphabetically by name. Only `assemblyReferences` (direct asmdef deps) are listed — built-in Unity engine references are omitted to keep the graph readable.
+
+**Use case:** understand dependency topology, verify intended isolation, or generate a dependency graph visualization.
+
+```sh
+/diag assembly-graph
+unifocl exec "/diag assembly-graph" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `diag scene-deps`
+
+Calls `AssetDatabase.GetDependencies(scenePath, recursive: true)` for every **enabled** scene in `EditorBuildSettings.scenes` and returns the dependency list per scene.
+
+**Output:**
+
+```json
+{
+  "op": "scene-deps",
+  "sceneCount": 2,
+  "scenes": [
+    {
+      "path": "Assets/Scenes/Main.unity",
+      "depCount": 87,
+      "topDeps": "Assets/Materials/Ground.mat;Assets/Prefabs/Player.prefab;Assets/Textures/Sky.png"
+    }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `sceneCount` | Number of enabled build-settings scenes processed |
+| `scenes[].path` | Scene asset path |
+| `scenes[].depCount` | Total number of transitive dependencies (excluding the scene file itself) |
+| `scenes[].topDeps` | Semicolon-separated list of up to the first 20 dependency paths, sorted alphabetically |
+
+Only enabled scenes from `EditorBuildSettings.scenes` are scanned (disabled scenes are skipped). The `topDeps` field is capped at 20 entries per scene to keep responses manageable — use `depCount` to gauge total depth.
+
+**Use case:** understand what assets are pulled into each scene, detect unexpectedly heavy scenes, or verify asset isolation between scenes.
+
+```sh
+/diag scene-deps
+unifocl exec "/diag scene-deps" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `diag prefab-deps`
+
+Calls `AssetDatabase.GetDependencies(prefabPath, recursive: true)` for all prefabs found under `Assets/`. Results are capped at the first 100 prefabs to avoid timeout on large projects.
+
+**Output:**
+
+```json
+{
+  "op": "prefab-deps",
+  "prefabCount": 45,
+  "prefabs": [
+    {
+      "path": "Assets/Prefabs/Player.prefab",
+      "depCount": 23,
+      "topDeps": "Assets/Animations/Run.anim;Assets/Materials/Skin.mat;Assets/Textures/Skin.png"
+    }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `prefabCount` | Total number of prefabs found in `Assets/` (may exceed `prefabs` array length if capped) |
+| `prefabs[].path` | Prefab asset path |
+| `prefabs[].depCount` | Total transitive dependency count (excluding the prefab itself) |
+| `prefabs[].topDeps` | Semicolon-separated list of up to 20 dependency paths, sorted alphabetically |
+
+When `prefabCount > 100`, the `prefabs` array contains the first 100 results and the CLI renders a `(X shown of Y total)` notice.
+
+**Use case:** audit prefab complexity, find prefabs with unexpectedly large dependency trees, or verify that platform-specific assets aren't pulled in by wrong prefabs.
+
+```sh
+/diag prefab-deps
+unifocl exec "/diag prefab-deps" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `diag all`
+
+Runs all five diagnostics in sequence, separated by a visual divider in interactive mode.
+
+```sh
+/diag all
+unifocl exec "/diag all" --agentic --format json --project ./MyProject
+```
+
+---
+
+## ExecV2 Operation Reference
+
+All `diag` operations are registered as `SafeRead` — no approval gating required for agents.
+
+| Operation | Command |
+| --- | --- |
+| `diag.script-defines` | `/diag script-defines` |
+| `diag.compile-errors` | `/diag compile-errors` |
+| `diag.assembly-graph` | `/diag assembly-graph` |
+| `diag.scene-deps` | `/diag scene-deps` |
+| `diag.prefab-deps` | `/diag prefab-deps` |
+
+ExecV2 example:
+
+```json
+{
+  "operation": "diag.assembly-graph",
+  "requestId": "abc123"
+}
+```
+
+---
+
+## Performance Notes
+
+| Command | Cost | Notes |
+| --- | --- | --- |
+| `script-defines` | Negligible | In-memory PlayerSettings read |
+| `compile-errors` | Negligible | Reads cached compilation state |
+| `assembly-graph` | Negligible | Reads cached compilation state |
+| `scene-deps` | Moderate | One `GetDependencies` call per enabled scene |
+| `prefab-deps` | Moderate–Slow | Up to 100 `GetDependencies` calls; may take several seconds on large projects |
+
+`scene-deps` and `prefab-deps` call `AssetDatabase.GetDependencies` which walks the imported asset database. On first run in a cold Unity session this can be slow. Subsequent calls benefit from in-memory caching.
+
+---
+
+# Test Orchestration
+
+unifocl's `test` commands invoke Unity's built-in test runner as a **direct subprocess** — separate from the daemon, independent of any running editor, and safe to call from CI pipelines, parallel agent sessions, or any headless environment.
+
+---
+
+## Commands
+
+### `test list`
+
+Lists all available EditMode tests in the project.
+
+```
+/test list
+unifocl exec "test list" --agentic --format json --project <path>
+```
+
+**Output:**
+
+```json
+[
+  { "testName": "MyTests.MathTests.AdditionWorks", "assembly": "MyTests" },
+  { "testName": "MyTests.MathTests.SubtractionWorks", "assembly": "MyTests" }
+]
+```
+
+- Assembly is derived from the first segment of the fully-qualified test name.
+- Unity log noise (initialization lines, warnings) is filtered from the output.
+- Uses `-testPlatform EditMode -listTests` internally. PlayMode test listing is not supported by Unity's CLI.
+
+---
+
+### `test run editmode`
+
+Runs all EditMode tests and returns a structured result.
+
+```
+/test run editmode [--timeout <seconds>]
+unifocl exec "test run editmode" --agentic --format json --project <path>
+unifocl exec "test run editmode --timeout 300" --agentic --format json --project <path>
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--timeout <seconds>` | `600` | Hard kill timeout. The Unity subprocess is killed (entire process tree) when exceeded. |
+
+**Output:**
+
+```json
+{
+  "total": 42,
+  "passed": 40,
+  "failed": 2,
+  "skipped": 0,
+  "durationMs": 8340.5,
+  "artifactsPath": "<project>/Logs/unifocl-test",
+  "failures": [
+    {
+      "testName": "MyTests.SomeTest.FailingCase",
+      "message": "Expected 1 but was 2.",
+      "stackTrace": "at MyTests.SomeTest.FailingCase () [0x00001] in <...>:0",
+      "durationMs": 12.3
+    }
+  ]
+}
+```
+
+---
+
+### `test run playmode`
+
+Runs all PlayMode tests. PlayMode may trigger a player build before running, which can significantly extend the runtime — set `--timeout` accordingly.
+
+```
+/test run playmode [--timeout <seconds>]
+unifocl exec "test run playmode" --agentic --format json --project <path>
+unifocl exec "test run playmode --timeout 3600" --agentic --format json --project <path>
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--timeout <seconds>` | `1800` | Hard kill timeout. Increase for projects with heavy player build steps. |
+
+Output contract is identical to `test run editmode`.
+
+---
+
+## ExecV2 Operations
+
+Both operations are available via the structured `POST /agent/exec` endpoint.
+
+| Operation | Risk level | Args |
+| --- | --- | --- |
+| `test.list` | `SafeRead` | _(none)_ |
+| `test.run` | `PrivilegedExec` | `platform` (`EditMode` or `PlayMode`), `timeoutSeconds` (optional) |
+
+`test.run` is `PrivilegedExec` because it launches an external process against your project. It returns `ApprovalRequired` on first call; confirm by re-sending with the approval token.
+
+**ExecV2 request examples:**
+
+```json
+{ "operation": "test.list", "requestId": "req-tl-01" }
+```
+
+```json
+{
+  "operation": "test.run",
+  "requestId": "req-tr-01",
+  "args": { "platform": "EditMode", "timeoutSeconds": 300 }
+}
+```
+
+```json
+{
+  "operation": "test.run",
+  "requestId": "req-tr-01",
+  "args": { "platform": "EditMode" },
+  "intent": { "approvalToken": "<token-from-ApprovalRequired-response>" }
+}
+```
+
+---
+
+## Execution Model
+
+unifocl resolves the Unity editor for the project via `UnityEditorPathService` (same path used by `/open` and `build.run`), then launches Unity with:
+
+```
+Unity -projectPath <path> -runTests -testPlatform <EditMode|PlayMode> -testResults <artifacts/test-results.xml> -batchmode -nographics
+```
+
+For `test list`, `-listTests` replaces `-batchmode -nographics` and results come from stdout.
+
+**Subprocess lifecycle:**
+
+- stdout and stderr are captured concurrently via async `OutputDataReceived` / `ErrorDataReceived` handlers.
+- A linked `CancellationTokenSource` combines the user-supplied `CancellationToken` with a timeout token.
+- On cancellation or timeout, `process.Kill(entireProcessTree: true)` is called to ensure no orphaned Unity instances.
+
+**Artifacts:**
+
+All run artifacts land in `<projectPath>/Logs/unifocl-test/`:
+
+| File | Content |
+| --- | --- |
+| `test-results-editmode.xml` | NUnit v3 XML from EditMode runs |
+| `test-results-playmode.xml` | NUnit v3 XML from PlayMode runs |
+| `test-list.txt` | Raw `-testResults` output from list runs |
+
+If Unity crashes before writing the XML file, `test run` returns a zero-count result with an empty `failures` array rather than an error, so callers can distinguish a clean zero-test project from a hard crash by checking `total`.
+
+---
+
+## Multi-Agent Safety
+
+Because `test` commands run as isolated subprocesses with no shared daemon state:
+
+- Multiple agents can invoke `test list` or `test run` against the **same project path** concurrently without locking conflicts.
+- Each subprocess gets its own Unity instance with its own `Library` cache; heavy concurrent runs may contend on Unity's project lock file. Use separate git worktrees for fully isolated parallel runs.
+- `test.list` is `SafeRead` and carries no approval gate — agents can call it freely.
+- `test.run` is `PrivilegedExec` to prevent agents from silently launching expensive player builds.
+
+---
+
+## Exit Code Behavior
+
+| Scenario | `test run` result |
+| --- | --- |
+| All tests pass | `ok: true`, `failed: 0` |
+| Some tests fail | `ok: false`, `failed: N > 0`, failures populated |
+| Unity crashes / XML missing | `ok: false`, all counters zero, empty failures |
+| Timeout | Unity killed, result is whatever XML was written before kill |
+| Project not open / no editor found | ExecV2 returns `error` with resolution hint |
+
+---
+
+# Validate & Build Workflow
+
+unifocl ships two complementary command families for project health and build observability:
+
+- **`/validate`** — stateless project health checks that run at any time, before or outside a build
+- **`/build` workflow** — preflight, artifact introspection, and failure classification tied to the Unity build pipeline
+
+---
+
+## Shared Output Model
+
+Every validator and build workflow command returns a uniform response envelope. Consumers (humans or agents) can process all results with the same schema.
+
+```json
+{
+  "validator": "asmdef",
+  "passed": false,
+  "errorCount": 1,
+  "warningCount": 2,
+  "diagnostics": [
+    {
+      "severity": "Error",
+      "errorCode": "VASD004",
+      "message": "circular dependency detected: 'Game.Combat' -> 'Game.Core'",
+      "assetPath": "Assets/Combat/Game.Combat.asmdef",
+      "objectPath": null,
+      "sceneContext": null,
+      "fixable": false
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `severity` | `Error` / `Warning` / `Info` | Severity level of the finding |
+| `errorCode` | string | Stable machine-readable code (e.g. `VASD004`) |
+| `message` | string | Human-readable description |
+| `assetPath` | string? | Project-relative asset path where the issue was found |
+| `objectPath` | string? | Hierarchy path inside a scene or prefab |
+| `sceneContext` | string? | Scene path when finding originates from a loaded scene |
+| `fixable` | bool | Whether unifocl can offer an automatic fix (future) |
+
+---
+
+## Validators
+
+### `validate scene-list`
+
+**Requires daemon.** Reads `EditorBuildSettings.scenes` and checks every entry.
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VSC001` | Warning | Build settings scenes list is empty |
+| `VSC002` | Error | A scene entry has an empty path |
+| `VSC003` | Error | Scene path does not exist on disk (fixable) |
+| `VSC004` | Info | Scene entry is disabled |
+
+```sh
+/validate scene-list
+unifocl exec "/validate scene-list" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate missing-scripts`
+
+**Requires daemon.** Scans all currently loaded scenes and all prefab assets for `null` `MonoBehaviour` components — the symptom of a deleted or renamed script.
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VMS001` | Error | Null component slot found on a GameObject (fixable) |
+
+Expensive on large projects. Prefab scan iterates `AssetDatabase.FindAssets("t:Prefab")`.
+
+```sh
+/validate missing-scripts
+unifocl exec "/validate missing-scripts" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate packages`
+
+**No daemon required.** Reads `Packages/manifest.json` and `Packages/packages-lock.json` from disk.
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VPK001` | Error | `manifest.json` not found |
+| `VPK002` | Warning | `manifest.json` has no `dependencies` block |
+| `VPK003` | Warning | Package in manifest but absent from lock file (fixable) |
+| `VPK004` | Info | Manifest version differs from resolved lock version |
+| `VPK005` | Warning | `packages-lock.json` not found — regenerate by opening Unity (fixable) |
+| `VPK006` | Error | Failed to parse package files |
+
+```sh
+/validate packages
+unifocl exec "/validate packages" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate build-settings`
+
+**Requires daemon.** Checks `PlayerSettings` and `EditorUserBuildSettings` for common misconfigurations.
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VBS001` | Error | Application identifier (bundle ID) is empty |
+| `VBS002` | Error | Bundle ID contains spaces |
+| `VBS003` | Warning | `productName` is empty |
+| `VBS004` | Warning | `companyName` is default (`DefaultCompany`) or empty |
+| `VBS005` | Warning | `bundleVersion` is empty |
+| `VBS006` | Info | `bundleVersion` is a common default (`0.1` / `1.0`) |
+| `VBS007` | Warning | Active build target group is `Unknown` |
+| `VBS008` | Warning | No enabled scenes in build settings |
+| `VBS009` | Info | Active config summary (target, group, scripting backend, scene count) |
+
+```sh
+/validate build-settings
+unifocl exec "/validate build-settings" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate asmdef`
+
+**No daemon required.** Recursively finds all `.asmdef` files under `Assets/`, parses them as JSON, builds a dependency graph, and runs three checks.
+
+**Checks performed:**
+- **Duplicate names** — two or more `.asmdef` files declare the same `name` field
+- **Undefined references** — a `references` entry names an assembly not found in any scanned `.asmdef`
+- **Circular dependencies** — depth-first search over the dependency graph detects back edges
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VASD001` | Error | `Assets/` directory not found |
+| `VASD002` | Error | Duplicate assembly name across two or more `.asmdef` files |
+| `VASD003` | Warning | A `references` entry names an assembly not defined in any local `.asmdef` |
+| `VASD004` | Error | Circular dependency detected between two assemblies |
+
+> Note: `VASD003` (undefined reference) is a warning rather than an error because the referenced assembly may be a Unity built-in, a package assembly, or a platform SDK not scanned by the local file search. Treat it as an error only if the reference name looks like a project assembly.
+
+```sh
+/validate asmdef
+unifocl exec "/validate asmdef" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate asset-refs`
+
+**Requires daemon.** Scans `.unity`, `.prefab`, `.asset`, `.mat`, and `.controller` files under `Assets/` for GUID-based asset references. For each unique GUID found in YAML, calls `AssetDatabase.GUIDToAssetPath(guid)` — an empty result means the referenced asset no longer exists.
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VAR001` | Error | GUID in an asset file resolves to no known asset path |
+| `VAR002` | Info | Total number of assets scanned |
+| `VAR000` | Warning | Output capped at 500 findings; more broken refs may exist |
+
+The scan deduplicates broken GUIDs — each missing asset is reported once with the first file that references it. On large projects, scanning can take several seconds; assets in `Assets/` only are included (packages and Library are excluded).
+
+```sh
+/validate asset-refs
+unifocl exec "/validate asset-refs" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate addressables`
+
+**Requires daemon.** Checks the structural health of an Addressables setup. If the `com.unity.addressables` package is not listed in `Packages/manifest.json`, the validator returns a single `Info` diagnostic and exits cleanly.
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `VADR000` | Info | Addressables package not installed — validation skipped |
+| `VADR001` | Error | `Assets/AddressableAssetsData/AddressableAssetSettings.asset` not found (fixable) |
+| `VADR002` | Warning | `Assets/AddressableAssetsData/AssetGroups/` directory not found (fixable) |
+| `VADR003` | Info | Number of group `.asset` files found in `AssetGroups/` |
+| `VADR004` | Warning | Settings asset could not be loaded by `AssetDatabase` |
+
+```sh
+/validate addressables
+unifocl exec "/validate addressables" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `validate all`
+
+Runs every registered validator in sequence. Daemon-required validators are skipped if the daemon is not running and reported as warnings.
+
+```sh
+/validate all
+unifocl exec "/validate all" --agentic --format json --project ./MyProject
+```
+
+---
+
+## Build Workflow
+
+### Build Report Capture
+
+unifocl registers a `IPostprocessBuildWithReport` callback (`BuildReportCapture`) that fires automatically at the end of every Unity build. It serializes the `BuildReport` — files, steps, messages, and summary — to:
+
+```
+Library/unifocl-last-build-report.json
+```
+
+This file is the data source for `artifact-metadata`, `failure-classify`, and `report`. It is overwritten on each build and lives in `Library/` (not version-controlled).
+
+---
+
+### `build snapshot-packages`
+
+**No daemon required.** Takes a point-in-time snapshot of the package manifest and writes it to:
+
+```
+.unifocl-runtime/snapshots/packages-{yyyyMMdd-HHmmss}.json
+```
+
+The snapshot file includes: `timestamp` (ISO 8601), `packageCount`, `packages` array (`name`, `version`), and `lockfilePresent`.
+
+Use this before a build to create a baseline for rollback or audit.
+
+```sh
+/build snapshot-packages
+unifocl exec "/build snapshot-packages" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `build preflight`
+
+**Requires daemon.** Orchestrates three validators in sequence and reports an aggregated result:
+
+1. `validate scene-list`
+2. `validate build-settings`
+3. `validate packages`
+
+Returns a `BuildPreflightResult`:
+
+```json
+{
+  "passed": true,
+  "errorCount": 0,
+  "warningCount": 1,
+  "sceneList": { "passed": true, ... },
+  "buildSettings": { "passed": true, ... },
+  "packages": { "passed": true, ... }
+}
+```
+
+Preflight is designed to be run immediately before `/build run` to surface blocking issues without starting the build. The `build report` command calls preflight automatically.
+
+```sh
+/build preflight
+unifocl exec "/build preflight" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `build artifact-metadata`
+
+**Requires daemon.** Reads `Library/unifocl-last-build-report.json` and returns artifact file metadata.
+
+Response content:
+
+```json
+{
+  "buildTarget": "StandaloneWindows64",
+  "result": "Succeeded",
+  "outputPath": "Builds/Win64/MyGame.exe",
+  "totalSize": 52428800,
+  "buildTime": "00:03:24",
+  "fileCount": 87,
+  "files": ["Builds/Win64/MyGame.exe", "Builds/Win64/MyGame_Data/..."]
+}
+```
+
+Returns an error if no build has been captured yet in this project (`Library/` is clean).
+
+```sh
+/build artifact-metadata
+unifocl exec "/build artifact-metadata" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `build failure-classify`
+
+**Requires daemon.** Reads `Library/unifocl-last-build-report.json`, iterates every message in every build step, and classifies each one into a named category.
+
+| Category | Match rule |
+| --- | --- |
+| `CompileError` | Message matches `CS\d{4}` (Roslyn diagnostic code) |
+| `LinkerError` | Message contains `linker` or `stripping` (case-insensitive) |
+| `MissingAsset` | Message contains `Missing` and (`asset` or `prefab`) |
+| `ScriptError` | Message contains `.cs(` or `ScriptCompilationFailed` |
+| `Timeout` | Message contains `timed out` or `timeout` |
+
+Messages that match none of the above are omitted (not classified as `Other`).
+
+Response content:
+
+```json
+{
+  "hasFailures": true,
+  "buildResult": "Failed",
+  "totalErrors": 3,
+  "failures": [
+    { "kind": "CompileError", "stepName": "Compile scripts", "message": "Assets/Scripts/Player.cs(42,5): error CS0246: ..." },
+    { "kind": "MissingAsset", "stepName": "Build player", "message": "Missing prefab reference in ..." }
+  ]
+}
+```
+
+```sh
+/build failure-classify
+unifocl exec "/build failure-classify" --agentic --format json --project ./MyProject
+```
+
+---
+
+### `build report`
+
+**Requires daemon.** Runs preflight, then reads `artifact-metadata` and `failure-classify` from the last captured build, and renders a consolidated summary.
+
+```
+Build Report — 2026-03-29 10:05:22
+────────────────────────────────────────────────
+Preflight    PASS   0 errors, 1 warning
+Artifacts    87 files   50.0 MB   StandaloneWindows64
+Result       Succeeded   build time 00:03:24
+Failures     0 classified errors
+```
+
+If no build has been captured, the artifact and failure sections report "no build report found" while preflight still runs normally.
+
+```sh
+/build report
+unifocl exec "/build report" --agentic --format json --project ./MyProject
+```
+
+---
+
+## ExecV2 Operation Reference
+
+All validate and build workflow operations are registered as `SafeRead` — they require no approval gating and can be called freely by agents.
+
+| Operation | Command |
+| --- | --- |
+| `validate.scene-list` | `/validate scene-list` |
+| `validate.missing-scripts` | `/validate missing-scripts` |
+| `validate.packages` | `/validate packages` |
+| `validate.build-settings` | `/validate build-settings` |
+| `validate.asmdef` | `/validate asmdef` |
+| `validate.asset-refs` | `/validate asset-refs` |
+| `validate.addressables` | `/validate addressables` |
+| `build.snapshot-packages` | `/build snapshot-packages` |
+| `build.preflight` | `/build preflight` |
+| `build.artifact-metadata` | `/build artifact-metadata` |
+| `build.failure-classify` | `/build failure-classify` |
+| `build.report` | `/build report` |
