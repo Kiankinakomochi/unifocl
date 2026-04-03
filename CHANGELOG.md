@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.0 - 2026-04-03
+
+### Breaking Changes
+- **`list_commands` defaults to `category='core'`**: Previously returned all commands (~148). Now returns only core lifecycle commands (~29) by default. Use `category='all'` for the previous behavior.
+- **`get_agent_workflow_guide` now requires `section` parameter for full output**: Default returns a lean `quick_start` summary (~200 tokens). Use `section='all'` for the previous full guide.
+- **`CommandSpec` record gains a 4th parameter `Category`**: Code consuming `CommandSpec` may need updating.
+
+### Added
+- **Native `exec` MCP tool**: New `McpExecTools.Exec(commands[], project?, dryRun)` tool lets agents execute commands directly via MCP without constructing CLI strings, shell escaping, or ANSI stripping. Includes connection-scoped auto-session management.
+- **Tiered workflow guide**: `get_agent_workflow_guide(section)` supports 7 sections (`quick_start`, `exec_flags`, `modes`, `mutate`, `categories`, `session`, `discovery`) plus `all` for backward compatibility. Default `quick_start` is ~200 tokens vs ~3KB previously.
+- **`use_category` MCP tool**: Single-call category activation replaces the 3-step `get_categories` → `load_category` → use pattern. Returns available category names on error for self-correction.
+- **Command categorization**: All commands classified into 14 categories (`core`, `setup`, `build`, `validate`, `diag`, `test`, `upm`, `addressable`, `asset`, `scene`, `compile`, `eval`, `profiling`, `prefab`). `list_commands` supports `category` parameter for filtered queries.
+- **MCP smoke test harness**: `scripts/test-mcp.sh` — stdio-based JSON-RPC test script for verifying MCP tools without mcp.json configuration (14 tests).
+
+### Officialized
+- Officialized `3.0.0` by closing the development cycle suffix.
+
 ## 2.23.0 - 2026-04-02
 
 ### Added

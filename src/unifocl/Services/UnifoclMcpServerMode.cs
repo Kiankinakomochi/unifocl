@@ -4,9 +4,11 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 internal static class UnifoclMcpServerMode
 {
@@ -125,15 +127,30 @@ internal static class UnifoclMcpServerMode
 [McpServerToolType]
 public static class UnifoclCommandLookupTools
 {
-    [McpServerTool, Description("Lists unifocl commands by scope so agents can avoid reading full README/help text.")]
+    [McpServerTool, Description(
+        "Lists unifocl commands. Defaults to 'core' category for a lean response. " +
+        "Use category='all' to see everything, or filter by specific category: " +
+        "core, setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab.")]
     public static CommandLookupResult ListCommands(
         [Description("Command scope filter: root, project, inspector, or all.")] string scope = "all",
+        [Description("Category filter: core (default, essential commands), or a specific domain: " +
+                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, setup. " +
+                     "Use 'all' to list every command across all categories.")]
+        string category = "core",
         [Description("Optional case-insensitive search across trigger/signature/description.")] string? query = null,
         [Description("Max commands to return (1-400).")] int limit = 120)
     {
         var normalizedScope = NormalizeScope(scope);
+        var normalizedCategory = (category ?? "core").Trim().ToLowerInvariant();
         var normalizedQuery = query?.Trim();
         var commandRows = EnumerateCommands(normalizedScope);
+
+        // Category filter (before query filter)
+        if (normalizedCategory != "all")
+        {
+            commandRows = commandRows.Where(row =>
+                string.Equals(row.Spec.Category, normalizedCategory, StringComparison.OrdinalIgnoreCase));
+        }
 
         if (!string.IsNullOrWhiteSpace(normalizedQuery))
         {
@@ -150,17 +167,31 @@ public static class UnifoclCommandLookupTools
                 row.Scope,
                 row.Spec.Trigger,
                 row.Spec.Signature,
-                row.Spec.Description))
+                row.Spec.Description,
+                row.Spec.Category))
             .ToList();
 
         var capped = Math.Clamp(limit, 1, 400);
         var returned = allMatches.Take(capped).ToList();
+
+        // Populate available categories when result is empty or showing all
+        List<string>? availableCategories = null;
+        if (returned.Count == 0 || normalizedCategory == "all")
+        {
+            availableCategories = EnumerateCommands(normalizedScope)
+                .Select(row => row.Spec.Category)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(c => c, StringComparer.Ordinal)
+                .ToList();
+        }
+
         return new CommandLookupResult(
             Scope: normalizedScope,
             Query: normalizedQuery ?? string.Empty,
             Total: allMatches.Count,
             Returned: returned.Count,
-            Commands: returned);
+            Commands: returned,
+            AvailableCategories: availableCategories);
     }
 
     [McpServerTool, Description("Looks up the best command match (trigger/signature/alias) and returns concise usage details.")]
@@ -201,7 +232,8 @@ public static class UnifoclCommandLookupTools
                 row.Scope,
                 row.Spec.Trigger,
                 row.Spec.Signature,
-                row.Spec.Description))
+                row.Spec.Description,
+                row.Spec.Category))
             .ToList();
 
         return new CommandLookupResult(
@@ -255,14 +287,16 @@ public sealed record CommandLookupItem(
     string Scope,
     string Trigger,
     string Signature,
-    string Description);
+    string Description,
+    string Category);
 
 public sealed record CommandLookupResult(
     string Scope,
     string Query,
     int Total,
     int Returned,
-    List<CommandLookupItem> Commands);
+    List<CommandLookupItem> Commands,
+    List<string>? AvailableCategories = null);
 
 // ── /mutate schema tool ───────────────────────────────────────────────────────
 
@@ -621,6 +655,79 @@ public static class UnifoclCategoryTools
     }
 
     [McpServerTool, Description(
+        "Activates a tool category in one step: loads the manifest if needed, then registers all tools " +
+        "from the named category as live MCP tools. Returns the list of activated tool names. " +
+        "Equivalent to calling get_categories + load_category, but in a single round-trip. " +
+        "If the category is already loaded, returns success with the existing tool list.")]
+    public static UseCategoryResult UseCategory(
+        [Description("Category name (e.g. 'profiling'). Call get_categories to discover available names, " +
+                     "or try the name directly — this tool will return an error with available categories if not found.")]
+        string categoryName,
+        McpServer server,
+        UnifoclManifestService manifest)
+    {
+        // Step 1: Ensure manifest is loaded
+        if (!manifest.IsManifestLoaded)
+        {
+            var projectPath = UnifoclManifestService.ResolveActiveProjectPath();
+            if (string.IsNullOrEmpty(projectPath))
+            {
+                return new UseCategoryResult(false,
+                    "No active project. Open a project first, then retry.",
+                    0, [], null);
+            }
+            manifest.EnsureLoaded(projectPath);
+        }
+
+        // Step 2: Check if category exists
+        var infos = manifest.GetCategoryInfos();
+        var categoryExists = false;
+        var alreadyActive = false;
+        foreach (var info in infos)
+        {
+            if (string.Equals(info.Name, categoryName, StringComparison.OrdinalIgnoreCase))
+            {
+                categoryExists = true;
+                alreadyActive = info.Active;
+                break;
+            }
+        }
+
+        if (!categoryExists)
+        {
+            var available = infos.Select(i => i.Name).ToList();
+            return new UseCategoryResult(false,
+                $"Category '{categoryName}' not found in manifest.",
+                0, [], available);
+        }
+
+        // Step 3: Load if not already active
+        if (!alreadyActive)
+        {
+            manifest.LoadCategory(categoryName);
+            var tools = manifest.GetToolsForCategory(categoryName);
+            var toolNames = new List<string>();
+            foreach (var tool in tools)
+            {
+                var mcpTool = new ManifestMcpServerTool(tool, categoryName);
+                server.ServerOptions.ToolCollection!.TryAdd(mcpTool);
+                toolNames.Add(tool.Name);
+            }
+
+            return new UseCategoryResult(true,
+                $"Category '{categoryName}' activated: {toolNames.Count} tool(s) registered.",
+                toolNames.Count, toolNames, null);
+        }
+
+        // Already loaded — return tool names
+        var existingTools = manifest.GetToolsForCategory(categoryName);
+        var existingNames = existingTools.Select(t => t.Name).ToList();
+        return new UseCategoryResult(true,
+            $"Category '{categoryName}' was already active: {existingNames.Count} tool(s) available.",
+            existingNames.Count, existingNames, null);
+    }
+
+    [McpServerTool, Description(
         "Force-reloads the tool manifest from disk for the active Unity project, " +
         "even if the manifest was already loaded. " +
         "Call this after Unity recompiles (e.g. you added a new [UnifoclCommand] method) " +
@@ -651,12 +758,146 @@ public sealed record GetCategoriesResult(bool ManifestLoaded, List<CategoryInfo>
 public sealed record LoadCategoryResult(bool Ok, string Message, int ToolsAdded);
 public sealed record UnloadCategoryResult(bool Ok, string Message, int ToolsRemoved);
 public sealed record ReloadManifestResult(bool Ok, string Message, int CategoryCount, int TotalTools);
+public sealed record UseCategoryResult(
+    bool Ok,
+    string Message,
+    int ToolCount,
+    List<string> Tools,
+    List<string>? AvailableCategories);
 
 // ── Agentic workflow guide tool ───────────────────────────────────────────────
 
 [McpServerToolType]
 public static class UnifoclAgentWorkflowTools
 {
+    private const string QuickStartJson = """
+        {
+          "overview": "unifocl controls Unity projects via CLI. Commands run through exec calls with structured JSON output.",
+          "preferred_method": "Use the 'exec' MCP tool directly — it handles session state and returns clean JSON. No shell escaping needed.",
+          "fallback_method": "unifocl exec '<command>' --agentic --format json --project <path> --session-seed <seed>",
+          "common_patterns": {
+            "open_project": "exec commands=[\"/open /path/to/project\"] project=\"/path/to/project\"",
+            "dump_hierarchy": "exec commands=[\"/dump hierarchy --depth 2\"]",
+            "mutate_scene": "exec commands=[\"/mutate [{\\\"op\\\":\\\"create\\\",\\\"type\\\":\\\"canvas\\\",\\\"name\\\":\\\"HUD\\\"}]\"]",
+            "inspect_object": "exec commands=[\"inspect /Canvas\", \"set renderMode ScreenSpaceOverlay\"]"
+          },
+          "modes_summary": "project (default, asset ops) | inspector (per-object mutations) | hierarchy (TUI-only, avoid in agentic)",
+          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, or 'all'"
+        }
+        """;
+
+    private const string ExecFlagsJson = """
+        {
+          "exec_flags": {
+            "--agentic": "Enable structured JSON output. Required for all agent usage.",
+            "--format": "Output format: json (default) or yaml.",
+            "--project <path>": "Absolute path to the Unity project directory. Starts daemon if needed.",
+            "--mode <mode>": "Initial context: project | inspector | hierarchy. Defaults to 'project' when --project is set.",
+            "--session-seed <key>": "Persistence key. Saves/restores mode, inspector target, daemon port, and project path across exec calls. Use a stable per-workflow key (e.g. 'wf-build-ui'). Avoids repeating --project on every call.",
+            "--attach-port <port>": "Attach to a specific daemon port instead of auto-discovering.",
+            "--request-id <id>": "Custom request identifier echoed in response meta. Useful for correlation.",
+            "--dry-run": "Preview mutations without applying (supported by /mutate and inspector set commands)."
+          }
+        }
+        """;
+
+    private const string ModesJson = """
+        {
+          "mode_guidance": {
+            "project": "Default after /open. Used for asset operations (mk script/material/prefab, load scene, upm).",
+            "inspector": "Used for per-object mutations: rename, remove, move, comp add/remove, set/toggle fields. Target is preserved in session state via --session-seed.",
+            "hierarchy": "TUI-only. Contextual commands (rm/rn/mv) do NOT execute in agentic exec. Use inspector mode or /mutate instead."
+          }
+        }
+        """;
+
+    private const string MutateJson = """
+        {
+          "batch_mutations": {
+            "description": "Prefer /mutate for multi-object scene builds. It infers hierarchy vs inspector context per op and avoids multi-call overhead.",
+            "example": "exec '/mutate [{\"op\":\"create\",\"parent\":\"/\",\"type\":\"canvas\",\"name\":\"HUD\"},{\"op\":\"rename\",\"target\":\"/OldName\",\"name\":\"NewName\"}]' --agentic --format json --project /path/to/project"
+          },
+          "full_schema": "Call get_mutate_schema() for the complete op catalog, required/optional fields, path format, and response shape."
+        }
+        """;
+
+    private const string CategoriesJson = """
+        {
+          "custom_commands": {
+            "description": "Custom tools defined with [UnifoclCommand] on static C# methods in Unity editor scripts.",
+            "discovery_flow": [
+              "1. Call get_categories — returns available categories in the loaded manifest.",
+              "2. Call load_category with the category name — registers those tools as live MCP tools.",
+              "3. The tools are now directly callable as MCP tools."
+            ],
+            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then load_category again for new categories.",
+            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first.",
+            "built_in_categories": {
+              "profiling": {
+                "description": "Lazy-loaded profiling category. Provides capture, analysis, and live telemetry tools backed by Unity Profiler, MemoryProfiler, and ProfilerRecorder APIs.",
+                "load": "load_category('profiling')",
+                "tools": [
+                  "profiling.capabilities — feature probe (SafeRead)",
+                  "profiling.inspect — profiler state + memory stats (SafeRead)",
+                  "profiling.start_recording / stop_recording — capture control (PrivilegedExec)",
+                  "profiling.save_profile / load_profile — .data capture I/O (SafeWrite)",
+                  "profiling.take_snapshot — memory snapshot .snap (SafeWrite)",
+                  "profiling.frames — frame range stats: CPU/GPU/FPS avg/p50/p95/max (SafeRead)",
+                  "profiling.threads / counters — thread enum + counter series (SafeRead)",
+                  "profiling.markers — hotspot analysis by total/self time (SafeRead)",
+                  "profiling.sample — raw per-sample timing + callstacks (SafeRead)",
+                  "profiling.gc_alloc — GC allocation tracking (SafeRead)",
+                  "profiling.compare — baseline vs candidate delta (SafeRead)",
+                  "profiling.budget_check — CI pass/fail budget rules (SafeRead)",
+                  "profiling.export_summary — write stats JSON to disk (SafeRead)",
+                  "profiling.live_start / live_stop — ProfilerRecorder telemetry (PrivilegedExec)",
+                  "profiling.recorders_list — enumerate available counters (SafeRead)",
+                  "profiling.frame_timing — FrameTimingManager CPU/GPU (SafeRead)",
+                  "profiling.binary_log_start / binary_log_stop — .raw streaming (PrivilegedExec)",
+                  "profiling.annotate_session / annotate_frame — emit metadata (SafeWrite)",
+                  "profiling.gpu_capture_begin / gpu_capture_end — RenderDoc/PIX (PrivilegedExec, optional)"
+                ]
+              }
+            }
+          }
+        }
+        """;
+
+    private const string SessionJson = """
+        {
+          "multi_step_pattern": {
+            "description": "Use --session-seed to chain stateful exec calls without repeating context flags.",
+            "example": [
+              "exec '/open /path/to/project' --agentic --format json --session-seed s1",
+              "exec 'inspect /Canvas' --agentic --format json --session-seed s1",
+              "exec 'rn HUD_Canvas' --agentic --format json --session-seed s1",
+              "exec '/dump hierarchy --depth 2 --format json' --agentic --format json --session-seed s1"
+            ]
+          },
+          "newline_batching": {
+            "description": "A single exec call can run multiple commands separated by newlines. State flows across lines.",
+            "example": "exec $'inspect /Canvas\\nrn HUD_Canvas\\ncomp add CanvasScaler' --agentic --format json --project /path/to/project"
+          },
+          "session_storage": ".unifocl-runtime/agentic/sessions/<seed>.json (relative to CWD or project root)"
+        }
+        """;
+
+    private const string DiscoveryJson = """
+        {
+          "command_discovery": {
+            "description": "Use list_commands and lookup_command to explore all built-in unifocl commands without reading the README.",
+            "list_commands": {
+              "scope_root": "list_commands(scope='root') — lifecycle commands: /open, /close, /init, /new, /clone, /build, /upm, /mutate, /dump, /profiler, etc.",
+              "scope_project": "list_commands(scope='project') — project-mode commands: mk, load, rm, rn, set, upm, build, etc.",
+              "scope_inspector": "list_commands(scope='inspector') — inspector-mode commands: set, toggle, comp add/remove, etc.",
+              "query": "list_commands(query='build') — filter by keyword across all scopes."
+            },
+            "lookup_command": "lookup_command('/open') — exact match + fuzzy fallback; returns signature and description for the best match.",
+            "when_to_use": "Call list_commands(scope='root') at session start to understand available lifecycle commands before issuing exec calls."
+          }
+        }
+        """;
+
     private const string WorkflowGuideJson = """
         {
           "exec_flags": {
@@ -744,10 +985,278 @@ public static class UnifoclAgentWorkflowTools
         }
         """;
 
+    private static readonly Dictionary<string, string> _sections = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["quick_start"] = QuickStartJson,
+        ["exec_flags"] = ExecFlagsJson,
+        ["modes"] = ModesJson,
+        ["mutate"] = MutateJson,
+        ["categories"] = CategoriesJson,
+        ["session"] = SessionJson,
+        ["discovery"] = DiscoveryJson,
+        ["all"] = WorkflowGuideJson
+    };
+
     [McpServerTool, Description(
-        "Returns the unifocl agentic exec workflow guide: all exec flags (including --session-seed), " +
-        "multi-step session patterns, newline batching, /mutate preference guidance, and mode semantics. " +
-        "Call this once at the start of any agentic workflow to understand how to chain exec calls " +
-        "without repeating context flags.")]
-    public static string GetAgentWorkflowGuide() => WorkflowGuideJson;
+        "Returns unifocl agentic workflow guidance. Call with no section for a quick-start summary (~200 tokens). " +
+        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery. " +
+        "Replaces the need to read docs or call /help.")]
+    public static string GetAgentWorkflowGuide(
+        [Description("Section to retrieve: quick_start (default, minimal getting-started), " +
+                     "exec_flags (all --flag details), modes (project/inspector/hierarchy semantics), " +
+                     "mutate (/mutate batch guidance), categories (custom tool loading), " +
+                     "session (--session-seed patterns), discovery (list_commands/lookup_command usage), " +
+                     "or 'all' for the complete guide.")]
+        string section = "quick_start")
+    {
+        var key = (section ?? "quick_start").Trim();
+        if (_sections.TryGetValue(key, out var content))
+            return content;
+
+        return JsonSerializer.Serialize(new
+        {
+            error = $"unknown section '{key}'",
+            available = _sections.Keys.ToList()
+        });
+    }
 }
+
+// ── Native exec tool ──────────────────────────────────────────────────────────
+
+[McpServerToolType]
+public static class McpExecTools
+{
+    // Connection-scoped implicit session state
+    private static string _implicitSessionSeed = $"mcp-{Guid.NewGuid():N}";
+    private static string? _lastProject;
+
+    [McpServerTool, Description(
+        "Executes one or more unifocl commands and returns structured JSON results. " +
+        "Commands run sequentially with shared session state — no need for --session-seed or shell escaping. " +
+        "First call should include 'project' to open a Unity project. Subsequent calls reuse the session automatically.")]
+    public static async Task<McpExecResult> Exec(
+        [Description("Array of command strings to execute sequentially. State flows between commands. " +
+                     "Examples: [\"/open /path/to/project\"], [\"inspect /Canvas\", \"set renderMode ScreenSpaceOverlay\"], " +
+                     "[\"/mutate [{...}]\"], [\"/dump hierarchy --depth 2\"]")]
+        string[] commands,
+        [Description("Absolute path to Unity project. Required on first call, remembered for subsequent calls.")]
+        string? project = null,
+        [Description("Preview mutations without applying.")]
+        bool dryRun = false,
+        CancellationToken ct = default)
+    {
+        if (commands is null || commands.Length == 0)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: ["No commands provided. Pass at least one command string."],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        // Resolve project: explicit param > remembered > null
+        var resolvedProject = project ?? _lastProject;
+        if (project is not null)
+            _lastProject = project;
+
+        // Join commands with newline for batch execution
+        var joinedCommands = string.Join("\n", commands);
+
+        var processPath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(processPath))
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: ["Cannot resolve unifocl binary path (Environment.ProcessPath is null)."],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        var psi = new ProcessStartInfo(processPath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        // Use ArgumentList to avoid shell escaping entirely
+        psi.ArgumentList.Add("exec");
+        psi.ArgumentList.Add(joinedCommands);
+        psi.ArgumentList.Add("--agentic");
+        psi.ArgumentList.Add("--format");
+        psi.ArgumentList.Add("json");
+        if (resolvedProject is not null)
+        {
+            psi.ArgumentList.Add("--project");
+            psi.ArgumentList.Add(resolvedProject);
+        }
+        psi.ArgumentList.Add("--session-seed");
+        psi.ArgumentList.Add(_implicitSessionSeed);
+        if (dryRun)
+            psi.ArgumentList.Add("--dry-run");
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return new McpExecResult(
+                    Ok: false,
+                    Status: "error",
+                    Data: null,
+                    Errors: ["Failed to start unifocl process."],
+                    Warnings: null,
+                    SessionSeed: _implicitSessionSeed,
+                    Mode: null);
+            }
+
+            // Read stdout and stderr concurrently to avoid deadlocks
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+            // Timeout: 30 seconds
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                return new McpExecResult(
+                    Ok: false,
+                    Status: "error",
+                    Data: null,
+                    Errors: ["Command execution timed out after 30 seconds."],
+                    Warnings: null,
+                    SessionSeed: _implicitSessionSeed,
+                    Mode: null);
+            }
+
+            var stdout = StripAnsi(await stdoutTask);
+            var stderr = await stderrTask;
+
+            // Remember project from successful /open calls
+            if (resolvedProject is not null && process.ExitCode == 0)
+                _lastProject = resolvedProject;
+
+            // Parse the JSON envelope from stdout
+            return ParseEnvelope(stdout, stderr, process.ExitCode);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // propagate cancellation
+        }
+        catch (Exception ex)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"Process execution failed: {ex.Message}"],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+    }
+
+    private static McpExecResult ParseEnvelope(string stdout, string stderr, int exitCode)
+    {
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            var errors = new List<string> { $"No output from unifocl (exit code {exitCode})." };
+            if (!string.IsNullOrWhiteSpace(stderr))
+                errors.Add($"stderr: {stderr.Trim()}");
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: errors,
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        // Find the first '{' to skip any non-JSON prefix
+        var jsonStart = stdout.IndexOf('{');
+        if (jsonStart < 0)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"No JSON found in output (exit code {exitCode}). Raw: {stdout[..Math.Min(stdout.Length, 500)]}"],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+
+        var jsonText = stdout[jsonStart..];
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<AgenticResponseEnvelope>(
+                jsonText, UnifoclMcpServerMode._jsonOpts);
+
+            if (envelope is null)
+            {
+                return new McpExecResult(
+                    Ok: false,
+                    Status: "error",
+                    Data: null,
+                    Errors: ["Failed to deserialize response envelope."],
+                    Warnings: null,
+                    SessionSeed: _implicitSessionSeed,
+                    Mode: null);
+            }
+
+            var ok = string.Equals(envelope.Status, "success", StringComparison.OrdinalIgnoreCase);
+            var errors = envelope.Errors?.Count > 0
+                ? envelope.Errors.Select(e => string.IsNullOrEmpty(e.Hint) ? e.Message : $"{e.Message} (hint: {e.Hint})").ToList()
+                : null;
+            var warnings = envelope.Warnings?.Count > 0
+                ? envelope.Warnings.Select(w => w.Message).ToList()
+                : null;
+
+            return new McpExecResult(
+                Ok: ok,
+                Status: envelope.Status,
+                Data: envelope.Data,
+                Errors: errors,
+                Warnings: warnings,
+                SessionSeed: _implicitSessionSeed,
+                Mode: envelope.Mode);
+        }
+        catch (JsonException ex)
+        {
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"JSON parse error: {ex.Message}. Raw start: {jsonText[..Math.Min(jsonText.Length, 300)]}"],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
+        }
+    }
+
+    private static string StripAnsi(string input)
+        => Regex.Replace(input, @"\x1b\[[0-9;]*[mJKH]", "");
+}
+
+public sealed record McpExecResult(
+    bool Ok,
+    string Status,
+    object? Data,
+    List<string>? Errors,
+    List<string>? Warnings,
+    string? SessionSeed,
+    string? Mode);
