@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.1 - 2026-04-03
+
+### Fixed
+- **`mutate` mode compatibility docs corrected**: Removed incorrect Bridge-only restriction from `add_component` schema note and `mode_compatibility` field. All ops work in both Host and Bridge mode.
+- **`compile request` / `compile status` descriptions clarified**: Catalog entries now note that these commands require Bridge mode (returns unsupported route in Host/batch mode).
+
+### Changed
+- **MCP tool reference docs updated** (claude-plugin, codex-plugin): Added `UnloadCategory`, `ReloadManifest` to tool lists; `UseCategory` now listed as the preferred single-step alternative to `GetCategories` + `LoadCategory`.
+- **Workflow guide prefers `use_category`**: `get_agent_workflow_guide` and plugin docs updated to recommend `use_category(name)` as the single-step activation path over the two-step `get_categories` + `load_category` flow.
+- **`ListCommands` docs updated**: Plugin references reflect the `category` parameter (replaces `scope`-only usage guidance).
+
+### Officialized
+- Officialized `3.0.1` by closing the development cycle suffix.
+
 ## 3.0.0 - 2026-04-03
 
 ### Breaking Changes

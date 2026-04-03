@@ -21,7 +21,9 @@ Standard session pattern:
    Always read context before planning mutations — paths are case-sensitive.
 
 4. Discover commands
-   `ListCommands(scope="all")` via MCP for full catalog.
+   `ListCommands(category="all")` via MCP for full catalog, or filter by category:
+     core (default), setup, build, validate, diag, test, upm, addressable, asset,
+     scene, compile, eval, profiling, prefab.
    `LookupCommand(command="...")` for a specific command's signature.
    Prefer MCP lookups over reading README — lower token cost.
 

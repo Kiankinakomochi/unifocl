@@ -34,7 +34,7 @@ Path format rules:
 - Names are case-sensitive and must match exactly as shown in `/dump hierarchy`
 
 Mode availability:
-- Host mode (no Unity Editor open): create, rename, remove, move, toggle_active
-- Bridge mode (Unity Editor open with com.unifocl.cli): all ops including add_component, remove_component, set_field, toggle_field, toggle_component
+- All ops work in both Host mode (batch/headless daemon) and Bridge mode (interactive Unity Editor).
+- No op is restricted to Bridge-only.
 
 For multi-step workflows, pass `--session-seed <id>` across exec calls to share project context without re-specifying --project every time.

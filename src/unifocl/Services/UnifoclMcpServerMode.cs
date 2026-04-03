@@ -335,7 +335,6 @@ public static class UnifoclMutateTools
             },
             "add_component": {
               "fields": { "target": "required", "type": "required (component type name)" },
-              "note": "Requires Bridge mode (Unity Editor open with com.unifocl.cli package). Not available in Host/batch mode.",
               "example": {"op":"add_component","target":"/HUD_Canvas","type":"CanvasScaler"}
             },
             "remove_component": {
@@ -364,7 +363,7 @@ public static class UnifoclMutateTools
             "data.dryRun": "bool"
           },
           "path_format": "Use '/' for scene root. '/Name' for a top-level object. '/Parent/Child' for nested. Names are case-sensitive and matched by exact name in the loaded scene.",
-          "mode_compatibility": "create/rename/remove/move/toggle_active work in Host mode (batch daemon). add_component/remove_component/set_field/toggle_field/toggle_component require Bridge mode.",
+          "mode_compatibility": "All ops work in both Host mode (batch daemon) and Bridge mode (interactive editor).",
           "session_tip": "Chain with --session-seed to keep project context across exec calls without repeating --project."
         }
         """;
@@ -826,16 +825,16 @@ public static class UnifoclAgentWorkflowTools
           "custom_commands": {
             "description": "Custom tools defined with [UnifoclCommand] on static C# methods in Unity editor scripts.",
             "discovery_flow": [
-              "1. Call get_categories — returns available categories in the loaded manifest.",
-              "2. Call load_category with the category name — registers those tools as live MCP tools.",
-              "3. The tools are now directly callable as MCP tools."
+              "1. Call use_category(name) — preferred single-step: loads manifest if needed, registers tools, returns tool list.",
+              "   OR the two-step alternative: get_categories to list names, then load_category(name) to register.",
+              "2. The tools are now directly callable as MCP tools."
             ],
-            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then load_category again for new categories.",
-            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first.",
+            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then use_category again for new categories.",
+            "prerequisite": "A project must be open. If use_category returns an error about no manifest, run exec '/open <path>' --agentic --project <path> first.",
             "built_in_categories": {
               "profiling": {
                 "description": "Lazy-loaded profiling category. Provides capture, analysis, and live telemetry tools backed by Unity Profiler, MemoryProfiler, and ProfilerRecorder APIs.",
-                "load": "load_category('profiling')",
+                "load": "use_category('profiling')",
                 "tools": [
                   "profiling.capabilities — feature probe (SafeRead)",
                   "profiling.inspect — profiler state + memory stats (SafeRead)",
@@ -937,16 +936,16 @@ public static class UnifoclAgentWorkflowTools
           "custom_commands": {
             "description": "Custom tools defined with [UnifoclCommand] on static C# methods in Unity editor scripts.",
             "discovery_flow": [
-              "1. Call get_categories — returns available categories in the loaded manifest.",
-              "2. Call load_category with the category name — registers those tools as live MCP tools.",
-              "3. The tools are now directly callable as MCP tools."
+              "1. Call use_category(name) — preferred single-step: loads manifest if needed, registers tools, returns tool list.",
+              "   OR the two-step alternative: get_categories to list names, then load_category(name) to register.",
+              "2. The tools are now directly callable as MCP tools."
             ],
-            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then load_category again for new categories.",
-            "prerequisite": "A project must be open. If get_categories returns ManifestLoaded:false, run exec '/open <path>' --agentic --project <path> first.",
+            "after_recompile": "After Unity recompiles (new [UnifoclCommand] methods added), call reload_manifest to refresh, then use_category again for new categories.",
+            "prerequisite": "A project must be open. If use_category returns an error about no manifest, run exec '/open <path>' --agentic --project <path> first.",
             "built_in_categories": {
               "profiling": {
                 "description": "Lazy-loaded profiling category. Provides capture, analysis, and live telemetry tools backed by Unity Profiler, MemoryProfiler, and ProfilerRecorder APIs.",
-                "load": "load_category('profiling')",
+                "load": "use_category('profiling')",
                 "tools": [
                   "profiling.capabilities — feature probe (SafeRead)",
                   "profiling.inspect — profiler state + memory stats (SafeRead)",
