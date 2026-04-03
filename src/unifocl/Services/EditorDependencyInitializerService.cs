@@ -20,6 +20,7 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonMutationTransactionCoordinatorResource = "Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs";
     private const string DaemonProjectServiceResource = "Payload/EditorScripts/Services/DaemonProjectService.cs";
     private const string DaemonProjectServiceAssetCreationResource = "Payload/EditorScripts/Services/DaemonProjectService.AssetCreation.cs";
+    private const string DaemonProjectServiceAssetDescribeResource = "Payload/EditorScripts/Services/DaemonProjectService.AssetDescribe.cs";
     private const string DaemonProjectServiceAddressablesResource = "Payload/EditorScripts/Services/DaemonProjectService.Addressables.cs";
     private const string DaemonProjectServiceBuildResource = "Payload/EditorScripts/Services/DaemonProjectService.Build.cs";
     private const string DaemonProjectServiceDryRunResource = "Payload/EditorScripts/Services/DaemonProjectService.DryRun.cs";
@@ -270,6 +271,7 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonMutationTransactionCoordinatorResource, Path.Combine("Editor", "Services", "DaemonMutationTransactionCoordinator.cs")),
                 (DaemonProjectServiceResource, Path.Combine("Editor", "Services", "DaemonProjectService.cs")),
                 (DaemonProjectServiceAssetCreationResource, Path.Combine("Editor", "Services", "DaemonProjectService.AssetCreation.cs")),
+                (DaemonProjectServiceAssetDescribeResource, Path.Combine("Editor", "Services", "DaemonProjectService.AssetDescribe.cs")),
                 (DaemonProjectServiceAddressablesResource, Path.Combine("Editor", "Services", "DaemonProjectService.Addressables.cs")),
                 (DaemonProjectServiceBuildResource, Path.Combine("Editor", "Services", "DaemonProjectService.Build.cs")),
                 (DaemonProjectServiceDryRunResource, Path.Combine("Editor", "Services", "DaemonProjectService.DryRun.cs")),

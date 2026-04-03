@@ -11,6 +11,7 @@ internal sealed class ExecOperationRouter
     private readonly ExecApprovalService _approval;
     private readonly ExecSessionService _sessions;
     private readonly TestCommandService _testService;
+    private readonly AssetDescribeService _assetDescribe;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ExecOperationRouter(ExecCommandRegistry registry, ExecApprovalService approval, ExecSessionService sessions)
@@ -19,6 +20,7 @@ internal sealed class ExecOperationRouter
         _approval = approval;
         _sessions = sessions;
         _testService = new TestCommandService();
+        _assetDescribe = new AssetDescribeService();
     }
 
     /// <summary>Synchronous routing path used by the daemon HTTP endpoint.</summary>
@@ -84,6 +86,13 @@ internal sealed class ExecOperationRouter
         if (request.Operation.StartsWith("test.", StringComparison.OrdinalIgnoreCase))
         {
             return await DispatchTestOperationAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
+        // asset.describe is a composite command (daemon thumbnail export + local Python captioning).
+        if (request.Operation.Equals("asset.describe", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _assetDescribe.DescribeAsync(request, projectBridge, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         return Dispatch(request, intent.DryRun, projectBridge);

@@ -82,6 +82,8 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs" LogicalName="Payload/EditorScripts/Services/DaemonMutationTransactionCoordinator.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.AssetCreation.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.AssetCreation.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.AssetDescribe.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.AssetDescribe.cs" />
+    <EmbeddedResource Include="Scripts/describe_asset.py" LogicalName="Scripts/describe_asset.py" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Addressables.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Addressables.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Build.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Build.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.DryRun.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.DryRun.cs" />

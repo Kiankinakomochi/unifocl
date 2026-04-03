@@ -10,7 +10,7 @@
     <UnityEditorManagedDir Condition="'$(UnityEditorManagedDir)' == ''">$(UNIFOCL_UNITY_EDITOR_MANAGED_DIR)</UnityEditorManagedDir>
     <UnityProjectPath Condition="'$(UnityProjectPath)' == ''">$(UNIFOCL_UNITY_PROJECT_PATH)</UnityProjectPath>
     <UnityScriptAssembliesDir Condition="'$(UnityScriptAssembliesDir)' == '' and '$(UnityProjectPath)' != ''">$(UnityProjectPath)/Library/ScriptAssemblies</UnityScriptAssembliesDir>
-    <UnityTemplateLibcacheDir Condition="'$(UnityTemplateLibcacheDir)' == '' and '$(UnityEditorManagedDir)' != ''">$([System.String]::Copy('$(UnityEditorManagedDir)').Replace('/Contents/Managed', '/Contents/Resources/PackageManager/ProjectTemplates/libcache'))</UnityTemplateLibcacheDir>
+    <UnityTemplateLibcacheDir Condition="'$(UnityTemplateLibcacheDir)' == '' and '$(UnityEditorManagedDir)' != ''">$([System.String]::Copy('$(UnityEditorManagedDir)').Replace('/Contents/Resources/Scripting/Managed', '/Contents/Resources/PackageManager/ProjectTemplates/libcache').Replace('/Contents/Managed', '/Contents/Resources/PackageManager/ProjectTemplates/libcache'))</UnityTemplateLibcacheDir>
   </PropertyGroup>
 
   <ItemGroup>

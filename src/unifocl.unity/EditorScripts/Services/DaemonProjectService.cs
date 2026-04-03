@@ -375,6 +375,7 @@ namespace UniFocl.EditorBridge
                 "scene-add" => Task.FromResult(ExecuteSceneLoad(request, additive: true)),
                 "scene-unload" => Task.FromResult(ExecuteSceneUnload(request)),
                 "scene-remove" => Task.FromResult(ExecuteSceneUnload(request)),
+                "export-thumbnail" => Task.FromResult(ExecuteExportThumbnail(request)),
                 "hierarchy-duplicate" => Task.FromResult(ExecuteHierarchyDuplicate(request)),
                 "eval-code" => DaemonEvalService.ExecuteAsync(request, isDryRun),
                 "validate-scene-list" => Task.FromResult(DaemonValidateService.ExecuteValidateSceneList()),
