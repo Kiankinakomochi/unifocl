@@ -125,15 +125,30 @@ internal static class UnifoclMcpServerMode
 [McpServerToolType]
 public static class UnifoclCommandLookupTools
 {
-    [McpServerTool, Description("Lists unifocl commands by scope so agents can avoid reading full README/help text.")]
+    [McpServerTool, Description(
+        "Lists unifocl commands. Defaults to 'core' category for a lean response. " +
+        "Use category='all' to see everything, or filter by specific category: " +
+        "core, setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab.")]
     public static CommandLookupResult ListCommands(
         [Description("Command scope filter: root, project, inspector, or all.")] string scope = "all",
+        [Description("Category filter: core (default, essential commands), or a specific domain: " +
+                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, setup. " +
+                     "Use 'all' to list every command across all categories.")]
+        string category = "core",
         [Description("Optional case-insensitive search across trigger/signature/description.")] string? query = null,
         [Description("Max commands to return (1-400).")] int limit = 120)
     {
         var normalizedScope = NormalizeScope(scope);
+        var normalizedCategory = (category ?? "core").Trim().ToLowerInvariant();
         var normalizedQuery = query?.Trim();
         var commandRows = EnumerateCommands(normalizedScope);
+
+        // Category filter (before query filter)
+        if (normalizedCategory != "all")
+        {
+            commandRows = commandRows.Where(row =>
+                string.Equals(row.Spec.Category, normalizedCategory, StringComparison.OrdinalIgnoreCase));
+        }
 
         if (!string.IsNullOrWhiteSpace(normalizedQuery))
         {
@@ -150,17 +165,31 @@ public static class UnifoclCommandLookupTools
                 row.Scope,
                 row.Spec.Trigger,
                 row.Spec.Signature,
-                row.Spec.Description))
+                row.Spec.Description,
+                row.Spec.Category))
             .ToList();
 
         var capped = Math.Clamp(limit, 1, 400);
         var returned = allMatches.Take(capped).ToList();
+
+        // Populate available categories when result is empty or showing all
+        List<string>? availableCategories = null;
+        if (returned.Count == 0 || normalizedCategory == "all")
+        {
+            availableCategories = EnumerateCommands(normalizedScope)
+                .Select(row => row.Spec.Category)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(c => c, StringComparer.Ordinal)
+                .ToList();
+        }
+
         return new CommandLookupResult(
             Scope: normalizedScope,
             Query: normalizedQuery ?? string.Empty,
             Total: allMatches.Count,
             Returned: returned.Count,
-            Commands: returned);
+            Commands: returned,
+            AvailableCategories: availableCategories);
     }
 
     [McpServerTool, Description("Looks up the best command match (trigger/signature/alias) and returns concise usage details.")]
@@ -201,7 +230,8 @@ public static class UnifoclCommandLookupTools
                 row.Scope,
                 row.Spec.Trigger,
                 row.Spec.Signature,
-                row.Spec.Description))
+                row.Spec.Description,
+                row.Spec.Category))
             .ToList();
 
         return new CommandLookupResult(
@@ -255,14 +285,16 @@ public sealed record CommandLookupItem(
     string Scope,
     string Trigger,
     string Signature,
-    string Description);
+    string Description,
+    string Category);
 
 public sealed record CommandLookupResult(
     string Scope,
     string Query,
     int Total,
     int Returned,
-    List<CommandLookupItem> Commands);
+    List<CommandLookupItem> Commands,
+    List<string>? AvailableCategories = null);
 
 // ── /mutate schema tool ───────────────────────────────────────────────────────
 
