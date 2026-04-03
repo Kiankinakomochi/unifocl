@@ -161,6 +161,7 @@ Endpoint list:
 | `asset.remove` | DestructiveWrite | `assetPath` |
 | `asset.create` | SafeWrite | `assetPath`, `content?` |
 | `asset.create_script` | SafeWrite | `assetPath`, `content?` |
+| `asset.describe` | SafeRead | `assetPath`, `engine?` (blip\|clip, default: blip) |
 | `build.run` | PrivilegedExec | _(none)_ |
 | `build.exec` | PrivilegedExec | `method` |
 | `build.scenes.set` | SafeWrite | `scenes` (array of paths) |

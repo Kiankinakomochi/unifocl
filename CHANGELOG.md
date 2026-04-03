@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.0 - 2026-04-04
+
+### Added
+- **`asset.describe` composite command**: Two-phase local vision pipeline — Unity exports a thumbnail via `AssetPreview`, then a Python BLIP/CLIP model captions it locally. Agents receive a compact text description without burning multimodal vision tokens.
+  - **Engines**: `blip` (default, open-ended captions via `Salesforce/blip-image-captioning-base`) and `clip` (zero-shot classification via `openai/clip-vit-base-patch32`).
+  - **Dependencies**: `python3` (>= 3.10), `uv`, and auto-cached PyPI packages (`transformers`, `torch`, `Pillow`).
+  - **Security hardening**: Model revisions pinned to exact commit SHAs; `local_files_only=True` on cached runs (zero network access after first download).
+  - **Dry-run**: Reports asset existence, `uv`/`python3` availability, model cache status, and estimated download size.
+- **Unity-side `export-thumbnail` action**: New `DaemonProjectService.AssetDescribe.cs` partial — exports asset previews as temporary PNGs via `AssetPreview.GetAssetPreview()` with async polling and non-readable texture blit fallback.
+
+### Fixed
+- **Compatcheck build failure on Unity 6**: `UnityTemplateLibcacheDir` path replacement now handles Unity 6's `Contents/Resources/Scripting/Managed` layout (was only matching `Contents/Managed`).
+
+### Changed
+- **Protocol bumped to v19**: New editor payload file requires `/init` re-run.
+
+### Officialized
+- Officialized `3.1.0` by closing the development cycle suffix.
+
 ## 3.0.1 - 2026-04-03
 
 ### Fixed
