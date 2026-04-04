@@ -801,7 +801,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/asset remove <path>` |  | Delete an asset at the given path. (DestructiveWrite) |
 | `/asset create <type> <path>` |  | Create a new asset of the given type at path. |
 | `/asset create-script <name> <path>` |  | Create a new C# script at path. |
-| `/asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) See [§6](#6-asset-describe-local-vision). |
+| `/asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) See [§7](#7-asset-describe-local-vision). |
 | `/build scenes set <json-array>` |  | Set the build scene list programmatically from a JSON array of paths. |
 | `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
@@ -1030,7 +1030,29 @@ The `profiling` category provides capture, analysis, and live telemetry tools ba
 
 **Important:** Editor capture save/load (`.data` via `ProfilerDriver`) and runtime binary logging (`.raw` via `Profiler.logFile`) are separate flows — do not confuse them.
 
-## 6. Asset Describe (Local Vision)
+## 6. Recorder (Lazy-Loaded Category)
+
+The `recorder` category provides capture control for the Unity Recorder package (`com.unity.recorder`). It is **lazy-loaded** — call `load_category('recorder')` to register the tools as live MCP tools.
+
+**CLI commands:**
+
+```
+/recorder start
+/recorder stop
+/recorder status
+```
+
+**Agent / MCP operations (after `load_category('recorder')`):**
+
+| Operation | Risk | Description |
+| --- | --- | --- |
+| `recorder.start` | PrivilegedExec | Start a Recorder capture session |
+| `recorder.stop` | PrivilegedExec | Stop the active recording and flush output to disk |
+| `recorder.status` | SafeRead | Return current state (recording/idle) and active profile path |
+
+**Important:** Requires the `com.unity.recorder` package to be installed in the Unity project. If the package is not present, operations return an error message.
+
+## 7. Asset Describe (Local Vision)
 
 The `asset.describe` command lets agents "see" Unity assets without burning tokens on multimodal vision. It exports a thumbnail from the Unity Editor and runs a local BLIP or CLIP model to produce a compact text description.
 
@@ -1097,7 +1119,7 @@ The `asset.describe` command lets agents "see" Unity assets without burning toke
 
 **Dry-run:** Returns a pre-flight check (asset existence, `uv`/`python3` availability, model cache status, estimated download size) without exporting a thumbnail or running inference.
 
-## 7. Safe Mutation: Dry-Run Previews
+## 8. Safe Mutation: Dry-Run Previews
 
 Both human operators and AI agents can validate mutations safely before execution. `--dry-run` is supported for mutation commands in all interactive and agentic modes:
 
@@ -1130,7 +1152,7 @@ rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
 
-## 8. Dynamic C# Eval
+## 9. Dynamic C# Eval
 
 The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities — all without creating script files.
 
@@ -1217,7 +1239,7 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 - `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
 - The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
 
-## 9. Human Interface: TUI & Keybindings
+## 10. Human Interface: TUI & Keybindings
 
 For developers using the interactive CLI, unifocl features a composer with Intellisense and keyboard-driven navigation.
 
@@ -1243,7 +1265,7 @@ Once focused (`F7`), the arrow keys and tab behave contextually:
 | **`Shift+Tab`** | Collapse selected node | Move to parent folder | Back to component list |
 | **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
 
-## 10. Project Validation
+## 11. Project Validation
 
 The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
 
@@ -1278,7 +1300,7 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
-## 11. Build Workflow
+## 12. Build Workflow
 
 The build workflow commands extend `/build` with pre-build validation, post-build introspection, and a unified report surface. Build reports are automatically captured after every build via a `IPostprocessBuildWithReport` hook and stored at `Library/unifocl-last-build-report.json`.
 
@@ -1307,7 +1329,7 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
-## 12. Test Orchestration
+## 13. Test Orchestration
 
 The `test` commands run Unity's built-in test runner as a **direct subprocess** — no daemon, no running editor required. This makes them safe to call from CI, parallel agent sessions, or any headless environment.
 
@@ -1359,7 +1381,7 @@ ExecV2 operations: `test.list` (`SafeRead`), `test.run` (`PrivilegedExec` — re
 
 Full reference: [`test-orchestration.md`](test-orchestration.md)
 
-## 13. Project Diagnostics
+## 14. Project Diagnostics
 
 The `diag` command family provides read-only structural introspection of the project — assembly topology, define symbols, and asset dependency trees. Unlike `/validate`, `diag` commands are data dumps rather than pass/fail checks.
 

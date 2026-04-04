@@ -186,6 +186,12 @@ internal static class CliCommandCatalog
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
 
+            // ── recorder ─────────────────────────────────────────────
+            new("/recorder <start|stop|status>", "Unity Recorder capture commands (requires com.unity.recorder package)", "/recorder", "recorder"),
+            new("/recorder start", "Start a Recorder capture session (PrivilegedExec)", "/recorder start", "recorder"),
+            new("/recorder stop", "Stop recording and flush output to disk (PrivilegedExec)", "/recorder stop", "recorder"),
+            new("/recorder status", "Show current Recorder state and active profile path (SafeRead)", "/recorder status", "recorder"),
+
             // ── profiling ─────────────────────────────────────────────────
             new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect", "profiling"),
             new("/profiler start [--deep] [--editor] [--keep-frames]", "Start profiler recording", "/profiler start", "profiling"),
@@ -317,6 +323,11 @@ internal static class CliCommandCatalog
             new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create", "asset"),
             new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
             new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
+
+            // ── recorder ─────────────────────────────────────────────────
+            new("recorder start", "Start a Recorder capture session", "recorder start", "recorder"),
+            new("recorder stop", "Stop recording and flush output to disk", "recorder stop", "recorder"),
+            new("recorder status", "Show Recorder state and active profile", "recorder status", "recorder"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
