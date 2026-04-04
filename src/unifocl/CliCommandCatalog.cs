@@ -202,6 +202,12 @@ internal static class CliCommandCatalog
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
 
+            // ── recorder ─────────────────────────────────────────────
+            new("/recorder <start|stop|status>", "Unity Recorder capture commands (requires com.unity.recorder package)", "/recorder", "recorder"),
+            new("/recorder start", "Start a Recorder capture session (PrivilegedExec)", "/recorder start", "recorder"),
+            new("/recorder stop", "Stop recording and flush output to disk (PrivilegedExec)", "/recorder stop", "recorder"),
+            new("/recorder status", "Show current Recorder state and active profile path (SafeRead)", "/recorder status", "recorder"),
+
             // ── profiling ─────────────────────────────────────────────────
             new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect", "profiling"),
             new("/profiler start [--deep] [--editor] [--keep-frames]", "Start profiler recording", "/profiler start", "profiling"),
@@ -336,6 +342,11 @@ internal static class CliCommandCatalog
 
             // ── time ─────────────────────────────────────────────────────
             new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),
+
+            // ── recorder ─────────────────────────────────────────────────
+            new("recorder start", "Start a Recorder capture session", "recorder start", "recorder"),
+            new("recorder stop", "Stop recording and flush output to disk", "recorder stop", "recorder"),
+            new("recorder status", "Show Recorder state and active profile", "recorder status", "recorder"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
