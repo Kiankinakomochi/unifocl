@@ -59,15 +59,30 @@ These commands manage your session, project loading, and configuration. In the i
 | `/clip event add <asset-path> <time> <function-name> [--string <val>\|--float <val>\|--int <val>]` |  | Insert an `AnimationEvent` at the specified time (seconds). Optionally set one parameter value. (SafeWrite) |
 | `/clip event clear <asset-path>` |  | Remove all animation events from a clip. (DestructiveWrite) |
 | `/clip curve clear <asset-path>` |  | Remove all property curves and keyframes from a clip. (DestructiveWrite) |
+| `/tag <list\|add\|remove>` |  | Manage Unity project tags (built-in and custom). |
+| `/tag list` | `/tag ls` | List all tags (built-in and custom). |
+| `/tag add <name>` | `/tag a` | Add a new custom tag. Fails if it already exists. |
+| `/tag remove <name>` | `/tag rm` | Remove a custom tag. Fails if the tag is a built-in (e.g., Untagged, Player). |
+| `/layer <list\|add\|rename\|remove>` |  | Manage Unity project layers (indices 0–31). |
+| `/layer list` | `/layer ls` | List all layers with their index and name. |
+| `/layer add <name> [--index <idx>]` | `/layer a` | Add a layer. Finds the first empty user slot (8–31) unless `--index` is specified. |
+| `/layer rename <old-name\|index> <new-name>` | `/layer rn` | Rename a user layer. Fails for built-in layers 0–7. |
+| `/layer remove <name\|index>` | `/layer rm` | Clear a user layer slot. Fails for built-in layers 0–7. |
+| `/asset rename <path> <new-name>` |  | Rename an asset at the given path. (DestructiveWrite) |
+| `/asset remove <path>` |  | Delete an asset at the given path. (DestructiveWrite) |
+| `/asset create <type> <path>` |  | Create a new asset of the given type at path. |
+| `/asset create-script <name> <path>` |  | Create a new C# script at path. |
+| `/asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) See [§6](#6-asset-describe-local-vision). |
+| `/build scenes set <json-array>` |  | Set the build scene list programmatically from a JSON array of paths. |
 | `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
 | `/version` |  | Show CLI and protocol version. |
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy\|project\|inspector> [--format json\|yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
-| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `all`). |
-| `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`). No daemon required. |
-| `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `all`). All ops are read-only and require the daemon. See [`project-diagnostics.md`](project-diagnostics.md). |
+| `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `scripts`, `all`). |
+| `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`, `flaky-report`). No daemon required. |
+| `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `asset-size`, `import-hotspots`, `all`). All ops are read-only and require the daemon. See [`project-diagnostics.md`](project-diagnostics.md). |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -199,6 +214,26 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `clip event add <asset-path> <time> <function-name> [--string <val>\|--float <val>\|--int <val>]` |  | Insert an `AnimationEvent` at the specified time (seconds). |
 | `clip event clear <asset-path>` |  | Remove all animation events from a clip. |
 | `clip curve clear <asset-path>` |  | Remove all property curves and keyframes from a clip. |
+| `tag list` | `tag ls` | List all tags (built-in and custom). |
+| `tag add <name>` | `tag a` | Add a new custom tag. |
+| `tag remove <name>` | `tag rm` | Remove a custom tag. Fails for built-in tags. |
+| `layer list` | `layer ls` | List all layers with index and name. |
+| `layer add <name> [--index <idx>]` | `layer a` | Add a layer at first empty user slot (8–31) or specified index. |
+| `layer rename <old-name\|index> <new-name>` | `layer rn` | Rename a user layer. Fails for built-in layers 0–7. |
+| `layer remove <name\|index>` | `layer rm` | Clear a user layer slot. Fails for built-in layers 0–7. |
+| `scene load <path>` |  | Load a scene by path, replacing the current scene. |
+| `scene add <path>` |  | Additively load a scene by path. |
+| `scene unload <path>` |  | Unload an additively-loaded scene. |
+| `scene remove <path>` |  | Remove a scene from the loaded set. |
+| `hierarchy snapshot` |  | Dump the current scene hierarchy as structured data (same as `/dump hierarchy`). |
+| `asset rename <path> <new-name>` |  | Rename an asset at the given path. (DestructiveWrite) |
+| `asset remove <path>` |  | Delete an asset at the given path. (DestructiveWrite) |
+| `asset create <type> <path>` |  | Create a new asset of the given type at path. |
+| `asset create-script <name> <path>` |  | Create a new C# script at path. |
+| `asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) |
+| `compile request` |  | Trigger a Unity script recompilation (Bridge mode only). |
+| `compile status` |  | Check the result of the last compilation pass (Bridge mode only). |
+| `console clear` |  | Clear the Unity console log. |
 
 ## 5. Profiling (Lazy-Loaded Category)
 
@@ -496,6 +531,7 @@ The `/validate` command family runs project health checks and produces structure
 | `asmdef` | No | Parses all `.asmdef` files under `Assets/`, builds a dependency graph, and checks for duplicate assembly names, undefined references, and circular dependencies. |
 | `asset-refs` | Yes | Scans `.unity`, `.prefab`, `.asset`, `.mat`, and `.controller` files for GUID references that do not resolve to any known asset in `AssetDatabase`. Caps output at 500 findings. |
 | `addressables` | Yes | Checks whether the Addressables package is installed, then validates the settings asset, groups directory, and basic settings structure. |
+| `scripts` | No | Offline Roslyn compile check for all project C# scripts. Generates a temporary `.csproj` referencing Unity managed DLLs and runs `dotnet build` locally — no running editor required. Returns CS#### error codes with file/line locations. |
 | `all` | Mixed | Runs all validators sequentially. |
 
 Every diagnostic carries: `severity` (Error/Warning/Info), `errorCode` (e.g. `VSC003`, `VASD004`, `VAR001`), `message`, optional `assetPath`/`objectPath`, and a `fixable` flag.
@@ -509,7 +545,7 @@ unifocl exec "/validate asset-refs" --agentic --format json --project ./my-proje
 ```
 
 ExecV2 operations (all `SafeRead` — no approval required):
-`validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings`, `validate.asmdef`, `validate.asset-refs`, `validate.addressables`
+`validate.scene-list`, `validate.missing-scripts`, `validate.packages`, `validate.build-settings`, `validate.asmdef`, `validate.asset-refs`, `validate.addressables`, `validate.scripts`
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
@@ -549,6 +585,7 @@ The `test` commands run Unity's built-in test runner as a **direct subprocess** 
 ```
 /test list
 /test run <editmode|playmode> [--timeout <seconds>]
+/test flaky-report
 ```
 
 | Subcommand | Platform flag | Default timeout | Description |
@@ -556,6 +593,7 @@ The `test` commands run Unity's built-in test runner as a **direct subprocess** 
 | `list` | EditMode | 5 min | Lists all available tests. Output: `[{ testName, assembly }]`. |
 | `run editmode` | EditMode | 10 min | Runs all EditMode tests. |
 | `run playmode` | PlayMode | 30 min | Runs all PlayMode tests. May trigger a player build. |
+| `flaky-report` | — | — | Shows tests with mixed Pass/Fail outcomes across run history (requires prior test runs). |
 
 **Output contract (`test run`):**
 
@@ -588,7 +626,7 @@ unifocl exec "test run editmode" --agentic --format json --project ./my-project 
 unifocl exec "test run playmode --timeout 3600" --agentic --format json --project ./my-project
 ```
 
-ExecV2 operations: `test.list` (`SafeRead`) and `test.run` (`PrivilegedExec` — requires approval on first call).
+ExecV2 operations: `test.list` (`SafeRead`), `test.run` (`PrivilegedExec` — requires approval on first call), `test.flaky-report` (`SafeRead`).
 
 Full reference: [`test-orchestration.md`](test-orchestration.md)
 
@@ -597,7 +635,7 @@ Full reference: [`test-orchestration.md`](test-orchestration.md)
 The `diag` command family provides read-only structural introspection of the project — assembly topology, define symbols, and asset dependency trees. Unlike `/validate`, `diag` commands are data dumps rather than pass/fail checks.
 
 ```
-/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|all>
+/diag <script-defines|compile-errors|assembly-graph|scene-deps|prefab-deps|asset-size|import-hotspots|all>
 ```
 
 | Subcommand | Description |
@@ -607,6 +645,8 @@ The `diag` command family provides read-only structural introspection of the pro
 | `assembly-graph` | Asmdef-level assembly dependency graph (`assemblyReferences` per assembly). |
 | `scene-deps` | Transitive `AssetDatabase.GetDependencies` per enabled build scene. |
 | `prefab-deps` | Transitive `AssetDatabase.GetDependencies` per prefab under `Assets/` (capped at 100). |
+| `asset-size` | Lists all project assets sorted by file size, with dependency counts. |
+| `import-hotspots` | Shows the most frequently re-imported assets from recorded import history. |
 
 All operations require the daemon. All are `SafeRead` — no approval gating.
 
@@ -619,7 +659,7 @@ unifocl exec "/diag scene-deps" --agentic --format json --project ./my-project -
 ```
 
 ExecV2 operations (all `SafeRead` — no approval required):
-`diag.script-defines`, `diag.compile-errors`, `diag.assembly-graph`, `diag.scene-deps`, `diag.prefab-deps`
+`diag.script-defines`, `diag.compile-errors`, `diag.assembly-graph`, `diag.scene-deps`, `diag.prefab-deps`, `diag.asset-size`, `diag.import-hotspots`
 
 Full reference: [`project-diagnostics.md`](project-diagnostics.md)
 
