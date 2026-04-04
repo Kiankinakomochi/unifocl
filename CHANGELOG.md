@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.8.0 - 2026-04-04
+
+### Added
+- **Runtime operations surface (Sprints 2–6)**: Complete the full runtime operations surface on top of the S1 transport and target foundation.
+  - **S2 — Runtime Manifest + Discovery**: `runtime.manifest` (SafeRead) fetches the typed command manifest from the attached player, enabling schema validation and MCP category integration. Daemon `/runtime/manifest` endpoint, editor-side manifest caching.
+  - **S3 — Query + Command Execution**: `runtime.query` (SafeRead) and `runtime.exec` (PrivilegedExec) dispatch typed commands to the attached player with schema validation. Daemon `/runtime/exec` endpoint bridges to `UnifoclRuntimeClient`.
+  - **S4 — Durable Jobs + Fan-out**: `runtime.job.submit` (PrivilegedExec), `runtime.job.status` (SafeRead), `runtime.job.cancel` (SafeWrite), `runtime.job.list` (SafeRead). Editor-side job tracker with lifecycle states (pending/running/completed/failed/cancelled). Daemon endpoints `/runtime/job/*`.
+  - **S5 — Streams + Watches**: `runtime.stream.subscribe`/`unsubscribe` (SafeWrite) for live event channels. `runtime.watch.add`/`remove`/`list` (SafeWrite) and `runtime.watch.poll` (SafeRead) for variable watch expressions with editor-side caching. Daemon endpoints `/runtime/stream/*` and `/runtime/watch/*`.
+  - **S6 — Scenario Files**: `runtime.scenario.run` (PrivilegedExec), `runtime.scenario.list` (SafeRead), `runtime.scenario.validate` (SafeRead). YAML-based scripted repro flows with step-by-step execution, variable capture (`${name}` substitution), assertion syntax (`==`, `!=`, `exists()`), and `continue_on_failure` support. Files live in `.unifocl/scenarios/`.
+  - **Full 6-layer coverage for all 20 new operations**: Daemon HTTP endpoints, ExecV2 risk registry, CLI catalog (root + project), ProjectViewService interactive handlers, RuntimeTargetService ExecV2 dispatch.
+  - **New file**: `RuntimeScenarioService.cs` — lightweight YAML parser and step executor with assertion engine.
+  - **Documentation**: Updated `docs/runtime-operations.md` and `docs/command-reference.md` with S2–S6 operations, CLI commands, and scenario file format. Roadmap marked complete.
+
 ## 3.7.0 - 2026-04-04
 
 ### Added
