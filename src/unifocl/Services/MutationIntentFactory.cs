@@ -118,6 +118,7 @@ internal static class DaemonMutationActionCatalog
                || action.Equals("playmode-stop", StringComparison.OrdinalIgnoreCase)
                || action.Equals("playmode-pause", StringComparison.OrdinalIgnoreCase)
                || action.Equals("playmode-resume", StringComparison.OrdinalIgnoreCase)
-               || action.Equals("playmode-step", StringComparison.OrdinalIgnoreCase);
+               || action.Equals("playmode-step", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("time-scale", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -95,6 +95,8 @@ internal sealed class ExecCommandRegistry
         ["layer.add"]    = ExecRiskLevel.SafeWrite,
         ["layer.rename"] = ExecRiskLevel.SafeWrite,
         ["layer.remove"] = ExecRiskLevel.DestructiveWrite,
+        // time operations
+        ["time.scale"]  = ExecRiskLevel.SafeWrite,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         ["go find"]             = ExecRiskLevel.SafeRead,
@@ -393,6 +395,22 @@ internal sealed class ExecCommandRegistry
             case "compile.status":
             {
                 dto = new ProjectCommandRequestDto("compile-status", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "time.scale":
+            {
+                var scale = GetFloat(req.Args, "scale");
+                if (scale is null)
+                {
+                    validationError = "time.scale requires args.scale (float)";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { scale = scale.Value });
+                var base_ = new ProjectCommandRequestDto("time-scale", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
                 return true;
             }
 

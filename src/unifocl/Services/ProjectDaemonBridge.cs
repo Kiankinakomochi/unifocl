@@ -86,6 +86,7 @@ internal sealed class ProjectDaemonBridge
             "playmode-pause" => RequireBridgeMode("playmode-pause"),
             "playmode-resume" => RequireBridgeMode("playmode-resume"),
             "playmode-step" => RequireBridgeMode("playmode-step"),
+            "time-scale" => RequireBridgeMode("time-scale"),
             "scene-load" => RequireBridgeMode("scene-load"),
             "scene-add" => RequireBridgeMode("scene-add"),
             "scene-unload" => RequireBridgeMode("scene-unload"),

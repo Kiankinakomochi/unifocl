@@ -83,6 +83,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/version` |  | Show CLI and protocol version. |
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy\|project\|inspector> [--format json\|yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
+| `/time scale <float>` |  | Set `Time.timeScale` to speed up or slow down execution (e.g., `0.1` for slow motion, `2.0` for fast-forward). (SafeWrite) |
 | `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
 | `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `scripts`, `all`). |
 | `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`, `flaky-report`). No daemon required. |
@@ -241,6 +242,7 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `asset create <type> <path>` |  | Create a new asset of the given type at path. |
 | `asset create-script <name> <path>` |  | Create a new C# script at path. |
 | `asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) |
+| `time scale <float>` |  | Set `Time.timeScale` (e.g., `0.1` for slow motion). (SafeWrite) |
 | `compile request` |  | Trigger a Unity script recompilation (Bridge mode only). |
 | `compile status` |  | Check the result of the last compilation pass (Bridge mode only). |
 | `console dump [--type <type>] [--limit <n>]` |  | Dump Unity log entries as structured JSON (type: error\|warning\|log). (SafeRead) |
