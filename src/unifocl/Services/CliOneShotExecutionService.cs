@@ -796,6 +796,32 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger.StartsWith("/asset get", StringComparison.Ordinal)
+            || matched.Trigger.StartsWith("/asset set", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            var assetInput = input.Length > "/asset".Length
+                ? $"asset {input["/asset".Length..].Trim()}"
+                : "asset";
+            var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                assetInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+            if (!handled)
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]asset[/]: unsupported /asset command");
+            }
+
+            return;
+        }
+
         if (matched.Trigger.StartsWith("/animator", StringComparison.Ordinal))
         {
             if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))

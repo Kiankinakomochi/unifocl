@@ -20,6 +20,8 @@ internal sealed class ExecCommandRegistry
         ["asset.create_script"] = ExecRiskLevel.SafeWrite,
         ["asset.create"]        = ExecRiskLevel.SafeWrite,
         ["asset.describe"]      = ExecRiskLevel.SafeRead,
+        ["asset.get"]           = ExecRiskLevel.SafeRead,
+        ["asset.set"]           = ExecRiskLevel.SafeWrite,
         // build operations
         ["build.run"]           = ExecRiskLevel.PrivilegedExec,
         ["build.exec"]          = ExecRiskLevel.PrivilegedExec,
@@ -242,6 +244,39 @@ internal sealed class ExecCommandRegistry
                 var base_ = new ProjectCommandRequestDto("mk-asset", assetPath, null, content ?? string.Empty, req.RequestId);
                 var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
                 dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "asset.get":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "asset.get requires args.assetPath";
+                    return false;
+                }
+
+                var field = GetString(req.Args, "field");
+                var content = field is not null
+                    ? JsonSerializer.Serialize(new { field })
+                    : null;
+                dto = new ProjectCommandRequestDto("asset-get", assetPath, null, content, req.RequestId);
+                return true;
+            }
+
+            case "asset.set":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var field = GetString(req.Args, "field");
+                var value = GetString(req.Args, "value");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(field) || value is null)
+                {
+                    validationError = "asset.set requires args.assetPath, args.field, and args.value";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { field, value });
+                dto = new ProjectCommandRequestDto("asset-set", assetPath, null, content, req.RequestId);
                 return true;
             }
 

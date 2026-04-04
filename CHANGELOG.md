@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.6.0 - 2026-04-04
+
+### Added
+- **`asset get` / `asset set` commands**: Read and write serialized fields on ScriptableObjects and asset importers directly from CLI and MCP.
+  - `asset get <path> [<field>]` — dumps all visible serialized fields (name, type, value) or reads a single named field. Returns structured JSON with `assetPath`, `isImporter`, and `fields[]`.
+  - `asset set <path> <field> <value>` — writes a serialized field value; saves via `AssetDatabase.SaveAssets()` for `.asset` files or `AssetDatabase.ImportAsset(...ForceUpdate)` for media importers.
+  - **Auto-routing**: dispatch selects `SerializedObject` target automatically — `AssetImporter.GetAtPath` for texture/audio/model/video/font assets, `LoadAssetAtPath<UnityEngine.Object>` for `.asset` (ScriptableObject) and other types.
+  - **Supported field types**: `bool`, `int`, `float`, `string`, `Vector2/3/4`, `Color` (RGBA tuple or HTML hex), `Enum` (name or index). ObjectReference fields are not supported.
+  - **ExecV2 operations**: `asset.get` (SafeRead) and `asset.set` (SafeWrite) with `assetPath`, optional `field`, and `value` args.
+  - **MCP visibility**: entries in both `CreateRootCommands` (`/asset get`, `/asset set`) and `CreateProjectCommands` (`asset get`, `asset set`) so `list_commands(category='asset')` and `lookup_command('asset get')` return results.
+  - **CLI exec dispatch**: `/asset get` / `/asset set` slash variants handled in `CliOneShotExecutionService` (same pattern as `/animator`); `asset get` / `asset set` no-slash variants handled in `ProjectViewService`.
+
+### Officialized
+- Officialized `3.6.0` by closing the development cycle suffix.
+
 ## 3.5.0 - 2026-04-04
 
 ### Added
