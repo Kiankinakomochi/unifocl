@@ -99,7 +99,9 @@ internal sealed class ExecCommandRegistry
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         ["go find"]             = ExecRiskLevel.SafeRead,
         ["settings inspect"]    = ExecRiskLevel.SafeRead,
-        // editor utilities
+        // console operations
+        ["console dump"]        = ExecRiskLevel.SafeRead,
+        ["console tail"]        = ExecRiskLevel.SafeRead,
         ["console clear"]       = ExecRiskLevel.SafeWrite,
         // playmode operations
         ["playmode.start"]      = ExecRiskLevel.PrivilegedExec,
@@ -627,6 +629,25 @@ internal sealed class ExecCommandRegistry
             case "settings inspect":
             {
                 dto = new ProjectCommandRequestDto("settings-inspect", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "console dump":
+            {
+                var type = GetString(req.Args, "type");
+                var limit = GetInt(req.Args, "limit") ?? 100;
+                var content = JsonSerializer.Serialize(new { type, limit });
+                dto = new ProjectCommandRequestDto("console-dump", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "console tail":
+            {
+                var follow = req.Args is not null
+                    && req.Args.Value.TryGetProperty("follow", out var followProp)
+                    && followProp.ValueKind == JsonValueKind.True;
+                var content = JsonSerializer.Serialize(new { follow });
+                dto = new ProjectCommandRequestDto("console-tail", null, null, content, req.RequestId);
                 return true;
             }
 

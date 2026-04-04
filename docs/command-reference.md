@@ -73,6 +73,10 @@ These commands manage your session, project loading, and configuration. In the i
 | `/asset create <type> <path>` |  | Create a new asset of the given type at path. |
 | `/asset create-script <name> <path>` |  | Create a new C# script at path. |
 | `/asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) See [§6](#6-asset-describe-local-vision). |
+| `/console <dump\|tail\|clear>` |  | Unity console log commands. |
+| `/console dump [--type <type>] [--limit <n>]` |  | Dump Unity log entries as structured JSON. Filter by `type` (`error`, `warning`, `log`). Default limit 100. (SafeRead) |
+| `/console tail [--follow]` |  | Stream recent console log output. Primarily for TUI usage. (SafeRead) |
+| `/console clear` |  | Clear the Unity console log. (SafeWrite) |
 | `/build scenes set <json-array>` |  | Set the build scene list programmatically from a JSON array of paths. |
 | `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
@@ -239,6 +243,8 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) |
 | `compile request` |  | Trigger a Unity script recompilation (Bridge mode only). |
 | `compile status` |  | Check the result of the last compilation pass (Bridge mode only). |
+| `console dump [--type <type>] [--limit <n>]` |  | Dump Unity log entries as structured JSON (type: error\|warning\|log). (SafeRead) |
+| `console tail [--follow]` |  | Stream recent console output. (SafeRead) |
 | `console clear` |  | Clear the Unity console log. |
 | `playmode start` |  | Enter Play Mode. (PrivilegedExec) |
 | `playmode stop` |  | Exit Play Mode. (PrivilegedExec) |

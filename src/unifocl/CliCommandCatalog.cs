@@ -180,7 +180,12 @@ internal static class CliCommandCatalog
             // ── compile ───────────────────────────────────────────────────
             new("/compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile request", "compile"),
             new("/compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile status", "compile"),
-            new("/console clear", "Clear the Unity console log", "/console clear", "compile"),
+
+            // ── console ──────────────────────────────────────────────────
+            new("/console <dump|tail|clear>", "Unity console log commands", "/console", "console"),
+            new("/console dump [--type <type>] [--limit <n>]", "Dump Unity logs as structured JSON (type: error|warning|log)", "/console dump", "console"),
+            new("/console tail [--follow]", "Stream console log output (TUI)", "/console tail", "console"),
+            new("/console clear", "Clear the Unity console log", "/console clear", "console"),
 
             // ── playmode ─────────────────────────────────────────────────
             new("/playmode <start|stop|pause|resume|step>", "Control Unity Editor Play Mode", "/playmode", "playmode"),
@@ -329,7 +334,11 @@ internal static class CliCommandCatalog
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
             new("compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "compile status", "compile"),
-            new("console clear", "Clear the Unity console log", "console clear", "compile"),
+
+            // ── console ──────────────────────────────────────────────────
+            new("console dump [--type <type>] [--limit <n>]", "Dump Unity logs as structured JSON (type: error|warning|log)", "console dump", "console"),
+            new("console tail [--follow]", "Stream console log output", "console tail", "console"),
+            new("console clear", "Clear the Unity console log", "console clear", "console"),
 
             // ── playmode ─────────────────────────────────────────────────
             new("playmode start", "Enter Play Mode", "playmode start", "playmode"),
