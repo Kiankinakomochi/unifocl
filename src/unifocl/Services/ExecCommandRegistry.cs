@@ -48,6 +48,7 @@ internal sealed class ExecCommandRegistry
         ["validate.asmdef"]          = ExecRiskLevel.SafeRead,
         ["validate.asset-refs"]      = ExecRiskLevel.SafeRead,
         ["validate.addressables"]    = ExecRiskLevel.SafeRead,
+        ["validate.scripts"]         = ExecRiskLevel.SafeRead,
         // build subcommands (sprint C)
         ["build.addressables"]       = ExecRiskLevel.SafeWrite,
         ["build.cancel"]             = ExecRiskLevel.SafeWrite,
@@ -1134,6 +1135,8 @@ internal sealed class ExecCommandRegistry
             case "test.list":
             case "test.run":
             case "test.flaky-report":
+            // validate.scripts runs dotnet build locally — not dispatched through daemon
+            case "validate.scripts":
             {
                 // These operations do not dispatch through ProjectDaemonBridge
                 validationError = $"operation '{req.Operation}' is handled by the router, not the project bridge";

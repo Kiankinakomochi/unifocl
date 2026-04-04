@@ -73,7 +73,7 @@ internal static class CliCommandCatalog
             new("/build scenes set <json-array>", "Set the build scene list programmatically from a JSON array of paths", "/build scenes set", "build"),
 
             // ── validate ──────────────────────────────────────────────────
-            new("/validate <scene-list|missing-scripts|packages|build-settings|asmdef|asset-refs|addressables|all>", "Run project validation checks", "/validate", "validate"),
+            new("/validate <scene-list|missing-scripts|packages|build-settings|asmdef|asset-refs|addressables|scripts|all>", "Run project validation checks", "/validate", "validate"),
             new("/validate scene-list", "Check that all build-settings scene paths exist", "/validate scene-list", "validate"),
             new("/validate missing-scripts", "Scan scenes and prefabs for missing MonoBehaviour scripts", "/validate missing-scripts", "validate"),
             new("/validate packages", "Validate manifest.json vs packages-lock.json consistency", "/validate packages", "validate"),
@@ -81,6 +81,7 @@ internal static class CliCommandCatalog
             new("/validate asmdef", "Validate .asmdef files for duplicates, undefined refs, and cycles", "/validate asmdef", "validate"),
             new("/validate asset-refs", "Scan asset files for broken GUID references", "/validate asset-refs", "validate"),
             new("/validate addressables", "Validate Addressables configuration if installed", "/validate addressables", "validate"),
+            new("/validate scripts", "Offline Roslyn compile check for project C# scripts (no running editor required)", "/validate scripts", "validate"),
             new("/validate all", "Run all validators", "/validate all", "validate"),
             new("/val <subcommand>", "Alias for /validate", "/val", "validate"),
 
