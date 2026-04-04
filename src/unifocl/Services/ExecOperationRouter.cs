@@ -48,7 +48,7 @@ internal sealed class ExecOperationRouter
         // approval.confirm is a special meta-operation that consumes a pending ticket
         if (request.Operation.Equals("approval.confirm", StringComparison.OrdinalIgnoreCase))
         {
-            return HandleConfirm(request, projectBridge);
+            return await HandleConfirmAsync(request, projectBridge, cancellationToken).ConfigureAwait(false);
         }
 
         if (!_registry.IsKnown(request.Operation))
@@ -68,7 +68,7 @@ internal sealed class ExecOperationRouter
         // If an approval token is already supplied, validate and execute
         if (!string.IsNullOrWhiteSpace(intent.ApprovalToken))
         {
-            return ExecuteWithApprovalToken(request, intent, projectBridge);
+            return await ExecuteWithApprovalTokenAsync(request, intent, projectBridge, cancellationToken).ConfigureAwait(false);
         }
 
         // Gate destructive/privileged operations behind approval.
@@ -182,10 +182,11 @@ internal sealed class ExecOperationRouter
         }
     }
 
-    private ExecV2Response ExecuteWithApprovalToken(
+    private async Task<ExecV2Response> ExecuteWithApprovalTokenAsync(
         ExecV2Request request,
         ExecV2Intent intent,
-        ProjectDaemonBridge projectBridge)
+        ProjectDaemonBridge projectBridge,
+        CancellationToken cancellationToken = default)
     {
         if (!_approval.TryConsume(intent.ApprovalToken!, out var pending))
         {
@@ -199,10 +200,18 @@ internal sealed class ExecOperationRouter
                 $"approval token was issued for operation '{pending.Operation}', not '{request.Operation}'");
         }
 
+        // Runtime ops bypass the daemon bridge — route through RuntimeTargetService.
+        if (request.Operation.StartsWith("runtime.", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _runtimeTarget.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
         return Dispatch(request, intent.DryRun, projectBridge);
     }
 
-    private ExecV2Response HandleConfirm(ExecV2Request request, ProjectDaemonBridge projectBridge)
+    private async Task<ExecV2Response> HandleConfirmAsync(
+        ExecV2Request request, ProjectDaemonBridge projectBridge,
+        CancellationToken cancellationToken = default)
     {
         var token = GetString(request.Args, "approvalToken");
         if (string.IsNullOrWhiteSpace(token))
@@ -235,6 +244,12 @@ internal sealed class ExecOperationRouter
             pending.Operation,
             originalArgs,
             new ExecV2Intent(DryRun: false, ApprovalToken: null));
+
+        // Runtime ops bypass the daemon bridge.
+        if (confirmedRequest.Operation.StartsWith("runtime.", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _runtimeTarget.HandleAsync(confirmedRequest, cancellationToken).ConfigureAwait(false);
+        }
 
         return Dispatch(confirmedRequest, dryRun: false, projectBridge);
     }
