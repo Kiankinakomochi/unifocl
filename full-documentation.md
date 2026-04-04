@@ -1468,7 +1468,6 @@ Local artifacts are intentionally uncommitted (`local.config.json`, `.local/`).
 Runtime operations allow you to control, query, and observe running Unity player instances (Editor PlayMode, standalone builds, device builds) through the same CLI/MCP interface used for editor operations.
 
 ### Target Management
-
 | **Operation** | **Risk** | **Description** |
 | --- | --- | --- |
 | `runtime.target.list` | SafeRead | List available runtime targets (Editor PlayMode, devices, standalone builds) |
@@ -1482,6 +1481,52 @@ Runtime operations allow you to control, query, and observe running Unity player
 - `ios:*` — first available iOS device
 - `windows:standalone` — local Windows standalone build
 
+### Manifest Discovery
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.manifest` | SafeRead | Request the runtime command manifest from the attached player |
+
+The manifest describes all `[UnifoclRuntimeCommand]` methods available on the player, grouped by category, with JSON Schema for args and result.
+
+### Query + Command Execution
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.query` | SafeRead | Execute a read-only query on the attached target |
+| `runtime.exec` | PrivilegedExec | Execute a mutating command on the attached target |
+
+Both accept `{ "command": "...", "args": { ... } }`. `runtime.query` is for SafeRead operations; `runtime.exec` is for mutations requiring approval.
+
+### Durable Jobs + Fan-out
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.job.submit` | PrivilegedExec | Submit a long-running job; returns `jobId` for polling |
+| `runtime.job.status` | SafeRead | Poll job state (pending/running/completed/failed/cancelled) |
+| `runtime.job.cancel` | SafeWrite | Cancel a running job |
+| `runtime.job.list` | SafeRead | List all jobs and their states |
+
+Jobs wrap `runtime.exec` with durable lifecycle tracking. Submit returns immediately with a `jobId`; poll `runtime.job.status` for completion.
+
+### Streams + Watches
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.stream.subscribe` | SafeWrite | Subscribe to a named event channel |
+| `runtime.stream.unsubscribe` | SafeWrite | Unsubscribe by subscription ID |
+| `runtime.watch.add` | SafeWrite | Add a variable watch expression |
+| `runtime.watch.remove` | SafeWrite | Remove a watch |
+| `runtime.watch.list` | SafeRead | List active watches |
+| `runtime.watch.poll` | SafeRead | Poll all watches for current values |
+
+Watches evaluate expressions on the attached player and cache results editor-side. Streams provide push-based event channels.
+
+### Scenario Files
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.scenario.run` | PrivilegedExec | Execute a YAML scenario file step-by-step |
+| `runtime.scenario.list` | SafeRead | List `.unifocl/scenarios/*.yaml` files |
+| `runtime.scenario.validate` | SafeRead | Validate a scenario file without executing |
+
+Scenario files define scripted repro flows with assertions. See `docs/runtime-operations.md` for the format.
+
 ### CLI Commands
 
 | **Command** | **Description** |
@@ -1490,6 +1535,22 @@ Runtime operations allow you to control, query, and observe running Unity player
 | `/runtime attach <target>` | Attach to a target (e.g. `/runtime attach editor:playmode`) |
 | `/runtime status` | Show runtime connection status |
 | `/runtime detach` | Disconnect from runtime target |
+| `/runtime manifest` | Request and display the runtime manifest |
+| `/runtime query <cmd> [args]` | Execute a read-only query |
+| `/runtime exec <cmd> [args]` | Execute a mutating command |
+| `/runtime job submit <cmd> [args]` | Submit a long-running job |
+| `/runtime job status <jobId>` | Check job status |
+| `/runtime job cancel <jobId>` | Cancel a job |
+| `/runtime job list` | List all jobs |
+| `/runtime stream subscribe <ch>` | Subscribe to a stream |
+| `/runtime stream unsubscribe <id>` | Unsubscribe from a stream |
+| `/runtime watch add <expr>` | Add a variable watch |
+| `/runtime watch remove <id>` | Remove a watch |
+| `/runtime watch list` | List active watches |
+| `/runtime watch poll` | Poll watch values |
+| `/runtime scenario run <path>` | Run a YAML scenario |
+| `/runtime scenario list` | List scenario files |
+| `/runtime scenario validate <path>` | Validate a scenario |
 
 ### Architecture
 
@@ -2415,13 +2476,54 @@ The platform component is inferred from the player connection name. The name com
 All runtime operations go through the standard ExecV2 pipeline and respect the existing risk classification and approval model.
 
 ### Target Management
-
 | Operation | Risk | Description |
 |-----------|------|-------------|
 | `runtime.target.list` | SafeRead | Enumerate available runtime targets |
 | `runtime.attach` | SafeWrite | Attach to a target by address |
 | `runtime.status` | SafeRead | Connection state of the attached target |
 | `runtime.detach` | SafeWrite | Disconnect from the current target |
+
+### Manifest Discovery
+| Operation | Risk | Description |
+|-----------|------|-------------|
+| `runtime.manifest` | SafeRead | Request the runtime command manifest from the attached player |
+
+### Query + Command Execution
+| Operation | Risk | Description |
+|-----------|------|-------------|
+| `runtime.query` | SafeRead | Execute a read-only query on the attached target |
+| `runtime.exec` | PrivilegedExec | Execute a mutating command on the attached target |
+
+Args for both: `{ "command": "...", "args": { ... } }`
+
+### Durable Jobs + Fan-out
+| Operation | Risk | Description |
+|-----------|------|-------------|
+| `runtime.job.submit` | PrivilegedExec | Submit a long-running job; returns `jobId` |
+| `runtime.job.status` | SafeRead | Poll job state (pending/running/completed/failed/cancelled) |
+| `runtime.job.cancel` | SafeWrite | Cancel a running job |
+| `runtime.job.list` | SafeRead | List all jobs and their states |
+
+Jobs wrap `runtime.exec` with lifecycle tracking. Submit returns a `jobId` immediately; poll for completion.
+
+### Streams + Watches
+| Operation | Risk | Description |
+|-----------|------|-------------|
+| `runtime.stream.subscribe` | SafeWrite | Subscribe to a named event channel |
+| `runtime.stream.unsubscribe` | SafeWrite | Unsubscribe by subscription ID |
+| `runtime.watch.add` | SafeWrite | Add a variable watch expression |
+| `runtime.watch.remove` | SafeWrite | Remove a watch |
+| `runtime.watch.list` | SafeRead | List active watches |
+| `runtime.watch.poll` | SafeRead | Poll all watches for current values |
+
+Watches evaluate expressions on the attached player and cache results editor-side for polling.
+
+### Scenario Files
+| Operation | Risk | Description |
+|-----------|------|-------------|
+| `runtime.scenario.run` | PrivilegedExec | Execute a YAML scenario file step-by-step |
+| `runtime.scenario.list` | SafeRead | List `.unifocl/scenarios/*.yaml` files |
+| `runtime.scenario.validate` | SafeRead | Parse and validate a scenario file |
 
 Example via MCP `exec`:
 
@@ -2469,12 +2571,49 @@ Once attached, query and command operations route to that target.
 
 Interactive shell commands mirror the ExecV2 operations:
 
+### Target Management
 | Command | Description |
 |---------|-------------|
 | `/runtime target list` | List available targets |
 | `/runtime attach <target>` | Attach (e.g., `/runtime attach android:pixel-7`) |
 | `/runtime status` | Show connection state |
 | `/runtime detach` | Disconnect |
+
+### Manifest Discovery
+| Command | Description |
+|---------|-------------|
+| `/runtime manifest` | Request and display the runtime command manifest |
+
+### Query + Command Execution
+| Command | Description |
+|---------|-------------|
+| `/runtime query <command> [argsJson]` | Execute a read-only query |
+| `/runtime exec <command> [argsJson]` | Execute a mutating command |
+
+### Durable Jobs
+| Command | Description |
+|---------|-------------|
+| `/runtime job submit <command> [argsJson]` | Submit a long-running job |
+| `/runtime job status <jobId>` | Check job status |
+| `/runtime job cancel <jobId>` | Cancel a running job |
+| `/runtime job list` | List all jobs |
+
+### Streams + Watches
+| Command | Description |
+|---------|-------------|
+| `/runtime stream subscribe <channel> [filterJson]` | Subscribe to a live event stream |
+| `/runtime stream unsubscribe <subscriptionId>` | Unsubscribe from a stream |
+| `/runtime watch add <expression> [target] [intervalMs]` | Add a variable watch |
+| `/runtime watch remove <watchId>` | Remove a watch |
+| `/runtime watch list` | List active watches |
+| `/runtime watch poll` | Poll all watches for current values |
+
+### Scenario Files
+| Command | Description |
+|---------|-------------|
+| `/runtime scenario run <path>` | Run a YAML scenario file |
+| `/runtime scenario list` | List scenario files in `.unifocl/scenarios/` |
+| `/runtime scenario validate <path>` | Validate a scenario file |
 
 ## Custom Runtime Commands
 
@@ -2640,17 +2779,67 @@ At player startup (`RuntimeInitializeOnLoadMethod`):
 
 No manual setup is required. The system auto-initializes in any development build that includes the `UniFocl.Runtime` assembly.
 
+## Scenario File Format
+Scenario files live in `.unifocl/scenarios/` and use a YAML-like format:
+
+```yaml
+name: "economy smoke test"
+description: "Verify grant and balance flow"
+
+steps:
+  - name: "grant currency"
+    command: economy.grant
+    args: {"amount": 100}
+    capture_as: grant_result
+    assert:
+      - success == true
+      - exists(resultJson)
+
+  - name: "check balance"
+    command: economy.balance
+    args: {}
+    delay_ms: 500
+    assert:
+      - success == true
+
+  - name: "invalid grant"
+    command: economy.grant
+    args: {"amount": -1}
+    continue_on_failure: true
+    assert:
+      - success == false
+```
+
+### Step Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Step label for output |
+| `command` | string | yes | Runtime command to execute |
+| `args` | JSON string | no | Arguments (default `{}`) |
+| `capture_as` | string | no | Save response as a variable for `${name}` substitution |
+| `assert` | list | no | Assertions evaluated against the response |
+| `continue_on_failure` | bool | no | Continue to next step even if assertions fail |
+| `delay_ms` | int | no | Milliseconds to wait after this step |
+
+### Assertion Syntax
+
+- `field == value` — JSON path equals expected value
+- `field != value` — JSON path does not equal value
+- `exists(field)` — JSON path exists in response
+
 ## Roadmap
 
-Sprint 1 (this release) delivers target management and the transport/extensibility foundation. Planned follow-up sprints:
+All runtime operations sprints are now delivered:
 
-| Sprint | Feature | Description |
-|--------|---------|-------------|
-| S2 | Runtime Manifest + Discovery | Manifest exchange on attach, MCP category integration |
-| S3 | Query + Command Execution | Typed dispatch with schema validation and approval |
-| S4 | Durable Jobs + Fan-out | Long-running jobs, multi-target execution |
-| S5 | Streams + Watches | Live events, variable watches, log streaming |
-| S6 | Scenario Files | YAML-based scripted repro flows with assertions |
+| Sprint | Feature | Status |
+|--------|---------|--------|
+| S1 | Transport + Targets | Done |
+| S2 | Runtime Manifest + Discovery | Done |
+| S3 | Query + Command Execution | Done |
+| S4 | Durable Jobs + Fan-out | Done |
+| S5 | Streams + Watches | Done |
+| S6 | Scenario Files | Done |
 
 ---
 

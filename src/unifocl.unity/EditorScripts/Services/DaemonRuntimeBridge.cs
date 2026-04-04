@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -192,6 +193,242 @@ namespace UniFocl.EditorBridge
             return sw.ElapsedMilliseconds;
         }
 
+        // ── S2: Manifest Discovery ──────────────────────────────────────────
+
+        /// <summary>Cached manifest JSON from the last exchange.</summary>
+        private static string _cachedManifest = string.Empty;
+
+        /// <summary>Request the runtime manifest from the attached player.</summary>
+        public static async Task<string> RequestManifestAsync(int timeoutMs = 10_000, CancellationToken cancellationToken = default)
+        {
+            var json = await SendRequestAsync(RuntimeMessageType.ManifestRequest, "{}", timeoutMs, cancellationToken);
+            _cachedManifest = json ?? "{}";
+            return _cachedManifest;
+        }
+
+        /// <summary>Return cached manifest without a round-trip (empty if never fetched).</summary>
+        public static string GetCachedManifest() => _cachedManifest;
+
+        // ── S3: Query + Command Execution ───────────────────────────────────
+
+        /// <summary>Execute a runtime command on the attached player and return the response JSON.</summary>
+        public static async Task<string> ExecuteCommandAsync(
+            string command, string argsJson = "{}", int timeoutMs = 30_000,
+            CancellationToken cancellationToken = default)
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            var payload = JsonUtility.ToJson(new UniFocl.Runtime.RuntimeCommandRequest
+            {
+                command = command,
+                argsJson = argsJson ?? "{}",
+                requestId = requestId
+            });
+            return await SendRequestAsync(RuntimeMessageType.Request, payload, timeoutMs, cancellationToken);
+        }
+
+        // ── S4: Durable Jobs ────────────────────────────────────────────────
+
+        private static readonly ConcurrentDictionary<string, RuntimeJobState> Jobs = new();
+
+        /// <summary>Submit a durable job to the attached player. Returns a job ID for polling.</summary>
+        public static async Task<string> SubmitJobAsync(
+            string command, string argsJson = "{}", int timeoutMs = 60_000,
+            CancellationToken cancellationToken = default)
+        {
+            var jobId = Guid.NewGuid().ToString("N")[..12];
+            var job = new RuntimeJobState
+            {
+                jobId = jobId,
+                command = command,
+                state = "running",
+                submittedUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            Jobs[jobId] = job;
+
+            // Fire-and-forget: execute the command and capture the result.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var resultJson = await ExecuteCommandAsync(command, argsJson, timeoutMs, cancellationToken);
+
+                    // Parse success from RuntimeCommandResponse
+                    bool success = false;
+                    string message = "ok";
+                    string resultPayload = "{}";
+                    try
+                    {
+                        var resp = JsonUtility.FromJson<UniFocl.Runtime.RuntimeCommandResponse>(resultJson);
+                        if (resp != null)
+                        {
+                            success = resp.success;
+                            message = resp.message;
+                            resultPayload = resp.resultJson;
+                        }
+                    }
+                    catch
+                    {
+                        resultPayload = resultJson;
+                        success = true;
+                    }
+
+                    if (Jobs.TryGetValue(jobId, out var j))
+                    {
+                        j.state = success ? "completed" : "failed";
+                        j.message = message;
+                        j.resultJson = resultPayload;
+                        j.progress = 1f;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (Jobs.TryGetValue(jobId, out var j))
+                    {
+                        j.state = "failed";
+                        j.message = ex.Message;
+                    }
+                }
+            }, CancellationToken.None);
+
+            return jobId;
+        }
+
+        public static RuntimeJobState GetJobStatus(string jobId)
+        {
+            return Jobs.TryGetValue(jobId, out var job) ? job : null;
+        }
+
+        public static bool CancelJob(string jobId)
+        {
+            if (!Jobs.TryGetValue(jobId, out var job)) return false;
+            if (job.state == "completed" || job.state == "failed" || job.state == "cancelled") return false;
+            job.state = "cancelled";
+            job.message = "cancelled by user";
+            return true;
+        }
+
+        public static List<RuntimeJobState> ListJobs()
+        {
+            return Jobs.Values.ToList();
+        }
+
+        // ── S5: Streams + Watches ───────────────────────────────────────────
+
+        private static readonly ConcurrentDictionary<string, RuntimeStreamSubscription> Subscriptions = new();
+        private static readonly ConcurrentDictionary<string, RuntimeWatchEntry> Watches = new();
+
+        /// <summary>Subscribe to a named stream channel on the attached player.</summary>
+        public static async Task<string> SubscribeStreamAsync(
+            string channel, string filterJson = "{}", int timeoutMs = 10_000,
+            CancellationToken cancellationToken = default)
+        {
+            var subId = Guid.NewGuid().ToString("N")[..12];
+            var payload = $"{{\"subscriptionId\":\"{subId}\",\"channel\":\"{EscapeJson(channel)}\",\"filterJson\":{filterJson}}}";
+            await SendRequestAsync(RuntimeMessageType.Request, JsonUtility.ToJson(
+                new UniFocl.Runtime.RuntimeCommandRequest
+                {
+                    command = "__stream.subscribe",
+                    argsJson = payload,
+                    requestId = subId
+                }), timeoutMs, cancellationToken);
+
+            Subscriptions[subId] = new RuntimeStreamSubscription
+            {
+                subscriptionId = subId,
+                channel = channel,
+                filterJson = filterJson,
+                active = true
+            };
+            return subId;
+        }
+
+        /// <summary>Unsubscribe from a stream channel.</summary>
+        public static async Task<bool> UnsubscribeStreamAsync(
+            string subscriptionId, int timeoutMs = 10_000,
+            CancellationToken cancellationToken = default)
+        {
+            if (!Subscriptions.TryRemove(subscriptionId, out _)) return false;
+            var payload = $"{{\"subscriptionId\":\"{EscapeJson(subscriptionId)}\"}}";
+            await SendRequestAsync(RuntimeMessageType.Request, JsonUtility.ToJson(
+                new UniFocl.Runtime.RuntimeCommandRequest
+                {
+                    command = "__stream.unsubscribe",
+                    argsJson = payload,
+                    requestId = subscriptionId
+                }), timeoutMs, cancellationToken);
+            return true;
+        }
+
+        /// <summary>Add a variable watch expression.</summary>
+        public static string AddWatch(string expression, string target = "", int intervalMs = 1000)
+        {
+            var watchId = Guid.NewGuid().ToString("N")[..12];
+            Watches[watchId] = new RuntimeWatchEntry
+            {
+                watchId = watchId,
+                expression = expression,
+                target = target,
+                intervalMs = intervalMs,
+                active = true,
+                lastValueJson = "{}",
+                lastUpdatedUtcMs = 0
+            };
+            return watchId;
+        }
+
+        /// <summary>Remove a variable watch.</summary>
+        public static bool RemoveWatch(string watchId)
+        {
+            return Watches.TryRemove(watchId, out _);
+        }
+
+        /// <summary>List all active watches.</summary>
+        public static List<RuntimeWatchEntry> ListWatches()
+        {
+            return Watches.Values.ToList();
+        }
+
+        /// <summary>Poll all active watches by executing their expressions on the attached player.</summary>
+        public static async Task<List<RuntimeWatchSnapshot>> PollWatchesAsync(
+            int timeoutMs = 10_000, CancellationToken cancellationToken = default)
+        {
+            var results = new List<RuntimeWatchSnapshot>();
+            foreach (var w in Watches.Values.Where(w => w.active))
+            {
+                try
+                {
+                    var resultJson = await ExecuteCommandAsync(
+                        "__watch.eval",
+                        $"{{\"expression\":\"{EscapeJson(w.expression)}\",\"target\":\"{EscapeJson(w.target)}\"}}",
+                        timeoutMs, cancellationToken);
+                    w.lastValueJson = resultJson;
+                    w.lastUpdatedUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    results.Add(new RuntimeWatchSnapshot
+                    {
+                        watchId = w.watchId,
+                        expression = w.expression,
+                        valueJson = resultJson,
+                        timestampUtcMs = w.lastUpdatedUtcMs
+                    });
+                }
+                catch
+                {
+                    // Watch eval failure is non-fatal
+                }
+            }
+            return results;
+        }
+
+        // ── S5 helper types ─────────────────────────────────────────────────
+
+        private static string EscapeJson(string value)
+        {
+            return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n");
+        }
+
+        /// <summary>Public accessor for JSON escaping used by daemon endpoints.</summary>
+        public static string EscapeJsonPublic(string value) => EscapeJson(value);
+
         private static void OnMessageFromPlayer(MessageEventArgs args)
         {
             RuntimeEnvelope envelope;
@@ -309,6 +546,48 @@ namespace UniFocl.EditorBridge
             public string platform;
             public string deviceId;
             public bool isConnected;
+        }
+
+        /// <summary>Editor-side state for a durable runtime job.</summary>
+        public sealed class RuntimeJobState
+        {
+            public string jobId = string.Empty;
+            public string command = string.Empty;
+            public string state = "pending"; // pending, running, completed, failed, cancelled
+            public float progress;
+            public string message = string.Empty;
+            public string resultJson = "{}";
+            public long submittedUtcMs;
+        }
+
+        /// <summary>Editor-side state for a stream subscription.</summary>
+        public sealed class RuntimeStreamSubscription
+        {
+            public string subscriptionId = string.Empty;
+            public string channel = string.Empty;
+            public string filterJson = "{}";
+            public bool active;
+        }
+
+        /// <summary>Editor-side state for a variable watch.</summary>
+        public sealed class RuntimeWatchEntry
+        {
+            public string watchId = string.Empty;
+            public string expression = string.Empty;
+            public string target = string.Empty;
+            public int intervalMs = 1000;
+            public bool active;
+            public string lastValueJson = "{}";
+            public long lastUpdatedUtcMs;
+        }
+
+        /// <summary>Snapshot of a watch poll result.</summary>
+        public sealed class RuntimeWatchSnapshot
+        {
+            public string watchId = string.Empty;
+            public string expression = string.Empty;
+            public string valueJson = "{}";
+            public long timestampUtcMs;
         }
     }
 }

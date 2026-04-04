@@ -248,7 +248,23 @@ internal static class CliCommandCatalog
             new("/runtime attach <target>", "Attach to a runtime target by address (e.g. editor:playmode, android:pixel-7)", "/runtime attach", "runtime"),
             new("/runtime status", "Show connection status of the attached runtime target", "/runtime status", "runtime"),
             new("/runtime detach", "Disconnect from the current runtime target", "/runtime detach", "runtime"),
-            new("/runtime", "Runtime operations: target, attach, status, detach, query, exec", "/runtime", "runtime")
+            new("/runtime manifest", "Request and display the runtime command manifest from the attached player", "/runtime manifest", "runtime"),
+            new("/runtime query <command> [argsJson]", "Execute a read-only query on the attached runtime target", "/runtime query", "runtime"),
+            new("/runtime exec <command> [argsJson]", "Execute a command on the attached runtime target", "/runtime exec", "runtime"),
+            new("/runtime job submit <command> [argsJson]", "Submit a long-running job to the attached runtime target", "/runtime job submit", "runtime"),
+            new("/runtime job status <jobId>", "Check the status of a durable runtime job", "/runtime job status", "runtime"),
+            new("/runtime job cancel <jobId>", "Cancel a running runtime job", "/runtime job cancel", "runtime"),
+            new("/runtime job list", "List all runtime jobs (active and completed)", "/runtime job list", "runtime"),
+            new("/runtime stream subscribe <channel> [filterJson]", "Subscribe to a live event stream from the runtime", "/runtime stream subscribe", "runtime"),
+            new("/runtime stream unsubscribe <subscriptionId>", "Unsubscribe from a runtime event stream", "/runtime stream unsubscribe", "runtime"),
+            new("/runtime watch add <expression> [target] [intervalMs]", "Add a variable watch on the runtime target", "/runtime watch add", "runtime"),
+            new("/runtime watch remove <watchId>", "Remove a variable watch", "/runtime watch remove", "runtime"),
+            new("/runtime watch list", "List all active variable watches", "/runtime watch list", "runtime"),
+            new("/runtime watch poll", "Poll all active watches and return current values", "/runtime watch poll", "runtime"),
+            new("/runtime scenario run <path>", "Run a YAML scenario file against the attached runtime", "/runtime scenario run", "runtime"),
+            new("/runtime scenario list", "List available scenario files in .unifocl/scenarios/", "/runtime scenario list", "runtime"),
+            new("/runtime scenario validate <path>", "Validate a scenario file without executing it", "/runtime scenario validate", "runtime"),
+            new("/runtime", "Runtime operations: target, attach, status, manifest, query, exec, job, stream, watch, scenario", "/runtime", "runtime")
         ];
     }
 
@@ -414,7 +430,23 @@ internal static class CliCommandCatalog
             new("runtime target list", "List available runtime targets (devices, builds, editor playmode)", "runtime target list", "runtime"),
             new("runtime attach <target>", "Attach to a runtime target (e.g. editor:playmode, android:pixel-7)", "runtime attach", "runtime"),
             new("runtime status", "Show runtime connection status", "runtime status", "runtime"),
-            new("runtime detach", "Disconnect from runtime target", "runtime detach", "runtime")
+            new("runtime detach", "Disconnect from runtime target", "runtime detach", "runtime"),
+            new("runtime manifest", "Request runtime command manifest from attached player", "runtime manifest", "runtime"),
+            new("runtime query <command> [argsJson]", "Execute a read-only query on the runtime target", "runtime query", "runtime"),
+            new("runtime exec <command> [argsJson]", "Execute a command on the runtime target", "runtime exec", "runtime"),
+            new("runtime job submit <command> [argsJson]", "Submit a long-running runtime job", "runtime job submit", "runtime"),
+            new("runtime job status <jobId>", "Check durable job status", "runtime job status", "runtime"),
+            new("runtime job cancel <jobId>", "Cancel a running job", "runtime job cancel", "runtime"),
+            new("runtime job list", "List all runtime jobs", "runtime job list", "runtime"),
+            new("runtime stream subscribe <channel>", "Subscribe to a live event stream", "runtime stream subscribe", "runtime"),
+            new("runtime stream unsubscribe <id>", "Unsubscribe from a stream", "runtime stream unsubscribe", "runtime"),
+            new("runtime watch add <expression>", "Add a variable watch", "runtime watch add", "runtime"),
+            new("runtime watch remove <watchId>", "Remove a variable watch", "runtime watch remove", "runtime"),
+            new("runtime watch list", "List active watches", "runtime watch list", "runtime"),
+            new("runtime watch poll", "Poll all watches for current values", "runtime watch poll", "runtime"),
+            new("runtime scenario run <path>", "Run a YAML scenario file", "runtime scenario run", "runtime"),
+            new("runtime scenario list", "List scenario files", "runtime scenario list", "runtime"),
+            new("runtime scenario validate <path>", "Validate a scenario file", "runtime scenario validate", "runtime")
         ];
     }
 

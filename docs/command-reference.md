@@ -736,7 +736,6 @@ Local artifacts are intentionally uncommitted (`local.config.json`, `.local/`).
 Runtime operations allow you to control, query, and observe running Unity player instances (Editor PlayMode, standalone builds, device builds) through the same CLI/MCP interface used for editor operations.
 
 ### Target Management
-
 | **Operation** | **Risk** | **Description** |
 | --- | --- | --- |
 | `runtime.target.list` | SafeRead | List available runtime targets (Editor PlayMode, devices, standalone builds) |
@@ -750,6 +749,52 @@ Runtime operations allow you to control, query, and observe running Unity player
 - `ios:*` — first available iOS device
 - `windows:standalone` — local Windows standalone build
 
+### Manifest Discovery
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.manifest` | SafeRead | Request the runtime command manifest from the attached player |
+
+The manifest describes all `[UnifoclRuntimeCommand]` methods available on the player, grouped by category, with JSON Schema for args and result.
+
+### Query + Command Execution
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.query` | SafeRead | Execute a read-only query on the attached target |
+| `runtime.exec` | PrivilegedExec | Execute a mutating command on the attached target |
+
+Both accept `{ "command": "...", "args": { ... } }`. `runtime.query` is for SafeRead operations; `runtime.exec` is for mutations requiring approval.
+
+### Durable Jobs + Fan-out
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.job.submit` | PrivilegedExec | Submit a long-running job; returns `jobId` for polling |
+| `runtime.job.status` | SafeRead | Poll job state (pending/running/completed/failed/cancelled) |
+| `runtime.job.cancel` | SafeWrite | Cancel a running job |
+| `runtime.job.list` | SafeRead | List all jobs and their states |
+
+Jobs wrap `runtime.exec` with durable lifecycle tracking. Submit returns immediately with a `jobId`; poll `runtime.job.status` for completion.
+
+### Streams + Watches
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.stream.subscribe` | SafeWrite | Subscribe to a named event channel |
+| `runtime.stream.unsubscribe` | SafeWrite | Unsubscribe by subscription ID |
+| `runtime.watch.add` | SafeWrite | Add a variable watch expression |
+| `runtime.watch.remove` | SafeWrite | Remove a watch |
+| `runtime.watch.list` | SafeRead | List active watches |
+| `runtime.watch.poll` | SafeRead | Poll all watches for current values |
+
+Watches evaluate expressions on the attached player and cache results editor-side. Streams provide push-based event channels.
+
+### Scenario Files
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.scenario.run` | PrivilegedExec | Execute a YAML scenario file step-by-step |
+| `runtime.scenario.list` | SafeRead | List `.unifocl/scenarios/*.yaml` files |
+| `runtime.scenario.validate` | SafeRead | Validate a scenario file without executing |
+
+Scenario files define scripted repro flows with assertions. See `docs/runtime-operations.md` for the format.
+
 ### CLI Commands
 
 | **Command** | **Description** |
@@ -758,6 +803,22 @@ Runtime operations allow you to control, query, and observe running Unity player
 | `/runtime attach <target>` | Attach to a target (e.g. `/runtime attach editor:playmode`) |
 | `/runtime status` | Show runtime connection status |
 | `/runtime detach` | Disconnect from runtime target |
+| `/runtime manifest` | Request and display the runtime manifest |
+| `/runtime query <cmd> [args]` | Execute a read-only query |
+| `/runtime exec <cmd> [args]` | Execute a mutating command |
+| `/runtime job submit <cmd> [args]` | Submit a long-running job |
+| `/runtime job status <jobId>` | Check job status |
+| `/runtime job cancel <jobId>` | Cancel a job |
+| `/runtime job list` | List all jobs |
+| `/runtime stream subscribe <ch>` | Subscribe to a stream |
+| `/runtime stream unsubscribe <id>` | Unsubscribe from a stream |
+| `/runtime watch add <expr>` | Add a variable watch |
+| `/runtime watch remove <id>` | Remove a watch |
+| `/runtime watch list` | List active watches |
+| `/runtime watch poll` | Poll watch values |
+| `/runtime scenario run <path>` | Run a YAML scenario |
+| `/runtime scenario list` | List scenario files |
+| `/runtime scenario validate <path>` | Validate a scenario |
 
 ### Architecture
 

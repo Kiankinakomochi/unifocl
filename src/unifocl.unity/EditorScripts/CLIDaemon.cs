@@ -757,6 +757,261 @@ namespace UniFocl.EditorBridge
                     return;
                 }
 
+                // ── S2: Runtime manifest ──────────────────────────────────────
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/manifest", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    try
+                    {
+                        var manifest = await DaemonRuntimeBridge.RequestManifestAsync(10_000, cancellationToken);
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeManifestResponse { ok = true, manifest = manifest }),
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeManifestResponse { ok = false, error = ex.Message }),
+                            cancellationToken: cancellationToken);
+                    }
+                    return;
+                }
+
+                // ── S3: Runtime exec (query + command) ────────────────────────
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/exec", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var body = await ReadRequestBodyAsync(request, cancellationToken);
+                    try
+                    {
+                        var req = JsonUtility.FromJson<RuntimeExecRequest>(body);
+                        var resultJson = await DaemonRuntimeBridge.ExecuteCommandAsync(
+                            req.command, req.argsJson, 30_000, cancellationToken);
+                        var resp = JsonUtility.FromJson<UniFocl.Runtime.RuntimeCommandResponse>(resultJson);
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeExecResponse
+                            {
+                                ok = resp?.success ?? false,
+                                requestId = resp?.requestId ?? "",
+                                success = resp?.success ?? false,
+                                message = resp?.message ?? "no response",
+                                resultJson = resp?.resultJson ?? "{}"
+                            }),
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeExecResponse
+                            {
+                                ok = false,
+                                message = $"runtime exec failed: {ex.Message}"
+                            }),
+                            cancellationToken: cancellationToken);
+                    }
+                    return;
+                }
+
+                // ── S4: Durable jobs ──────────────────────────────────────────
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/job/submit", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var body = await ReadRequestBodyAsync(request, cancellationToken);
+                    try
+                    {
+                        var req = JsonUtility.FromJson<RuntimeJobSubmitRequest>(body);
+                        var jobId = await DaemonRuntimeBridge.SubmitJobAsync(
+                            req.command, req.argsJson, req.timeoutMs, cancellationToken);
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeSimpleResponse { ok = true, message = jobId }),
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeSimpleResponse { ok = false, message = ex.Message }),
+                            cancellationToken: cancellationToken);
+                    }
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/job/status", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var jobId = request.QueryString["jobId"] ?? "";
+                    var job = DaemonRuntimeBridge.GetJobStatus(jobId);
+                    if (job == null)
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeSimpleResponse { ok = false, message = $"job not found: {jobId}" }),
+                            cancellationToken: cancellationToken);
+                    }
+                    else
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeJobStatusResponse
+                            {
+                                ok = true, jobId = job.jobId, state = job.state,
+                                progress = job.progress, message = job.message, resultJson = job.resultJson
+                            }),
+                            cancellationToken: cancellationToken);
+                    }
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/job/cancel", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var jobId = request.QueryString["jobId"] ?? "";
+                    var cancelled = DaemonRuntimeBridge.CancelJob(jobId);
+                    await WriteJsonResponseAsync(context.Response,
+                        JsonUtility.ToJson(new RuntimeSimpleResponse
+                        {
+                            ok = cancelled,
+                            message = cancelled ? $"job {jobId} cancelled" : $"cannot cancel job {jobId}"
+                        }),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/job/list", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var jobs = DaemonRuntimeBridge.ListJobs();
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("[");
+                    for (var i = 0; i < jobs.Count; i++)
+                    {
+                        if (i > 0) sb.Append(",");
+                        sb.Append(JsonUtility.ToJson(new RuntimeJobStatusResponse
+                        {
+                            ok = true, jobId = jobs[i].jobId, state = jobs[i].state,
+                            progress = jobs[i].progress, message = jobs[i].message, resultJson = jobs[i].resultJson
+                        }));
+                    }
+                    sb.Append("]");
+                    await WriteJsonResponseAsync(context.Response,
+                        JsonUtility.ToJson(new RuntimeJobListResponse { ok = true, jobs = sb.ToString() }),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                // ── S5: Streams + watches ─────────────────────────────────────
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/stream/subscribe", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var body = await ReadRequestBodyAsync(request, cancellationToken);
+                    try
+                    {
+                        var req = JsonUtility.FromJson<RuntimeStreamSubscribeRequest>(body);
+                        var subId = await DaemonRuntimeBridge.SubscribeStreamAsync(
+                            req.channel, req.filterJson, 10_000, cancellationToken);
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeStreamResponse { ok = true, subscriptionId = subId, message = "subscribed" }),
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeStreamResponse { ok = false, message = ex.Message }),
+                            cancellationToken: cancellationToken);
+                    }
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/stream/unsubscribe", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var subId = request.QueryString["subscriptionId"] ?? "";
+                    var ok = await DaemonRuntimeBridge.UnsubscribeStreamAsync(subId, 10_000, cancellationToken);
+                    await WriteJsonResponseAsync(context.Response,
+                        JsonUtility.ToJson(new RuntimeStreamResponse
+                        {
+                            ok = ok, subscriptionId = subId,
+                            message = ok ? "unsubscribed" : "subscription not found"
+                        }),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/watch/add", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var body = await ReadRequestBodyAsync(request, cancellationToken);
+                    var req = JsonUtility.FromJson<RuntimeWatchRequest>(body);
+                    var watchId = DaemonRuntimeBridge.AddWatch(req.expression, req.target, req.intervalMs);
+                    await WriteJsonResponseAsync(context.Response,
+                        JsonUtility.ToJson(new RuntimeWatchResponse { ok = true, watchId = watchId, message = "watch added" }),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/watch/remove", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var watchId = request.QueryString["watchId"] ?? "";
+                    var removed = DaemonRuntimeBridge.RemoveWatch(watchId);
+                    await WriteJsonResponseAsync(context.Response,
+                        JsonUtility.ToJson(new RuntimeWatchResponse
+                        {
+                            ok = removed, watchId = watchId,
+                            message = removed ? "watch removed" : "watch not found"
+                        }),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/watch/list", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var watches = DaemonRuntimeBridge.ListWatches();
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("[");
+                    for (var i = 0; i < watches.Count; i++)
+                    {
+                        if (i > 0) sb.Append(",");
+                        sb.Append($"{{\"watchId\":\"{watches[i].watchId}\",\"expression\":\"{DaemonRuntimeBridge.EscapeJsonPublic(watches[i].expression)}\",\"target\":\"{DaemonRuntimeBridge.EscapeJsonPublic(watches[i].target)}\",\"intervalMs\":{watches[i].intervalMs},\"active\":{(watches[i].active ? "true" : "false")}}}");
+                    }
+                    sb.Append("]");
+                    await WriteJsonResponseAsync(context.Response,
+                        JsonUtility.ToJson(new RuntimeWatchListResponse { ok = true, watches = sb.ToString() }),
+                        cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/watch/poll", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    try
+                    {
+                        var snapshots = await DaemonRuntimeBridge.PollWatchesAsync(10_000, cancellationToken);
+                        var sb = new System.Text.StringBuilder();
+                        sb.Append("[");
+                        for (var i = 0; i < snapshots.Count; i++)
+                        {
+                            if (i > 0) sb.Append(",");
+                            sb.Append(JsonUtility.ToJson(new RuntimeWatchSnapshotEntry
+                            {
+                                watchId = snapshots[i].watchId,
+                                expression = snapshots[i].expression,
+                                valueJson = snapshots[i].valueJson,
+                                timestampUtcMs = snapshots[i].timestampUtcMs
+                            }));
+                        }
+                        sb.Append("]");
+                        await WriteJsonResponseAsync(context.Response,
+                            $"{{\"ok\":true,\"snapshots\":{sb}}}",
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        await WriteJsonResponseAsync(context.Response,
+                            JsonUtility.ToJson(new RuntimeSimpleResponse { ok = false, message = ex.Message }),
+                            cancellationToken: cancellationToken);
+                    }
+                    return;
+                }
+
                 // ExecV2 structured command adapter
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
                 {
