@@ -365,6 +365,8 @@ namespace UniFocl.EditorBridge
                 "compile-status" => Task.FromResult(ExecuteCompileStatus()),
                 "hierarchy-find" => Task.FromResult(ExecuteHierarchyFind(request)),
                 "settings-inspect" => Task.FromResult(ExecuteSettingsInspect()),
+                "console-dump" => Task.FromResult(ExecuteConsoleDump(request)),
+                "console-tail" => Task.FromResult(ExecuteConsoleTail(request)),
                 "console-clear" => Task.FromResult(ExecuteConsoleClear()),
                 "prefab-create" => Task.FromResult(ExecutePrefabCreate(request)),
                 "prefab-apply" => Task.FromResult(ExecutePrefabApply(request)),

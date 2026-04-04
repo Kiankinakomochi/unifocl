@@ -78,6 +78,8 @@ internal sealed class ProjectDaemonBridge
             "build-cancel" => HandleBuildCancelStub(),
             "hierarchy-find" => RequireBridgeMode("hierarchy-find"),
             "settings-inspect" => RequireBridgeMode("settings-inspect"),
+            "console-dump" => RequireBridgeMode("console-dump"),
+            "console-tail" => RequireBridgeMode("console-tail"),
             "console-clear" => RequireBridgeMode("console-clear"),
             "scene-load" => RequireBridgeMode("scene-load"),
             "scene-add" => RequireBridgeMode("scene-add"),

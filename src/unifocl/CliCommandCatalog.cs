@@ -180,7 +180,12 @@ internal static class CliCommandCatalog
             // ── compile ───────────────────────────────────────────────────
             new("/compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile request", "compile"),
             new("/compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile status", "compile"),
-            new("/console clear", "Clear the Unity console log", "/console clear", "compile"),
+
+            // ── console ──────────────────────────────────────────────────
+            new("/console <dump|tail|clear>", "Unity console log commands", "/console", "console"),
+            new("/console dump [--type <type>] [--limit <n>]", "Dump Unity logs as structured JSON (type: error|warning|log)", "/console dump", "console"),
+            new("/console tail [--follow]", "Stream console log output (TUI)", "/console tail", "console"),
+            new("/console clear", "Clear the Unity console log", "/console clear", "console"),
 
             // ── eval ──────────────────────────────────────────────────────
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
@@ -321,7 +326,11 @@ internal static class CliCommandCatalog
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
             new("compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "compile status", "compile"),
-            new("console clear", "Clear the Unity console log", "console clear", "compile"),
+
+            // ── console ──────────────────────────────────────────────────
+            new("console dump [--type <type>] [--limit <n>]", "Dump Unity logs as structured JSON (type: error|warning|log)", "console dump", "console"),
+            new("console tail [--follow]", "Stream console log output", "console tail", "console"),
+            new("console clear", "Clear the Unity console log", "console clear", "console"),
 
             // ── scene ─────────────────────────────────────────────────────
             new("scene load <path>", "Load a scene by path (replaces current)", "scene load", "scene"),
