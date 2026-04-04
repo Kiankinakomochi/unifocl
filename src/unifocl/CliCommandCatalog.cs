@@ -203,10 +203,12 @@ internal static class CliCommandCatalog
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
 
             // ── recorder ─────────────────────────────────────────────
-            new("/recorder <start|stop|status>", "Unity Recorder capture commands (requires com.unity.recorder package)", "/recorder", "recorder"),
-            new("/recorder start", "Start a Recorder capture session (PrivilegedExec)", "/recorder start", "recorder"),
+            new("/recorder <start|stop|status|config|switch>", "Unity Recorder capture commands (requires com.unity.recorder package)", "/recorder", "recorder"),
+            new("/recorder start [--profile <name>]", "Start a Recorder capture session under the named profile (default: current). Errors if none configured (PrivilegedExec)", "/recorder start", "recorder"),
             new("/recorder stop", "Stop recording and flush output to disk (PrivilegedExec)", "/recorder stop", "recorder"),
-            new("/recorder status", "Show current Recorder state and active profile path (SafeRead)", "/recorder status", "recorder"),
+            new("/recorder status", "Show current Recorder state, active profile, and all configured profiles (SafeRead)", "/recorder status", "recorder"),
+            new("/recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile's output, frame rate, and resolution (SafeWrite)", "/recorder config", "recorder"),
+            new("/recorder switch <profile-name>", "Switch the active recorder profile (enables named profile, disables all others) (SafeWrite)", "/recorder switch", "recorder"),
 
             // ── profiling ─────────────────────────────────────────────────
             new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect", "profiling"),
@@ -344,9 +346,11 @@ internal static class CliCommandCatalog
             new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),
 
             // ── recorder ─────────────────────────────────────────────────
-            new("recorder start", "Start a Recorder capture session", "recorder start", "recorder"),
+            new("recorder start [--profile <name>]", "Start a Recorder capture session (default: current profile)", "recorder start", "recorder"),
             new("recorder stop", "Stop recording and flush output to disk", "recorder stop", "recorder"),
-            new("recorder status", "Show Recorder state and active profile", "recorder status", "recorder"),
+            new("recorder status", "Show Recorder state, active profile, and all profiles", "recorder status", "recorder"),
+            new("recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile", "recorder config", "recorder"),
+            new("recorder switch <profile-name>", "Switch the active recorder profile", "recorder switch", "recorder"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),

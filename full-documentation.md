@@ -1056,18 +1056,22 @@ The `recorder` category provides capture control for the Unity Recorder package 
 **CLI commands:**
 
 ```
-/recorder start
+/recorder start [--profile <name>]
 /recorder stop
 /recorder status
+/recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]
+/recorder switch <profile-name>
 ```
 
 **Agent / MCP operations (after `load_category('recorder')`):**
 
 | Operation | Risk | Description |
 | --- | --- | --- |
-| `recorder.start` | PrivilegedExec | Start a Recorder capture session |
+| `recorder.start` | PrivilegedExec | Start a capture session. Pass `{"profile":"<name>"}` to select a profile; defaults to the currently active one. Returns error if no profiles are configured. |
 | `recorder.stop` | PrivilegedExec | Stop the active recording and flush output to disk |
-| `recorder.status` | SafeRead | Return current state (recording/idle) and active profile path |
+| `recorder.status` | SafeRead | Return current state (recording/idle), active profile name, and list of all configured profiles |
+| `recorder.config` | SafeWrite | Configure a recorder profile. Pass `{"profile":"<name>", "outputFile":"path", "captureFrameRate":30, "capFrameRate":true, "imageWidth":1920, "imageHeight":1080}`. Only provided fields are updated. |
+| `recorder.switch` | SafeWrite | Switch the active profile by name — enables the named profile and disables all others. Pass `{"profile":"<name>"}`. |
 
 **Important:** Requires the `com.unity.recorder` package to be installed in the Unity project. If the package is not present, operations return an error message.
 
