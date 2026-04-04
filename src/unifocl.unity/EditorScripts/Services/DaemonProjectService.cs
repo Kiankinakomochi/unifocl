@@ -365,7 +365,14 @@ namespace UniFocl.EditorBridge
                 "compile-status" => Task.FromResult(ExecuteCompileStatus()),
                 "hierarchy-find" => Task.FromResult(ExecuteHierarchyFind(request)),
                 "settings-inspect" => Task.FromResult(ExecuteSettingsInspect()),
+                "console-dump" => Task.FromResult(ExecuteConsoleDump(request)),
+                "console-tail" => Task.FromResult(ExecuteConsoleTail(request)),
                 "console-clear" => Task.FromResult(ExecuteConsoleClear()),
+                "playmode-start" => Task.FromResult(ExecutePlaymodeStart()),
+                "playmode-stop" => Task.FromResult(ExecutePlaymodeStop()),
+                "playmode-pause" => Task.FromResult(ExecutePlaymodePause()),
+                "playmode-resume" => Task.FromResult(ExecutePlaymodeResume()),
+                "playmode-step" => Task.FromResult(ExecutePlaymodeStep()),
                 "prefab-create" => Task.FromResult(ExecutePrefabCreate(request)),
                 "prefab-apply" => Task.FromResult(ExecutePrefabApply(request)),
                 "prefab-revert" => Task.FromResult(ExecutePrefabRevert(request)),
@@ -410,6 +417,7 @@ namespace UniFocl.EditorBridge
                 "layer-add" => Task.FromResult(ExecuteLayerAdd(request)),
                 "layer-rename" => Task.FromResult(ExecuteLayerRename(request)),
                 "layer-remove" => Task.FromResult(ExecuteLayerRemove(request)),
+                "time-scale" => Task.FromResult(ExecuteTimeScale(request)),
                 _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
             };
         }

@@ -177,14 +177,38 @@ internal static class CliCommandCatalog
             new("/scene remove <path>", "Remove a scene from the loaded set", "/scene remove", "scene"),
             new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot", "scene"),
 
+            // ── time ─────────────────────────────────────────────────────
+            new("/time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion, 2.0 for fast-forward)", "/time scale", "time"),
+
             // ── compile ───────────────────────────────────────────────────
             new("/compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile request", "compile"),
             new("/compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile status", "compile"),
-            new("/console clear", "Clear the Unity console log", "/console clear", "compile"),
+
+            // ── console ──────────────────────────────────────────────────
+            new("/console <dump|tail|clear>", "Unity console log commands", "/console", "console"),
+            new("/console dump [--type <type>] [--limit <n>]", "Dump Unity logs as structured JSON (type: error|warning|log)", "/console dump", "console"),
+            new("/console tail [--follow]", "Stream console log output (TUI)", "/console tail", "console"),
+            new("/console clear", "Clear the Unity console log", "/console clear", "console"),
+
+            // ── playmode ─────────────────────────────────────────────────
+            new("/playmode <start|stop|pause|resume|step>", "Control Unity Editor Play Mode", "/playmode", "playmode"),
+            new("/playmode start", "Enter Play Mode", "/playmode start", "playmode"),
+            new("/playmode stop", "Exit Play Mode and restore edit-time state", "/playmode stop", "playmode"),
+            new("/playmode pause", "Pause the active Play Mode session", "/playmode pause", "playmode"),
+            new("/playmode resume", "Resume a paused Play Mode session", "/playmode resume", "playmode"),
+            new("/playmode step", "Advance the game by exactly one frame (must be paused)", "/playmode step", "playmode"),
 
             // ── eval ──────────────────────────────────────────────────────
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
+
+            // ── recorder ─────────────────────────────────────────────
+            new("/recorder <start|stop|status|config|switch>", "Unity Recorder capture commands (requires com.unity.recorder package)", "/recorder", "recorder"),
+            new("/recorder start [--profile <name>]", "Start a Recorder capture session under the named profile (default: current). Errors if none configured (PrivilegedExec)", "/recorder start", "recorder"),
+            new("/recorder stop", "Stop recording and flush output to disk (PrivilegedExec)", "/recorder stop", "recorder"),
+            new("/recorder status", "Show current Recorder state, active profile, and all configured profiles (SafeRead)", "/recorder status", "recorder"),
+            new("/recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile's output, frame rate, and resolution (SafeWrite)", "/recorder config", "recorder"),
+            new("/recorder switch <profile-name>", "Switch the active recorder profile (enables named profile, disables all others) (SafeWrite)", "/recorder switch", "recorder"),
 
             // ── profiling ─────────────────────────────────────────────────
             new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect", "profiling"),
@@ -318,10 +342,31 @@ internal static class CliCommandCatalog
             new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
             new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
 
+            // ── time ─────────────────────────────────────────────────────
+            new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),
+
+            // ── recorder ─────────────────────────────────────────────────
+            new("recorder start [--profile <name>]", "Start a Recorder capture session (default: current profile)", "recorder start", "recorder"),
+            new("recorder stop", "Stop recording and flush output to disk", "recorder stop", "recorder"),
+            new("recorder status", "Show Recorder state, active profile, and all profiles", "recorder status", "recorder"),
+            new("recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile", "recorder config", "recorder"),
+            new("recorder switch <profile-name>", "Switch the active recorder profile", "recorder switch", "recorder"),
+
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
             new("compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "compile status", "compile"),
-            new("console clear", "Clear the Unity console log", "console clear", "compile"),
+
+            // ── console ──────────────────────────────────────────────────
+            new("console dump [--type <type>] [--limit <n>]", "Dump Unity logs as structured JSON (type: error|warning|log)", "console dump", "console"),
+            new("console tail [--follow]", "Stream console log output", "console tail", "console"),
+            new("console clear", "Clear the Unity console log", "console clear", "console"),
+
+            // ── playmode ─────────────────────────────────────────────────
+            new("playmode start", "Enter Play Mode", "playmode start", "playmode"),
+            new("playmode stop", "Exit Play Mode and restore edit-time state", "playmode stop", "playmode"),
+            new("playmode pause", "Pause the active Play Mode session", "playmode pause", "playmode"),
+            new("playmode resume", "Resume a paused Play Mode session", "playmode resume", "playmode"),
+            new("playmode step", "Advance the game by exactly one frame (must be paused)", "playmode step", "playmode"),
 
             // ── scene ─────────────────────────────────────────────────────
             new("scene load <path>", "Load a scene by path (replaces current)", "scene load", "scene"),
