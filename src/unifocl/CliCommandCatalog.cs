@@ -241,7 +241,14 @@ internal static class CliCommandCatalog
             new("/profiler binary-log start <path>", "Start raw binary log (.raw) via Profiler.logFile", "/profiler binary-log start", "profiling"),
             new("/profiler binary-log stop", "Stop raw binary logging", "/profiler binary-log stop", "profiling"),
             new("/profiler annotate session <json>", "Emit session metadata into the profiler stream", "/profiler annotate session", "profiling"),
-            new("/profiler annotate frame <json>", "Emit frame metadata into the profiler stream", "/profiler annotate frame", "profiling")
+            new("/profiler annotate frame <json>", "Emit frame metadata into the profiler stream", "/profiler annotate frame", "profiling"),
+
+            // ── runtime ──────────────────────────────────────────────────────
+            new("/runtime target list", "List available runtime targets (Editor PlayMode, devices, standalone builds)", "/runtime target list", "runtime"),
+            new("/runtime attach <target>", "Attach to a runtime target by address (e.g. editor:playmode, android:pixel-7)", "/runtime attach", "runtime"),
+            new("/runtime status", "Show connection status of the attached runtime target", "/runtime status", "runtime"),
+            new("/runtime detach", "Disconnect from the current runtime target", "/runtime detach", "runtime"),
+            new("/runtime", "Runtime operations: target, attach, status, detach, query, exec", "/runtime", "runtime")
         ];
     }
 
@@ -401,7 +408,13 @@ internal static class CliCommandCatalog
             new("prefab apply <idx>", "Push instance overrides back to source Prefab Asset", "prefab apply", "prefab"),
             new("prefab revert <idx>", "Discard local overrides, revert to source Prefab Asset", "prefab revert", "prefab"),
             new("prefab unpack <idx> [--completely]", "Break prefab connection, turn into regular GameObject", "prefab unpack", "prefab"),
-            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant", "prefab")
+            new("prefab variant <source-path> <new-path>", "Create Prefab Variant inheriting from base prefab", "prefab variant", "prefab"),
+
+            // ── runtime ──────────────────────────────────────────────────────
+            new("runtime target list", "List available runtime targets (devices, builds, editor playmode)", "runtime target list", "runtime"),
+            new("runtime attach <target>", "Attach to a runtime target (e.g. editor:playmode, android:pixel-7)", "runtime attach", "runtime"),
+            new("runtime status", "Show runtime connection status", "runtime status", "runtime"),
+            new("runtime detach", "Disconnect from runtime target", "runtime detach", "runtime")
         ];
     }
 

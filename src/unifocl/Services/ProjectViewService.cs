@@ -228,6 +228,11 @@ internal sealed partial class ProjectViewService
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleClipCommandAsync(session, tokens, outputs);
         }
+        else if (tokens[0].Equals("runtime", StringComparison.OrdinalIgnoreCase))
+        {
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+            handled = await HandleRuntimeCommandAsync(tokens, session, outputs);
+        }
 
         if (!handled)
         {

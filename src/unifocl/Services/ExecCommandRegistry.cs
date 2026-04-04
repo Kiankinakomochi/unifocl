@@ -88,6 +88,11 @@ internal sealed class ExecCommandRegistry
         ["addressable.bulk.add"]       = ExecRiskLevel.SafeWrite,
         ["addressable.bulk.label"]     = ExecRiskLevel.SafeWrite,
         ["addressable.analyze"]        = ExecRiskLevel.SafeRead,
+        // runtime target operations
+        ["runtime.target.list"] = ExecRiskLevel.SafeRead,
+        ["runtime.attach"]      = ExecRiskLevel.SafeWrite,
+        ["runtime.status"]      = ExecRiskLevel.SafeRead,
+        ["runtime.detach"]      = ExecRiskLevel.SafeWrite,
         // tag operations
         ["tag.list"]   = ExecRiskLevel.SafeRead,
         ["tag.add"]    = ExecRiskLevel.SafeWrite,

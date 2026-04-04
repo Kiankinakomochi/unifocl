@@ -19,6 +19,7 @@ unifocl is an independent project and is not associated with, affiliated with, o
 - **Dual-Interface:** A clean, keyboard-driven Spectre.Console TUI for humans, alongside a stateless, headless execution path for multi-agent workflows.
 - **Debug Artifact Reports:** Collect tiered snapshots of your project state—console logs, validation results, profiler data, recorder output—into a single structured JSON file. Feed it to agents for automated bug reports or pipe it straight to Jira/Wrike.
 - **Zero-Touch Compilation:** Deploy new editor scripts and let unifocl trigger Unity recompilation automatically—no manual window focusing required.
+- **Runtime Operations:** Control running player instances—Editor PlayMode, standalone builds, mobile devices—through the same typed, risk-classified interface. Attach to targets, execute queries, and extend the surface with your own `[UnifoclRuntimeCommand]` methods packaged into lazy-loadable categories.
 
 ## Installation
 

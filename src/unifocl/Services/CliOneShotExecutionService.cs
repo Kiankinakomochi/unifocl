@@ -872,6 +872,31 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger.StartsWith("/runtime", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            var runtimeInput = input.Length > "/runtime".Length
+                ? $"runtime {input["/runtime".Length..].Trim()}"
+                : "runtime";
+            var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                runtimeInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+            if (!handled)
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]runtime[/]: unsupported /runtime command");
+            }
+
+            return;
+        }
+
         if (matched.Trigger == "/mutate")
         {
             if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
