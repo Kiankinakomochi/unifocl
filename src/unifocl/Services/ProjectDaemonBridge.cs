@@ -79,6 +79,7 @@ internal sealed class ProjectDaemonBridge
             "hierarchy-find" => RequireBridgeMode("hierarchy-find"),
             "settings-inspect" => RequireBridgeMode("settings-inspect"),
             "console-clear" => RequireBridgeMode("console-clear"),
+            "time-scale" => RequireBridgeMode("time-scale"),
             "scene-load" => RequireBridgeMode("scene-load"),
             "scene-add" => RequireBridgeMode("scene-add"),
             "scene-unload" => RequireBridgeMode("scene-unload"),

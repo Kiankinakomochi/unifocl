@@ -177,6 +177,9 @@ internal static class CliCommandCatalog
             new("/scene remove <path>", "Remove a scene from the loaded set", "/scene remove", "scene"),
             new("/hierarchy snapshot", "Dump the current scene hierarchy as structured data (same as /dump hierarchy)", "/hierarchy snapshot", "scene"),
 
+            // ── time ─────────────────────────────────────────────────────
+            new("/time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion, 2.0 for fast-forward)", "/time scale", "time"),
+
             // ── compile ───────────────────────────────────────────────────
             new("/compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile request", "compile"),
             new("/compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile status", "compile"),
@@ -317,6 +320,9 @@ internal static class CliCommandCatalog
             new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create", "asset"),
             new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
             new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
+
+            // ── time ─────────────────────────────────────────────────────
+            new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
