@@ -157,6 +157,8 @@ internal static class CliCommandCatalog
             new("/asset create <type> <path>", "Create a new asset of the given type at path", "/asset create", "asset"),
             new("/asset create-script <name> <path>", "Create a new C# script at path", "/asset create-script", "asset"),
             new("/asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model (SafeRead)", "/asset describe", "asset"),
+            new("/asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer (SafeRead)", "/asset get", "asset"),
+            new("/asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer (SafeWrite)", "/asset set", "asset"),
 
             // ── animator ──────────────────────────────────────────────────
             new("/animator param add <asset-path> <name> <type>", "Add a parameter to an AnimatorController (type: float|int|bool|trigger)", "/animator param add", "animation"),
@@ -346,6 +348,8 @@ internal static class CliCommandCatalog
             new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create", "asset"),
             new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
             new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
+            new("asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer", "asset get", "asset"),
+            new("asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer", "asset set", "asset"),
 
             // ── time ─────────────────────────────────────────────────────
             new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),

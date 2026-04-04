@@ -410,6 +410,8 @@ namespace UniFocl.EditorBridge
                 "query-mk-types" => Task.FromResult(ExecuteQueryMkTypes()),
                 "query-hierarchy-mk-types" => Task.FromResult(ExecuteQueryHierarchyMkTypes()),
                 "query-component-types" => Task.FromResult(ExecuteQueryComponentTypes()),
+                "asset-get" => Task.FromResult(ExecuteAssetGet(request)),
+                "asset-set" => Task.FromResult(ExecuteAssetSet(request)),
                 "tag-list" => Task.FromResult(ExecuteTagList()),
                 "tag-add" => Task.FromResult(ExecuteTagAdd(request)),
                 "tag-remove" => Task.FromResult(ExecuteTagRemove(request)),
