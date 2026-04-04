@@ -4,6 +4,16 @@ internal sealed class ExecCommandRegistry
 {
     private static readonly Dictionary<string, ExecRiskLevel> Operations = new(StringComparer.OrdinalIgnoreCase)
     {
+        // animator operations
+        ["animator.param.add"]        = ExecRiskLevel.SafeWrite,
+        ["animator.param.remove"]     = ExecRiskLevel.DestructiveWrite,
+        ["animator.state.add"]        = ExecRiskLevel.SafeWrite,
+        ["animator.transition.add"]   = ExecRiskLevel.SafeWrite,
+        // clip operations
+        ["clip.config"]               = ExecRiskLevel.SafeWrite,
+        ["clip.event.add"]            = ExecRiskLevel.SafeWrite,
+        ["clip.event.clear"]          = ExecRiskLevel.DestructiveWrite,
+        ["clip.curve.clear"]          = ExecRiskLevel.DestructiveWrite,
         // asset operations
         ["asset.rename"]        = ExecRiskLevel.DestructiveWrite,
         ["asset.remove"]        = ExecRiskLevel.DestructiveWrite,
@@ -860,6 +870,171 @@ internal sealed class ExecCommandRegistry
                 return true;
             }
 
+            // ── animator operations ────────────────────────────────────────
+            case "animator.param.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var name = GetString(req.Args, "name");
+                var type = GetString(req.Args, "type");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(type))
+                {
+                    validationError = "animator.param.add requires args.assetPath, args.name, and args.type (float|int|bool|trigger)";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { name, type });
+                var base_ = new ProjectCommandRequestDto("animator-param-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "animator.param.remove":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "animator.param.remove requires args.assetPath and args.name";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { name });
+                var base_ = new ProjectCommandRequestDto("animator-param-remove", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "animator.state.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "animator.state.add requires args.assetPath and args.name";
+                    return false;
+                }
+
+                var layer = GetInt(req.Args, "layer") ?? 0;
+                var content = JsonSerializer.Serialize(new { name, layer });
+                var base_ = new ProjectCommandRequestDto("animator-state-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "animator.transition.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var fromState = GetString(req.Args, "fromState");
+                var toState = GetString(req.Args, "toState");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(fromState) || string.IsNullOrWhiteSpace(toState))
+                {
+                    validationError = "animator.transition.add requires args.assetPath, args.fromState, and args.toState";
+                    return false;
+                }
+
+                var layer = GetInt(req.Args, "layer") ?? 0;
+                var content = JsonSerializer.Serialize(new { fromState, toState, layer });
+                var base_ = new ProjectCommandRequestDto("animator-transition-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            // ── clip operations ────────────────────────────────────────────
+            case "clip.config":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "clip.config requires args.assetPath";
+                    return false;
+                }
+
+                var loopTime = GetBool(req.Args, "loopTime");
+                var loopPose = GetBool(req.Args, "loopPose");
+                if (loopTime == null && loopPose == null)
+                {
+                    validationError = "clip.config requires at least one of args.loopTime or args.loopPose";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new
+                {
+                    loopTime = loopTime ?? false,
+                    loopPose = loopPose ?? false,
+                    setLoopTime = loopTime != null,
+                    setLoopPose = loopPose != null
+                });
+                var base_ = new ProjectCommandRequestDto("clip-config", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "clip.event.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var functionName = GetString(req.Args, "functionName");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(functionName))
+                {
+                    validationError = "clip.event.add requires args.assetPath and args.functionName";
+                    return false;
+                }
+
+                var time = GetFloat(req.Args, "time") ?? 0f;
+                var stringParam = GetString(req.Args, "string");
+                var floatParam = GetFloat(req.Args, "float");
+                var intParam = GetInt(req.Args, "int");
+                var content = JsonSerializer.Serialize(new
+                {
+                    time,
+                    functionName,
+                    stringParam = stringParam ?? string.Empty,
+                    floatParam = floatParam ?? 0f,
+                    intParam = intParam ?? 0,
+                    hasStringParam = stringParam != null,
+                    hasFloatParam = floatParam != null,
+                    hasIntParam = intParam != null
+                });
+                var base_ = new ProjectCommandRequestDto("clip-event-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "clip.event.clear":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "clip.event.clear requires args.assetPath";
+                    return false;
+                }
+
+                var base_ = new ProjectCommandRequestDto("clip-event-clear", assetPath, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "clip.curve.clear":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "clip.curve.clear requires args.assetPath";
+                    return false;
+                }
+
+                var base_ = new ProjectCommandRequestDto("clip-curve-clear", assetPath, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
             // ── tag operations ──────────────────────────────────────────────
 
             case "tag.list":
@@ -996,6 +1171,37 @@ internal sealed class ExecCommandRegistry
         if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.Number)
         {
             return prop.GetInt32();
+        }
+
+        return null;
+    }
+
+    private static float? GetFloat(JsonElement? element, string key)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetSingle();
+        }
+
+        return null;
+    }
+
+    private static bool? GetBool(JsonElement? element, string key)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop))
+        {
+            if (prop.ValueKind == JsonValueKind.True) return true;
+            if (prop.ValueKind == JsonValueKind.False) return false;
         }
 
         return null;

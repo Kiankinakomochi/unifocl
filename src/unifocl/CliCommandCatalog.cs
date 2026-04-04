@@ -157,6 +157,18 @@ internal static class CliCommandCatalog
             new("/asset create-script <name> <path>", "Create a new C# script at path", "/asset create-script", "asset"),
             new("/asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model (SafeRead)", "/asset describe", "asset"),
 
+            // ── animator ──────────────────────────────────────────────────
+            new("/animator param add <asset-path> <name> <type>", "Add a parameter to an AnimatorController (type: float|int|bool|trigger)", "/animator param add", "animation"),
+            new("/animator param remove <asset-path> <name>", "Remove a parameter from an AnimatorController by name", "/animator param remove", "animation"),
+            new("/animator state add <asset-path> <name> [--layer <n>]", "Add a new state to the target layer's root state machine (layer 0 by default)", "/animator state add", "animation"),
+            new("/animator transition add <asset-path> <from-state> <to-state> [--layer <n>]", "Create a transition between two states; use AnyState as <from-state> to route from the Any state", "/animator transition add", "animation"),
+
+            // ── clip ──────────────────────────────────────────────────────
+            new("/clip config <asset-path> [--loop-time <bool>] [--loop-pose <bool>]", "Modify loop settings of an AnimationClip", "/clip config", "animation"),
+            new("/clip event add <asset-path> <time> <function-name> [--string <val>|--float <val>|--int <val>]", "Insert an AnimationEvent at the specified time (seconds)", "/clip event add", "animation"),
+            new("/clip event clear <asset-path>", "Remove all animation events from a clip (DestructiveWrite)", "/clip event clear", "animation"),
+            new("/clip curve clear <asset-path>", "Remove all property curves/keyframes from a clip (DestructiveWrite)", "/clip curve clear", "animation"),
+
             // ── scene ─────────────────────────────────────────────────────
             new("/scene load <path>", "Load a scene by path (replaces current)", "/scene load", "scene"),
             new("/scene add <path>", "Additively load a scene by path", "/scene add", "scene"),
@@ -316,6 +328,18 @@ internal static class CliCommandCatalog
             new("scene unload <path>", "Unload an additively-loaded scene", "scene unload", "scene"),
             new("scene remove <path>", "Remove a scene from the loaded set", "scene remove", "scene"),
             new("hierarchy snapshot", "Dump the current scene hierarchy as structured data", "hierarchy snapshot", "scene"),
+
+            // ── animator ──────────────────────────────────────────────────
+            new("animator param add <asset-path> <name> <type>", "Add a parameter to an AnimatorController (type: float|int|bool|trigger)", "animator param add", "animation"),
+            new("animator param remove <asset-path> <name>", "Remove a parameter from an AnimatorController by name", "animator param remove", "animation"),
+            new("animator state add <asset-path> <name> [--layer <n>]", "Add a new state to the target layer's root state machine (layer 0 by default)", "animator state add", "animation"),
+            new("animator transition add <asset-path> <from-state> <to-state> [--layer <n>]", "Create a transition between two states; use AnyState as <from-state> to route from the Any state", "animator transition add", "animation"),
+
+            // ── clip ──────────────────────────────────────────────────────
+            new("clip config <asset-path> [--loop-time <bool>] [--loop-pose <bool>]", "Modify loop settings of an AnimationClip", "clip config", "animation"),
+            new("clip event add <asset-path> <time> <function-name> [--string <val>|--float <val>|--int <val>]", "Insert an AnimationEvent at the specified time (seconds)", "clip event add", "animation"),
+            new("clip event clear <asset-path>", "Remove all animation events from a clip", "clip event clear", "animation"),
+            new("clip curve clear <asset-path>", "Remove all property curves/keyframes from a clip", "clip curve clear", "animation"),
 
             // ── prefab ────────────────────────────────────────────────────
             new("prefab create <idx|name> <asset-path>", "Convert scene GameObject to new Prefab Asset on disk", "prefab create", "prefab"),

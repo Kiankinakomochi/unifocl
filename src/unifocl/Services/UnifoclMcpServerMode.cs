@@ -130,11 +130,11 @@ public static class UnifoclCommandLookupTools
     [McpServerTool, Description(
         "Lists unifocl commands. Defaults to 'core' category for a lean response. " +
         "Use category='all' to see everything, or filter by specific category: " +
-        "core, setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab.")]
+        "core, setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation.")]
     public static CommandLookupResult ListCommands(
         [Description("Command scope filter: root, project, inspector, or all.")] string scope = "all",
         [Description("Category filter: core (default, essential commands), or a specific domain: " +
-                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, setup. " +
+                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation, setup. " +
                      "Use 'all' to list every command across all categories.")]
         string category = "core",
         [Description("Optional case-insensitive search across trigger/signature/description.")] string? query = null,

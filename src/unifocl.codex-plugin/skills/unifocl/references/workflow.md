@@ -20,7 +20,7 @@ Standard session pattern:
 4. Discover commands
    - `ListCommands(category="all")` for full catalog, or filter by category:
      core (default), setup, build, validate, diag, test, upm, addressable, asset,
-     scene, compile, eval, profiling, prefab.
+     scene, compile, eval, profiling, prefab, animation.
    - `LookupCommand(command="...")` for a specific command's signature.
 
 5. Mutate safely

@@ -23,3 +23,6 @@ src/unifocl.unity/EditorScripts/Plugins/*.dll
 # local machine bootstrap artifacts
 local.config.json
 .local/
+
+# Claude Code local settings
+.claude/settings.local.json

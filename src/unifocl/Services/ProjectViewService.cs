@@ -192,6 +192,32 @@ internal sealed partial class ProjectViewService
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandlePrefabCommandAsync(session, tokens, outputs, daemonControlService, daemonRuntime);
         }
+        else if (tokens[0].Equals("animator", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+            handled = await HandleAnimatorCommandAsync(session, tokens, outputs);
+        }
+        else if (tokens[0].Equals("clip", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!EnsureVcsSetupForMutation(session, outputs))
+            {
+                handled = true;
+                ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                RenderFrame(session.ProjectView);
+                return true;
+            }
+
+            await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+            handled = await HandleClipCommandAsync(session, tokens, outputs);
+        }
 
         if (!handled)
         {

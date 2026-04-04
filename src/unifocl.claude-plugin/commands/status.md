@@ -24,7 +24,7 @@ Steps:
    `unifocl exec "/doctor" --agentic --format json`
 
 MCP server tools available when daemon is up:
-  - `ListCommands(category, scope, query, limit)` — discover commands; category filter: core (default), setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, or 'all'
+  - `ListCommands(category, scope, query, limit)` — discover commands; category filter: core (default), setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation, or 'all'
   - `LookupCommand(command, scope)` — exact or fuzzy command lookup with signature and description
   - `GetMutateSchema()` — full /mutate op schema with all supported fields and types
   - `ValidateMutateBatch(opsJson)` — pre-validate a mutation batch without executing

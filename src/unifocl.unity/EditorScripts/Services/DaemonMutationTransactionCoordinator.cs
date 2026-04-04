@@ -43,7 +43,15 @@ namespace UniFocl.EditorBridge
                    || action.Equals("console-clear", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("hierarchy-duplicate", StringComparison.OrdinalIgnoreCase)
                    || action.Equals("addressables-cli", StringComparison.OrdinalIgnoreCase)
-                   || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
+                   || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("animator-param-add", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("animator-param-remove", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("animator-state-add", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("animator-transition-add", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("clip-config", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("clip-event-add", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("clip-event-clear", StringComparison.OrdinalIgnoreCase)
+                   || action.Equals("clip-curve-clear", StringComparison.OrdinalIgnoreCase);
         }
 
         public static MutationTransactionDecision ValidateHierarchyIntent(string action, MutationIntentEnvelope intent)
