@@ -134,7 +134,7 @@ public static class UnifoclCommandLookupTools
     public static CommandLookupResult ListCommands(
         [Description("Command scope filter: root, project, inspector, or all.")] string scope = "all",
         [Description("Category filter: core (default, essential commands), or a specific domain: " +
-                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, setup. " +
+                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animator, clip, setup. " +
                      "Use 'all' to list every command across all categories.")]
         string category = "core",
         [Description("Optional case-insensitive search across trigger/signature/description.")] string? query = null,

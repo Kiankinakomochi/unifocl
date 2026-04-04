@@ -683,6 +683,56 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger.StartsWith("/animator", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            var animatorInput = input.Length > "/animator".Length
+                ? $"animator {input["/animator".Length..].Trim()}"
+                : "animator";
+            var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                animatorInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+            if (!handled)
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]animator[/]: unsupported /animator command");
+            }
+
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/clip", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            var clipInput = input.Length > "/clip".Length
+                ? $"clip {input["/clip".Length..].Trim()}"
+                : "clip";
+            var handled = await projectCommandRouterService.TryHandleProjectCommandAsync(
+                clipInput,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliLogService.AppendLog(streamLog, line)).WaitAsync(cancellationToken);
+            if (!handled)
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]clip[/]: unsupported /clip command");
+            }
+
+            return;
+        }
+
         if (matched.Trigger == "/mutate")
         {
             if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
