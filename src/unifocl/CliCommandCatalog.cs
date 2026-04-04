@@ -142,6 +142,12 @@ internal static class CliCommandCatalog
             new("/animator state add <asset-path> <name> [--layer <n>]", "Add a new state to the target layer's root state machine (layer 0 by default)", "/animator state add", "animator"),
             new("/animator transition add <asset-path> <from-state> <to-state> [--layer <n>]", "Create a transition between two states; use AnyState as <from-state> to route from the Any state", "/animator transition add", "animator"),
 
+            // ── clip ──────────────────────────────────────────────────────
+            new("/clip config <asset-path> [--loop-time <bool>] [--loop-pose <bool>]", "Modify loop settings of an AnimationClip", "/clip config", "clip"),
+            new("/clip event add <asset-path> <time> <function-name> [--string <val>|--float <val>|--int <val>]", "Insert an AnimationEvent at the specified time (seconds)", "/clip event add", "clip"),
+            new("/clip event clear <asset-path>", "Remove all animation events from a clip (DestructiveWrite)", "/clip event clear", "clip"),
+            new("/clip curve clear <asset-path>", "Remove all property curves/keyframes from a clip (DestructiveWrite)", "/clip curve clear", "clip"),
+
             // ── scene ─────────────────────────────────────────────────────
             new("/scene load <path>", "Load a scene by path (replaces current)", "/scene load", "scene"),
             new("/scene add <path>", "Additively load a scene by path", "/scene add", "scene"),
@@ -288,6 +294,12 @@ internal static class CliCommandCatalog
             new("animator param remove <asset-path> <name>", "Remove a parameter from an AnimatorController by name", "animator param remove", "animator"),
             new("animator state add <asset-path> <name> [--layer <n>]", "Add a new state to the target layer's root state machine (layer 0 by default)", "animator state add", "animator"),
             new("animator transition add <asset-path> <from-state> <to-state> [--layer <n>]", "Create a transition between two states; use AnyState as <from-state> to route from the Any state", "animator transition add", "animator"),
+
+            // ── clip ──────────────────────────────────────────────────────
+            new("clip config <asset-path> [--loop-time <bool>] [--loop-pose <bool>]", "Modify loop settings of an AnimationClip", "clip config", "clip"),
+            new("clip event add <asset-path> <time> <function-name> [--string <val>|--float <val>|--int <val>]", "Insert an AnimationEvent at the specified time (seconds)", "clip event add", "clip"),
+            new("clip event clear <asset-path>", "Remove all animation events from a clip", "clip event clear", "clip"),
+            new("clip curve clear <asset-path>", "Remove all property curves/keyframes from a clip", "clip curve clear", "clip"),
 
             // ── prefab ────────────────────────────────────────────────────
             new("prefab create <idx|name> <asset-path>", "Convert scene GameObject to new Prefab Asset on disk", "prefab create", "prefab"),

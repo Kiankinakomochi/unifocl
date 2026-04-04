@@ -9,6 +9,11 @@ internal sealed class ExecCommandRegistry
         ["animator.param.remove"]     = ExecRiskLevel.DestructiveWrite,
         ["animator.state.add"]        = ExecRiskLevel.SafeWrite,
         ["animator.transition.add"]   = ExecRiskLevel.SafeWrite,
+        // clip operations
+        ["clip.config"]               = ExecRiskLevel.SafeWrite,
+        ["clip.event.add"]            = ExecRiskLevel.SafeWrite,
+        ["clip.event.clear"]          = ExecRiskLevel.DestructiveWrite,
+        ["clip.curve.clear"]          = ExecRiskLevel.DestructiveWrite,
         // asset operations
         ["asset.rename"]        = ExecRiskLevel.DestructiveWrite,
         ["asset.remove"]        = ExecRiskLevel.DestructiveWrite,
@@ -928,6 +933,98 @@ internal sealed class ExecCommandRegistry
                 return true;
             }
 
+            // ── clip operations ────────────────────────────────────────────
+            case "clip.config":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "clip.config requires args.assetPath";
+                    return false;
+                }
+
+                var loopTime = GetBool(req.Args, "loopTime");
+                var loopPose = GetBool(req.Args, "loopPose");
+                if (loopTime == null && loopPose == null)
+                {
+                    validationError = "clip.config requires at least one of args.loopTime or args.loopPose";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new
+                {
+                    loopTime = loopTime ?? false,
+                    loopPose = loopPose ?? false,
+                    setLoopTime = loopTime != null,
+                    setLoopPose = loopPose != null
+                });
+                var base_ = new ProjectCommandRequestDto("clip-config", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "clip.event.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var functionName = GetString(req.Args, "functionName");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(functionName))
+                {
+                    validationError = "clip.event.add requires args.assetPath and args.functionName";
+                    return false;
+                }
+
+                var time = GetFloat(req.Args, "time") ?? 0f;
+                var stringParam = GetString(req.Args, "string");
+                var floatParam = GetFloat(req.Args, "float");
+                var intParam = GetInt(req.Args, "int");
+                var content = JsonSerializer.Serialize(new
+                {
+                    time,
+                    functionName,
+                    stringParam = stringParam ?? string.Empty,
+                    floatParam = floatParam ?? 0f,
+                    intParam = intParam ?? 0,
+                    hasStringParam = stringParam != null,
+                    hasFloatParam = floatParam != null,
+                    hasIntParam = intParam != null
+                });
+                var base_ = new ProjectCommandRequestDto("clip-event-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "clip.event.clear":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "clip.event.clear requires args.assetPath";
+                    return false;
+                }
+
+                var base_ = new ProjectCommandRequestDto("clip-event-clear", assetPath, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "clip.curve.clear":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                if (string.IsNullOrWhiteSpace(assetPath))
+                {
+                    validationError = "clip.curve.clear requires args.assetPath";
+                    return false;
+                }
+
+                var base_ = new ProjectCommandRequestDto("clip-curve-clear", assetPath, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
             // session.* and hierarchy.snapshot are handled by ExecOperationRouter directly
             case "hierarchy.snapshot":
             case "session.open":
@@ -974,6 +1071,37 @@ internal sealed class ExecCommandRegistry
         if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.Number)
         {
             return prop.GetInt32();
+        }
+
+        return null;
+    }
+
+    private static float? GetFloat(JsonElement? element, string key)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetSingle();
+        }
+
+        return null;
+    }
+
+    private static bool? GetBool(JsonElement? element, string key)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetPropertyWithAliases(element.Value, key, out var prop))
+        {
+            if (prop.ValueKind == JsonValueKind.True) return true;
+            if (prop.ValueKind == JsonValueKind.False) return false;
         }
 
         return null;

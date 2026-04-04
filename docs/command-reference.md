@@ -55,6 +55,10 @@ These commands manage your session, project loading, and configuration. In the i
 | `/animator param remove <asset-path> <name>` |  | Remove an existing parameter from an AnimatorController by name. (DestructiveWrite) |
 | `/animator state add <asset-path> <name> [--layer <n>]` |  | Add a new state to the target layer's root state machine (layer 0 by default). (SafeWrite) |
 | `/animator transition add <asset-path> <from-state> <to-state> [--layer <n>]` |  | Create a transition between two states in the specified layer. Use `AnyState` as `<from-state>` to route from the Any State. (SafeWrite) |
+| `/clip config <asset-path> [--loop-time <bool>] [--loop-pose <bool>]` |  | Modify loop settings of an AnimationClip (`loopTime` / `loopPose`). At least one flag required. (SafeWrite) |
+| `/clip event add <asset-path> <time> <function-name> [--string <val>\|--float <val>\|--int <val>]` |  | Insert an `AnimationEvent` at the specified time (seconds). Optionally set one parameter value. (SafeWrite) |
+| `/clip event clear <asset-path>` |  | Remove all animation events from a clip. (DestructiveWrite) |
+| `/clip curve clear <asset-path>` |  | Remove all property curves and keyframes from a clip. (DestructiveWrite) |
 | `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
 | `/version` |  | Show CLI and protocol version. |
@@ -191,6 +195,10 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `animator param remove <asset-path> <name>` |  | Remove a parameter from an AnimatorController by name. |
 | `animator state add <asset-path> <name> [--layer <n>]` |  | Add a new state to the target layer's root state machine (layer 0 by default). |
 | `animator transition add <asset-path> <from-state> <to-state> [--layer <n>]` |  | Create a transition between two states. Use `AnyState` as `<from-state>` for Any State transitions. |
+| `clip config <asset-path> [--loop-time <bool>] [--loop-pose <bool>]` |  | Modify loop settings of an AnimationClip. At least one of `loopTime` / `loopPose` required. |
+| `clip event add <asset-path> <time> <function-name> [--string <val>\|--float <val>\|--int <val>]` |  | Insert an `AnimationEvent` at the specified time (seconds). |
+| `clip event clear <asset-path>` |  | Remove all animation events from a clip. |
+| `clip curve clear <asset-path>` |  | Remove all property curves and keyframes from a clip. |
 
 ## 5. Profiling (Lazy-Loaded Category)
 
