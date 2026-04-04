@@ -804,6 +804,8 @@ These commands manage your session, project loading, and configuration. In the i
 | `/asset create <type> <path>` |  | Create a new asset of the given type at path. |
 | `/asset create-script <name> <path>` |  | Create a new C# script at path. |
 | `/asset describe <path> [--engine blip\|clip]` |  | Describe asset visually using a local BLIP/CLIP model. (SafeRead) See [§7](#7-asset-describe-local-vision). |
+| `/asset get <path> [<field>]` |  | Dump all visible serialized fields (name, type, value) on a ScriptableObject or asset importer. Omit `<field>` for all fields; supply `<field>` to read a single one. (SafeRead) |
+| `/asset set <path> <field> <value>` |  | Write a serialized field on a ScriptableObject or asset importer. Supported types: `bool`, `int`, `float`, `string`, `Vector2/3/4`, `Color`, `Enum`. Saves via `AssetDatabase.SaveAssets()` (`.asset`) or `ImportAsset(...ForceUpdate)` (importers). (SafeWrite) |
 | `/console <dump\|tail\|clear>` |  | Unity console log commands. |
 | `/console dump [--type <type>] [--limit <n>]` |  | Dump Unity log entries as structured JSON. Filter by `type` (`error`, `warning`, `log`). Default limit 100. (SafeRead) |
 | `/console tail [--follow]` |  | Stream recent console log output. Primarily for TUI usage. (SafeRead) |
@@ -899,6 +901,8 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `go duplicate <idx> [name]` |  | Duplicate a hierarchy GameObject. |
 | `asset find <query>` |  | Project-mode fuzzy find alias for `f`. |
 | `asset duplicate <idx\|name> [new-path]` |  | Duplicate an asset in project mode. |
+| `asset get <path> [<field>]` |  | Read serialized fields from a ScriptableObject or asset importer. (SafeRead) |
+| `asset set <path> <field> <value>` |  | Write a serialized field on a ScriptableObject or asset importer. (SafeWrite) |
 | `inspect [idx\|path]` |  | Enter inspector root target from inspector context. |
 | `edit <field> <value...>` | `e` | Edit serialized field value for the selected component (inspector). |
 | `component add <type>` | `comp add <type>` | Add a component to the inspected object. |
