@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.5.0 - 2026-04-04
+
+### Added
+- **Debug artifact system**: Tiered debug report collection (`/debug-artifact prep`, `/debug-artifact collect`) that snapshots project state into structured JSON for agents, CI, and issue-tracker integration.
+  - **4 tiers**: T0 (environment), T1 (+logs/validation), T2 (+hierarchy/build/profiler summary), T3 (+detailed profiler/recorder/memory snapshot).
+  - **Prep command** (PrivilegedExec): Clears console, starts profiler (T2+, deep for T3), starts recorder (T3). Returns next-step instructions.
+  - **Collect command** (SafeRead): Snapshots current state, writes artifact JSON to `.unifocl-runtime/artifacts/`. Supports `ticketMeta` for issue-tracker pre-population.
+  - **ExecV2 operations**: `debug-artifact.prep` and `debug-artifact.collect` with tier and ticketMeta args.
+  - **JSON Schema**: `docs/schemas/debug-artifact.schema.json` defines the full artifact format.
+  - **Agent workflow guide**: New `debug_artifact` section in `get_agent_workflow_guide` with prep→playmode→collect sequence and exec examples.
+- **Interactive CLI handlers for runtime commands**: `/console`, `/profiler`, `/recorder`, `/playmode`, `/time scale`, and `/compile` commands are now fully executable in the interactive REPL and one-shot exec path (previously only available via MCP or listed in help without handlers).
+  - `RuntimeCommandService` dispatches console/playmode/time/compile via `POST /project/command` and profiler/recorder via `POST /mcp/unifocl_project_command`.
+- **MCP static tests**: 20+ new xUnit tests covering debug artifact registry, CLI catalog, workflow guide sections, and runtime command registration/risk levels.
+
+### Officialized
+- Officialized `3.5.0` by closing the development cycle suffix.
+
 ## 3.4.0 - 2026-04-04
 
 ### Added

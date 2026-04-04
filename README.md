@@ -17,6 +17,7 @@ unifocl is an independent project and is not associated with, affiliated with, o
 - **Safe, Deterministic Mutations:** Never let an AI break your project. Every single mutation command features mandatory dry-run capabilities and transactional safety (Undo/Redo integration), ensuring predictability before anything touches the disk.
 - **Instantly Extensible:** Need a custom tool for your agent? Add the `[UnifoclCommand]` attribute to your C# editor methods. unifocl automatically discovers them and exposes them as live MCP tools with built-in dry-run sandboxing.
 - **Dual-Interface:** A clean, keyboard-driven Spectre.Console TUI for humans, alongside a stateless, headless execution path for multi-agent workflows.
+- **Debug Artifact Reports:** Collect tiered snapshots of your project state—console logs, validation results, profiler data, recorder output—into a single structured JSON file. Feed it to agents for automated bug reports or pipe it straight to Jira/Wrike.
 - **Zero-Touch Compilation:** Deploy new editor scripts and let unifocl trigger Unity recompilation automatically—no manual window focusing required.
 
 ## Installation
@@ -185,6 +186,7 @@ To keep this README clean, detailed technical specifications and command lists h
 | [Validate & Build Workflow](docs/validate-build-workflow.md) | Project validation checks and build workflow commands. |
 | [Test Orchestration](docs/test-orchestration.md) | Unity test runner integration (EditMode/PlayMode). |
 | [Project Diagnostics](docs/project-diagnostics.md) | Assembly graphs, scene deps, compile errors, and other read-only introspection. |
+| [Debug Artifact Workflow](docs/debug-artifact-workflow.md) | Tiered debug report collection (prep → playmode → collect) for agents and CI. |
 
 ## Contributing & License
 

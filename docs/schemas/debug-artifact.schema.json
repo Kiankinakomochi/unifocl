@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unifocl.dev/schemas/debug-artifact/1.0",
+  "title": "Unifocl Debug Artifact",
+  "description": "Tiered debug report for Unity projects. Bridges unifocl CLI/agent data to issue trackers and report generators.",
+  "type": "object",
+  "required": ["artifactVersion", "collectedAtUtc", "tier", "environment"],
+  "properties": {
+    "artifactVersion": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version."
+    },
+    "collectedAtUtc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of collection."
+    },
+    "tier": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "description": "Collection depth. 0=environment, 1=+logs/validation, 2=+dumps/perf-summary, 3=+detailed-perf/media."
+    },
+    "collectionDurationMs": {
+      "type": "number",
+      "description": "Wall-clock milliseconds spent collecting."
+    },
+    "ticketMeta": {
+      "type": "object",
+      "description": "Stub for issue-tracker integration. Agents fill this after analyzing the artifact.",
+      "properties": {
+        "title": { "type": "string", "description": "Issue title / summary line." },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "major", "minor", "trivial"],
+          "description": "Issue severity."
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Labels / tags for the issue."
+        },
+        "repro": {
+          "type": "string",
+          "description": "Reproduction steps (free-form text)."
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "T0 — always collected. Project and editor state.",
+      "properties": {
+        "settings": {
+          "description": "PlayerSettings / build config. Source: `settings inspect`."
+        },
+        "compileStatus": {
+          "description": "Last compilation result. Source: `compile.status`."
+        }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "description": "T1 — console and compiler output.",
+      "properties": {
+        "consoleErrors": {
+          "description": "Console log entries filtered to errors. Source: `console dump --type error --limit 500`."
+        },
+        "consoleWarnings": {
+          "description": "Console log entries filtered to warnings. Source: `console dump --type warning --limit 200`."
+        },
+        "compileErrors": {
+          "description": "Compiler messages from last pass. Source: `diag.compile-errors`."
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "description": "T1 — project validation results.",
+      "properties": {
+        "sceneList": { "description": "Source: `validate.scene-list`." },
+        "missingScripts": { "description": "Source: `validate.missing-scripts`." },
+        "packages": { "description": "Source: `validate.packages`." },
+        "buildSettings": { "description": "Source: `validate.build-settings`." },
+        "asmdef": { "description": "Source: `validate.asmdef`." },
+        "assetRefs": { "description": "Source: `validate.asset-refs`." }
+      }
+    },
+    "stateDumps": {
+      "type": "object",
+      "description": "T2 — deterministic state captures.",
+      "properties": {
+        "hierarchySnapshot": { "description": "Scene hierarchy tree. Source: `hierarchy.snapshot`." },
+        "buildReport": { "description": "Full build report. Source: `build.report`." },
+        "buildArtifactMeta": { "description": "Last build artifact metadata. Source: `build.artifact-metadata`." }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "description": "T2 (summary fields) + T3 (detail fields).",
+      "properties": {
+        "profilerInspect": { "description": "T2 — profiler state, frame range, memory. Source: `profiling.inspect`." },
+        "frameTiming": { "description": "T2 — CPU/GPU frame timing. Source: `profiling.frame_timing`." },
+        "frames": { "description": "T3 — frame range stats (CPU/GPU/FPS). Source: `profiling.frames`." },
+        "gcAlloc": { "description": "T3 — GC allocation analysis. Source: `profiling.gc_alloc`." },
+        "markers": { "description": "T3 — marker hotspot table. Source: `profiling.markers`." },
+        "exportSummaryPath": {
+          "type": "string",
+          "description": "T3 — path to exported profiler summary file. Source: `profiling.export_summary`."
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "description": "T3 — visual evidence and memory captures.",
+      "properties": {
+        "recorderStatus": { "description": "Recorder state and output path. Source: `recorder.status`." },
+        "memorySnapshotPath": {
+          "type": "string",
+          "description": "Path to memory snapshot (.snap). Source: `profiling.take_snapshot`."
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "description": "Sub-operations that failed during collection. The artifact is always produced even if some ops fail.",
+      "items": {
+        "type": "object",
+        "required": ["operation", "error"],
+        "properties": {
+          "operation": { "type": "string", "description": "The unifocl operation that failed." },
+          "error": { "type": "string", "description": "Error message." }
+        }
+      }
+    }
+  }
+}

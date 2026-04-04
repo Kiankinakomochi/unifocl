@@ -210,6 +210,11 @@ internal static class CliCommandCatalog
             new("/recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile's output, frame rate, and resolution (SafeWrite)", "/recorder config", "recorder"),
             new("/recorder switch <profile-name>", "Switch the active recorder profile (enables named profile, disables all others) (SafeWrite)", "/recorder switch", "recorder"),
 
+            // ── debug-artifact ──────────────────────────────────────────
+            new("/debug-artifact prep [--tier 0|1|2|3]", "Prepare for debug artifact collection: clears console, starts profiler (T2+), starts recorder (T3). Run before playmode.", "/debug-artifact prep", "diag"),
+            new("/debug-artifact collect [--tier 0|1|2|3]", "Collect tiered debug artifact (environment, logs, validation, profiling) as structured JSON", "/debug-artifact collect", "diag"),
+            new("/debug-artifact", "Debug artifact commands (prep, collect)", "/debug-artifact", "diag"),
+
             // ── profiling ─────────────────────────────────────────────────
             new("/profiler inspect", "Show profiler state: enabled, deep profiling, frame range, memory stats", "/profiler inspect", "profiling"),
             new("/profiler start [--deep] [--editor] [--keep-frames]", "Start profiler recording", "/profiler start", "profiling"),

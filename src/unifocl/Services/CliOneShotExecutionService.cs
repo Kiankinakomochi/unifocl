@@ -17,6 +17,7 @@ internal static class CliOneShotExecutionService
         DiagCommandService diagCommandService,
         TestCommandService testCommandService,
         TagLayerCommandService tagLayerCommandService,
+        RuntimeCommandService runtimeCommandService,
         CancellationToken cancellationToken = default)
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
@@ -222,6 +223,7 @@ internal static class CliOneShotExecutionService
                             diagCommandService,
                             testCommandService,
                             tagLayerCommandService,
+                            runtimeCommandService,
                             cancellationToken).WaitAsync(cancellationToken);
                     }
                     var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
@@ -430,6 +432,7 @@ internal static class CliOneShotExecutionService
         DiagCommandService diagCommandService,
         TestCommandService testCommandService,
         TagLayerCommandService tagLayerCommandService,
+        RuntimeCommandService runtimeCommandService,
         CancellationToken cancellationToken = default)
     {
         static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken token)
@@ -574,6 +577,113 @@ internal static class CliOneShotExecutionService
         {
             await AwaitWithCancellationAsync(
                 () => CliDumpService.HandleDumpCommandAsync(input, session, streamLog),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/debug-artifact", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                return;
+            }
+
+            var isPrep = input.Contains("prep", StringComparison.OrdinalIgnoreCase);
+            await AwaitWithCancellationAsync(
+                async () =>
+                {
+                    var tier = 1;
+                    var tierMatch = System.Text.RegularExpressions.Regex.Match(input, @"--tier\s+(\d)");
+                    if (tierMatch.Success) tier = Math.Clamp(int.Parse(tierMatch.Groups[1].Value), 0, 3);
+
+                    var projectPath = session.CurrentProjectPath!;
+                    var daemonPort = DebugArtifactService.ResolveDaemonPort(projectPath);
+                    if (daemonPort <= 0)
+                    {
+                        CliLogService.AppendLog(streamLog, "[red]error[/]: no daemon available");
+                        return;
+                    }
+
+                    var service = new DebugArtifactService();
+
+                    if (isPrep)
+                    {
+                        var prep = await service.PrepAsync(tier, daemonPort, cancellationToken);
+                        CliLogService.AppendLog(streamLog,
+                            $"[{(prep.Ok ? "green" : "yellow")}]artifact[/]: prep {(prep.Ok ? "complete" : "partial")} — " +
+                            $"console: {prep.ConsoleCleared}, profiler: {prep.ProfilerStarted}, recorder: {prep.RecorderStarted}");
+                        if (prep.Errors.Count > 0)
+                        {
+                            foreach (var err in prep.Errors)
+                                CliLogService.AppendLog(streamLog, $"[yellow]  {err.Operation}[/]: {err.Error}");
+                        }
+                        CliLogService.AppendLog(streamLog, $"[grey]next[/]: {prep.NextStep}");
+                    }
+                    else
+                    {
+                        var artifact = await service.CollectAsync(tier, daemonPort, null, cancellationToken);
+                        var outputPath = service.PersistArtifact(artifact, projectPath);
+                        CliLogService.AppendLog(streamLog,
+                            $"[green]artifact[/]: tier {tier} collected → {outputPath}");
+                        CliLogService.AppendLog(streamLog,
+                            $"[grey]  errors: {artifact.Errors.Count}, duration: {artifact.CollectionDurationMs:F0}ms[/]");
+                    }
+                },
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/console", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleConsoleCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/playmode", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandlePlaymodeCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/time", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleTimeCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/compile", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleCompileCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/profiler", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleProfilerCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/recorder", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleRecorderCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
                 cancellationToken);
             return;
         }
