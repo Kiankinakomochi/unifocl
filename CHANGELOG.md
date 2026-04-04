@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.4.0 - 2026-04-04
+
+### Added
+- **`/playmode` command suite**: 5 commands for controlling Unity Editor Play Mode — `start`, `stop`, `pause`, `resume`, `step`. Supports full ExecV2 routing with PrivilegedExec (start/stop) and SafeWrite (pause/resume/step) risk levels. Uses `EditorApplication.isPlaying`, `isPaused`, and `Step()`.
+- **`/console dump` and `/console tail` commands**: Read-only console log inspection commands (SafeRead). `dump` returns structured JSON with type/limit filters via the internal `LogEntries` API. `tail` returns the most recent 50 entries. Existing `/console clear` moved from "compile" to "console" category.
+- **`/time scale <float>` command**: Set `Time.timeScale` to speed up or slow down execution (SafeWrite). Returns previous and current values.
+- **`/recorder` command suite (lazy-loaded category)**: 5 commands using `[UnifoclCommand]` pattern for category-based discovery (`load_category('recorder')`). Requires `com.unity.recorder` package.
+  - `recorder.start [--profile <name>]` — start capture under a specific profile (defaults to current; errors if none configured).
+  - `recorder.stop` — stop active recording and flush output.
+  - `recorder.status` — return state, active profile, and list of all configured profiles.
+  - `recorder.config` — configure a profile's output path, frame rate, cap frame rate, and resolution.
+  - `recorder.switch` — switch active profile by name (enables named, disables all others).
+
+### Officialized
+- Officialized `3.4.0` by closing the development cycle suffix.
+
 ## 3.3.0 - 2026-04-04
 
 ### Added
