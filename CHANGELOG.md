@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.2 - 2026-04-04
+## 3.2.1 - 2026-04-04
 
 ### Added
 - **`animation` command category**: 8 new commands for editing AnimatorController and AnimationClip assets, grouped under the `animation` category (`list_commands(category='animation')`).
@@ -10,7 +10,39 @@
 - **Plugin docs updated**: `animation` category added to `ListCommands` category lists in Claude and Codex plugin `status.md` and `workflow.md` references.
 
 ### Officialized
-- Officialized `3.0.2` by closing the development cycle suffix.
+- Officialized `3.2.1` by closing the development cycle suffix.
+
+## 3.2.0 - 2026-04-04
+
+### Added
+- **`/tag` and `/layer` management commands**: Inspect and mutate Unity's `ProjectSettings/TagManager.asset` directly via CLI and ExecV2 agentic ops.
+  - **CLI**: `/tag list|add <name>|remove <name>` and `/layer list|add <name> [--index <idx>]|rename <old> <new>|remove <name|index>` (with `ls`, `a`, `rm`, `rn` aliases).
+  - **ExecV2**: `tag.list`, `tag.add`, `tag.remove`, `layer.list`, `layer.add`, `layer.rename`, `layer.remove`.
+  - **Guards**: Built-in tags (Untagged, Respawn, Finish, EditorOnly, MainCamera, Player, GameController) are protected from removal; layers 0–7 are protected from rename/remove.
+  - **Auto-slot**: `layer.add` without an index auto-finds the first empty user slot (8–31).
+- **xUnit test project** (`src/unifocl.Tests`): Direct unit tests for `TagLayerCommandService` covering no-project guard, usage validation, alias routing, and no-daemon gate (26 tests, no Unity daemon required).
+
+### Officialized
+- Officialized `3.2.0` by closing the development cycle suffix.
+
+## 3.1.0 - 2026-04-04
+
+### Added
+- **`asset.describe` composite command**: Two-phase local vision pipeline — Unity exports a thumbnail via `AssetPreview`, then a Python BLIP/CLIP model captions it locally. Agents receive a compact text description without burning multimodal vision tokens.
+  - **Engines**: `blip` (default, open-ended captions via `Salesforce/blip-image-captioning-base`) and `clip` (zero-shot classification via `openai/clip-vit-base-patch32`).
+  - **Dependencies**: `python3` (>= 3.10), `uv`, and auto-cached PyPI packages (`transformers`, `torch`, `Pillow`).
+  - **Security hardening**: Model revisions pinned to exact commit SHAs; `local_files_only=True` on cached runs (zero network access after first download).
+  - **Dry-run**: Reports asset existence, `uv`/`python3` availability, model cache status, and estimated download size.
+- **Unity-side `export-thumbnail` action**: New `DaemonProjectService.AssetDescribe.cs` partial — exports asset previews as temporary PNGs via `AssetPreview.GetAssetPreview()` with async polling and non-readable texture blit fallback.
+
+### Fixed
+- **Compatcheck build failure on Unity 6**: `UnityTemplateLibcacheDir` path replacement now handles Unity 6's `Contents/Resources/Scripting/Managed` layout (was only matching `Contents/Managed`).
+
+### Changed
+- **Protocol bumped to v19**: New editor payload file requires `/init` re-run.
+
+### Officialized
+- Officialized `3.1.0` by closing the development cycle suffix.
 
 ## 3.0.1 - 2026-04-03
 

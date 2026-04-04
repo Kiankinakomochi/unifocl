@@ -141,6 +141,36 @@ unifocl eval 'Undo.RecordObject(Camera.main, "t"); Camera.main.name = "CHANGED";
 
 Eval uses a dual-compiler strategy (Unity `AssemblyBuilder` in Bridge mode, bundled Roslyn in Host mode) and supports `async`/`await`, custom declarations, timeout protection, and `--dry-run` sandboxing. The entry point is always `async Task<object>`, so `await` works naturally.
 
+### Asset Describe — Let Agents See Without Vision Tokens
+
+AI agents working with Unity often need to understand what an asset *looks like* — is this sprite a character? A tileset? A UI icon? Normally this means sending the image to a multimodal LLM and burning tokens on cross-modal comprehension.
+
+`asset.describe` solves this by running a local vision model (BLIP or CLIP) on your machine. Unity exports a thumbnail, the CLI captions it locally, and the agent receives a compact text description — zero vision tokens spent.
+
+```sh
+unifocl exec '{"operation":"asset.describe","args":{"assetPath":"Assets/Sprites/hero.png"},"requestId":"r1"}'
+```
+
+```json
+{
+  "status": "Completed",
+  "result": {
+    "description": "a cartoon character with a blue hat",
+    "assetType": "Texture2D",
+    "engine": "blip",
+    "model": "Salesforce/blip-image-captioning-base@82a37760"
+  }
+}
+```
+
+Choose between two engines:
+- **`blip`** (default) — open-ended natural language captions
+- **`clip`** — zero-shot classification against game-asset labels (sprite, mesh, UI, material, etc.)
+
+**Dependencies:** Requires `python3` (>= 3.10) and [`uv`](https://docs.astral.sh/uv/) — run `unifocl init` to install them automatically. The Python script pulls [`transformers`](https://pypi.org/project/transformers/), [`torch`](https://pypi.org/project/torch/) (CPU), and [`Pillow`](https://pypi.org/project/Pillow/) via `uv run --script` (auto-cached, no manual pip install needed). The first invocation also downloads the model weights (~990 MB for BLIP, ~600 MB for CLIP) from HuggingFace; subsequent runs load entirely from cache with no network access. Model revisions are pinned to exact commit SHAs for supply-chain safety.
+
+See the [Command Reference — Asset Describe](docs/command-reference.md#6-asset-describe-local-vision) for full details.
+
 ## Documentation Reference
 
 To keep this README clean, detailed technical specifications and command lists have been split into dedicated documents:
