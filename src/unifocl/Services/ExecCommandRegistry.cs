@@ -101,6 +101,12 @@ internal sealed class ExecCommandRegistry
         ["settings inspect"]    = ExecRiskLevel.SafeRead,
         // editor utilities
         ["console clear"]       = ExecRiskLevel.SafeWrite,
+        // playmode operations
+        ["playmode.start"]      = ExecRiskLevel.PrivilegedExec,
+        ["playmode.stop"]       = ExecRiskLevel.PrivilegedExec,
+        ["playmode.pause"]      = ExecRiskLevel.SafeWrite,
+        ["playmode.resume"]     = ExecRiskLevel.SafeWrite,
+        ["playmode.step"]       = ExecRiskLevel.SafeWrite,
         // scene utilities
         ["scene load"]          = ExecRiskLevel.SafeWrite,
         ["scene add"]           = ExecRiskLevel.SafeWrite,
@@ -627,6 +633,51 @@ internal sealed class ExecCommandRegistry
             case "console clear":
             {
                 var base_ = new ProjectCommandRequestDto("console-clear", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "playmode start":
+            case "playmode.start":
+            {
+                var base_ = new ProjectCommandRequestDto("playmode-start", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "playmode stop":
+            case "playmode.stop":
+            {
+                var base_ = new ProjectCommandRequestDto("playmode-stop", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "playmode pause":
+            case "playmode.pause":
+            {
+                var base_ = new ProjectCommandRequestDto("playmode-pause", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "playmode resume":
+            case "playmode.resume":
+            {
+                var base_ = new ProjectCommandRequestDto("playmode-resume", null, null, null, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "playmode step":
+            case "playmode.step":
+            {
+                var base_ = new ProjectCommandRequestDto("playmode-step", null, null, null, req.RequestId);
                 var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
                 dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
                 return true;

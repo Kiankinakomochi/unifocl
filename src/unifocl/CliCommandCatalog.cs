@@ -182,6 +182,14 @@ internal static class CliCommandCatalog
             new("/compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "/compile status", "compile"),
             new("/console clear", "Clear the Unity console log", "/console clear", "compile"),
 
+            // ── playmode ─────────────────────────────────────────────────
+            new("/playmode <start|stop|pause|resume|step>", "Control Unity Editor Play Mode", "/playmode", "playmode"),
+            new("/playmode start", "Enter Play Mode", "/playmode start", "playmode"),
+            new("/playmode stop", "Exit Play Mode and restore edit-time state", "/playmode stop", "playmode"),
+            new("/playmode pause", "Pause the active Play Mode session", "/playmode pause", "playmode"),
+            new("/playmode resume", "Resume a paused Play Mode session", "/playmode resume", "playmode"),
+            new("/playmode step", "Advance the game by exactly one frame (must be paused)", "/playmode step", "playmode"),
+
             // ── eval ──────────────────────────────────────────────────────
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
@@ -322,6 +330,13 @@ internal static class CliCommandCatalog
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
             new("compile status", "Check the result of the last compilation pass (Bridge mode only — returns unsupported route in Host/batch mode)", "compile status", "compile"),
             new("console clear", "Clear the Unity console log", "console clear", "compile"),
+
+            // ── playmode ─────────────────────────────────────────────────
+            new("playmode start", "Enter Play Mode", "playmode start", "playmode"),
+            new("playmode stop", "Exit Play Mode and restore edit-time state", "playmode stop", "playmode"),
+            new("playmode pause", "Pause the active Play Mode session", "playmode pause", "playmode"),
+            new("playmode resume", "Resume a paused Play Mode session", "playmode resume", "playmode"),
+            new("playmode step", "Advance the game by exactly one frame (must be paused)", "playmode step", "playmode"),
 
             // ── scene ─────────────────────────────────────────────────────
             new("scene load <path>", "Load a scene by path (replaces current)", "scene load", "scene"),

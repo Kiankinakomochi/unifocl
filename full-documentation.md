@@ -812,6 +812,12 @@ These commands manage your session, project loading, and configuration. In the i
 | `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `scripts`, `all`). |
 | `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`, `flaky-report`). No daemon required. |
 | `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `asset-size`, `import-hotspots`, `all`). All ops are read-only and require the daemon. See [`project-diagnostics.md`](project-diagnostics.md). |
+| `/playmode <start\|stop\|pause\|resume\|step>` |  | Control Unity Editor Play Mode. |
+| `/playmode start` |  | Enter Play Mode. (PrivilegedExec) |
+| `/playmode stop` |  | Exit Play Mode and restore edit-time state. (PrivilegedExec) |
+| `/playmode pause` |  | Pause the active Play Mode session. (SafeWrite) |
+| `/playmode resume` |  | Resume a paused Play Mode session. (SafeWrite) |
+| `/playmode step` |  | Advance the game by exactly one frame. Only valid while paused. (SafeWrite) |
 | `/clear` |  | Clear and redraw the boot screen and log. |
 | `/help [topic]` | `/?` | Show help by topic (`root`, `project`, `inspector`, `build`, `upm`, `daemon`). |
 
@@ -963,6 +969,11 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `compile request` |  | Trigger a Unity script recompilation (Bridge mode only). |
 | `compile status` |  | Check the result of the last compilation pass (Bridge mode only). |
 | `console clear` |  | Clear the Unity console log. |
+| `playmode start` |  | Enter Play Mode. (PrivilegedExec) |
+| `playmode stop` |  | Exit Play Mode. (PrivilegedExec) |
+| `playmode pause` |  | Pause Play Mode. (SafeWrite) |
+| `playmode resume` |  | Resume paused Play Mode. (SafeWrite) |
+| `playmode step` |  | Advance one frame while paused. (SafeWrite) |
 
 ## 5. Profiling (Lazy-Loaded Category)
 

@@ -113,6 +113,11 @@ internal static class DaemonMutationActionCatalog
                || action.Equals("prefab-unpack", StringComparison.OrdinalIgnoreCase)
                || action.Equals("prefab-variant", StringComparison.OrdinalIgnoreCase)
                || action.Equals("addressables-cli", StringComparison.OrdinalIgnoreCase)
-               || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase);
+               || action.Equals("eval-code", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("playmode-start", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("playmode-stop", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("playmode-pause", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("playmode-resume", StringComparison.OrdinalIgnoreCase)
+               || action.Equals("playmode-step", StringComparison.OrdinalIgnoreCase);
     }
 }
