@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.2 - 2026-04-04
+
+### Added
+- **`animation` command category**: 8 new commands for editing AnimatorController and AnimationClip assets, grouped under the `animation` category (`list_commands(category='animation')`).
+  - **AnimatorController editing**: `animator param add`, `animator param remove`, `animator state add`, `animator transition add` — add/remove parameters, add states, and create transitions (including Any State transitions) in `.controller` assets.
+  - **AnimationClip editing**: `clip config` (loop settings), `clip event add` (insert AnimationEvent at a time), `clip event clear` (remove all events), `clip curve clear` (remove all property curves) in `.anim` assets.
+- **CLI and MCP exec routing**: All animation commands are callable via `/animator ...` and `/clip ...` slash-commands through the MCP `exec` tool, as bare project-mode commands, and as ExecV2 dot-notation operations (`animator.param.add`, `clip.config`, etc.).
+- **Plugin docs updated**: `animation` category added to `ListCommands` category lists in Claude and Codex plugin `status.md` and `workflow.md` references.
+
+### Officialized
+- Officialized `3.0.2` by closing the development cycle suffix.
+
 ## 3.0.1 - 2026-04-03
 
 ### Fixed
