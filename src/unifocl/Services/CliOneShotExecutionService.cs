@@ -16,6 +16,7 @@ internal static class CliOneShotExecutionService
         ValidateCommandService validateCommandService,
         DiagCommandService diagCommandService,
         TestCommandService testCommandService,
+        TagLayerCommandService tagLayerCommandService,
         CancellationToken cancellationToken = default)
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
@@ -220,6 +221,7 @@ internal static class CliOneShotExecutionService
                             validateCommandService,
                             diagCommandService,
                             testCommandService,
+                            tagLayerCommandService,
                             cancellationToken).WaitAsync(cancellationToken);
                     }
                     var parsed = CliAgenticIssueService.ParseAgenticIssuesFromLogs(streamLog);
@@ -427,6 +429,7 @@ internal static class CliOneShotExecutionService
         ValidateCommandService validateCommandService,
         DiagCommandService diagCommandService,
         TestCommandService testCommandService,
+        TagLayerCommandService tagLayerCommandService,
         CancellationToken cancellationToken = default)
     {
         static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationToken token)
@@ -748,6 +751,32 @@ internal static class CliOneShotExecutionService
         {
             await AwaitWithCancellationAsync(
                 () => diagCommandService.HandleDiagCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/tag", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => tagLayerCommandService.HandleTagCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
+        if (matched.Trigger.StartsWith("/layer", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => tagLayerCommandService.HandleLayerCommandAsync(
                     input,
                     session,
                     daemonControlService,

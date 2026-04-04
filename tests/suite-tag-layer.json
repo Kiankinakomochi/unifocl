@@ -1,0 +1,260 @@
+{
+  "suite": "tag-layer",
+  "runner": "dotnet run --no-build --project {suite_dir}/../src/unifocl/unifocl.csproj --",
+  "project": "{suite_dir}/../.local/tag-layer-smoke",
+  "mode": "project",
+  "cases": [
+    {
+      "id": "tag-no-args-shows-usage",
+      "description": "/tag with no subcommand shows usage",
+      "steps": [
+        {
+          "cmd": "/tag",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-unknown-subcommand-rejected",
+      "description": "/tag with unknown subcommand shows error and supported list",
+      "steps": [
+        {
+          "cmd": "/tag bogus",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "unknown tag subcommand" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-list-needs-daemon",
+      "description": "/tag list without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/tag list",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-ls-alias-needs-daemon",
+      "description": "/tag ls alias also reports daemon not running",
+      "steps": [
+        {
+          "cmd": "/tag ls",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-add-needs-daemon",
+      "description": "/tag add without a live daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/tag add Enemy",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-add-missing-name",
+      "description": "/tag add with no name argument shows usage",
+      "steps": [
+        {
+          "cmd": "/tag add",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-remove-needs-daemon",
+      "description": "/tag remove without a live daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/tag remove Enemy",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tag-remove-missing-name",
+      "description": "/tag remove with no name argument shows usage",
+      "steps": [
+        {
+          "cmd": "/tag rm",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-no-args-shows-usage",
+      "description": "/layer with no subcommand shows usage",
+      "steps": [
+        {
+          "cmd": "/layer",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-unknown-subcommand-rejected",
+      "description": "/layer with unknown subcommand shows error",
+      "steps": [
+        {
+          "cmd": "/layer bogus",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "unknown layer subcommand" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-list-needs-daemon",
+      "description": "/layer list without a live Unity daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/layer list",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-ls-alias-needs-daemon",
+      "description": "/layer ls alias also reports daemon not running",
+      "steps": [
+        {
+          "cmd": "/layer ls",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-add-needs-daemon",
+      "description": "/layer add without a live daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/layer add UI",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-add-missing-name",
+      "description": "/layer add with no name argument shows usage",
+      "steps": [
+        {
+          "cmd": "/layer add",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-rename-needs-daemon",
+      "description": "/layer rename without a live daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/layer rename UI FX",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-rename-missing-args",
+      "description": "/layer rename with too few args shows usage",
+      "steps": [
+        {
+          "cmd": "/layer rename UI",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-remove-needs-daemon",
+      "description": "/layer remove without a live daemon reports not running",
+      "steps": [
+        {
+          "cmd": "/layer remove UI",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "daemon not running" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "layer-remove-missing-name",
+      "description": "/layer remove with no name argument shows usage",
+      "steps": [
+        {
+          "cmd": "/layer rm",
+          "assert": {
+            ".status": "success",
+            ".meta.exitCode": 0,
+            ".data.logs[0]": { "$contains": "usage" }
+          }
+        }
+      ]
+    }
+  ]
+}

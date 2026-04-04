@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.2.0 - 2026-04-04
+
+### Added
+- **`/tag` and `/layer` management commands**: Inspect and mutate Unity's `ProjectSettings/TagManager.asset` directly via CLI and ExecV2 agentic ops.
+  - **CLI**: `/tag list|add <name>|remove <name>` and `/layer list|add <name> [--index <idx>]|rename <old> <new>|remove <name|index>` (with `ls`, `a`, `rm`, `rn` aliases).
+  - **ExecV2**: `tag.list`, `tag.add`, `tag.remove`, `layer.list`, `layer.add`, `layer.rename`, `layer.remove`.
+  - **Guards**: Built-in tags (Untagged, Respawn, Finish, EditorOnly, MainCamera, Player, GameController) are protected from removal; layers 0–7 are protected from rename/remove.
+  - **Auto-slot**: `layer.add` without an index auto-finds the first empty user slot (8–31).
+- **xUnit test project** (`src/unifocl.Tests`): Direct unit tests for `TagLayerCommandService` covering no-project guard, usage validation, alias routing, and no-daemon gate (26 tests, no Unity daemon required).
+
+### Officialized
+- Officialized `3.2.0` by closing the development cycle suffix.
+
 ## 3.1.0 - 2026-04-04
 
 ### Added

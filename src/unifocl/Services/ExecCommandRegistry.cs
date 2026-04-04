@@ -75,6 +75,15 @@ internal sealed class ExecCommandRegistry
         ["addressable.bulk.add"]       = ExecRiskLevel.SafeWrite,
         ["addressable.bulk.label"]     = ExecRiskLevel.SafeWrite,
         ["addressable.analyze"]        = ExecRiskLevel.SafeRead,
+        // tag operations
+        ["tag.list"]   = ExecRiskLevel.SafeRead,
+        ["tag.add"]    = ExecRiskLevel.SafeWrite,
+        ["tag.remove"] = ExecRiskLevel.DestructiveWrite,
+        // layer operations
+        ["layer.list"]   = ExecRiskLevel.SafeRead,
+        ["layer.add"]    = ExecRiskLevel.SafeWrite,
+        ["layer.rename"] = ExecRiskLevel.SafeWrite,
+        ["layer.remove"] = ExecRiskLevel.DestructiveWrite,
         // read-only queries
         ["hierarchy.snapshot"]  = ExecRiskLevel.SafeRead,
         ["go find"]             = ExecRiskLevel.SafeRead,
@@ -848,6 +857,96 @@ internal sealed class ExecCommandRegistry
                     && dupProp.ValueKind == JsonValueKind.True;
                 var content = JsonSerializer.Serialize(new { operation = "analyze", duplicate });
                 dto = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                return true;
+            }
+
+            // ── tag operations ──────────────────────────────────────────────
+
+            case "tag.list":
+            {
+                dto = new ProjectCommandRequestDto("tag-list", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "tag.add":
+            {
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "tag.add requires args.name";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { name });
+                dto = new ProjectCommandRequestDto("tag-add", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "tag.remove":
+            {
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "tag.remove requires args.name";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { name });
+                dto = new ProjectCommandRequestDto("tag-remove", null, null, content, req.RequestId);
+                return true;
+            }
+
+            // ── layer operations ─────────────────────────────────────────────
+
+            case "layer.list":
+            {
+                dto = new ProjectCommandRequestDto("layer-list", null, null, null, req.RequestId);
+                return true;
+            }
+
+            case "layer.add":
+            {
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "layer.add requires args.name";
+                    return false;
+                }
+
+                var index = GetInt(req.Args, "index");
+                var content = index.HasValue
+                    ? JsonSerializer.Serialize(new { name, index = index.Value })
+                    : JsonSerializer.Serialize(new { name });
+                dto = new ProjectCommandRequestDto("layer-add", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "layer.rename":
+            {
+                var nameOrIndex = GetString(req.Args, "nameOrIndex");
+                var newName = GetString(req.Args, "newName");
+                if (string.IsNullOrWhiteSpace(nameOrIndex) || string.IsNullOrWhiteSpace(newName))
+                {
+                    validationError = "layer.rename requires args.nameOrIndex and args.newName";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { nameOrIndex, newName });
+                dto = new ProjectCommandRequestDto("layer-rename", null, null, content, req.RequestId);
+                return true;
+            }
+
+            case "layer.remove":
+            {
+                var nameOrIndex = GetString(req.Args, "nameOrIndex");
+                if (string.IsNullOrWhiteSpace(nameOrIndex))
+                {
+                    validationError = "layer.remove requires args.nameOrIndex";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { nameOrIndex });
+                dto = new ProjectCommandRequestDto("layer-remove", null, null, content, req.RequestId);
                 return true;
             }
 

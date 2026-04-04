@@ -140,6 +140,7 @@ try
     var validateCommandService = new ValidateCommandService();
     var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();
+    var tagLayerCommandService = new TagLayerCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
@@ -167,6 +168,7 @@ try
                 validateCommandService,
                 diagCommandService,
                 testCommandService,
+                tagLayerCommandService,
                 appCancellation.Token).WaitAsync(appCancellation.Token);
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
@@ -547,6 +549,32 @@ try
         {
             await AwaitWithCancellationAsync(
                 () => diagCommandService.HandleDiagCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/tag", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => tagLayerCommandService.HandleTagCommandAsync(
+                    input,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/layer", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => tagLayerCommandService.HandleLayerCommandAsync(
                     input,
                     session,
                     daemonControlService,
