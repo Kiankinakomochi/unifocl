@@ -130,6 +130,26 @@ internal static class CliCommandCatalog
             new("/addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]", "Bulk apply/remove Addressables label over folder assets", "/addressable bulk label", "addressable"),
             new("/addressable analyze [--duplicate]", "Analyze Addressables layout or duplicate dependencies", "/addressable analyze", "addressable"),
 
+            // ── tag ───────────────────────────────────────────────────────
+            new("/tag <list|add|remove>", "Manage Unity project tags (built-in and custom)", "/tag", "tag"),
+            new("/tag list", "List all tags (built-in and custom)", "/tag list", "tag"),
+            new("/tag ls", "Alias for /tag list", "/tag ls", "tag"),
+            new("/tag add <name>", "Add a new custom tag. Fails if it already exists", "/tag add", "tag"),
+            new("/tag a <name>", "Alias for /tag add", "/tag a", "tag"),
+            new("/tag remove <name>", "Remove a custom tag. Fails if the tag is built-in", "/tag remove", "tag"),
+            new("/tag rm <name>", "Alias for /tag remove", "/tag rm", "tag"),
+
+            // ── layer ─────────────────────────────────────────────────────
+            new("/layer <list|add|rename|remove>", "Manage Unity project layers (indices 0-31)", "/layer", "layer"),
+            new("/layer list", "List all layers showing index and name", "/layer list", "layer"),
+            new("/layer ls", "Alias for /layer list", "/layer ls", "layer"),
+            new("/layer add <name> [--index <idx>]", "Add a layer. Finds first empty user slot (8-31) unless --index is given", "/layer add", "layer"),
+            new("/layer a <name> [--index <idx>]", "Alias for /layer add", "/layer a", "layer"),
+            new("/layer rename <old-name|index> <new-name>", "Rename a user layer. Fails for built-in layers (0-7)", "/layer rename", "layer"),
+            new("/layer rn <old-name|index> <new-name>", "Alias for /layer rename", "/layer rn", "layer"),
+            new("/layer remove <name|index>", "Clear a user layer slot. Fails for built-in layers (0-7)", "/layer remove", "layer"),
+            new("/layer rm <name|index>", "Alias for /layer remove", "/layer rm", "layer"),
+
             // ── asset ─────────────────────────────────────────────────────
             new("/asset rename <path> <new-name>", "Rename an asset at the given path (DestructiveWrite, requires approval)", "/asset rename", "asset"),
             new("/asset remove <path>", "Delete an asset at the given path (DestructiveWrite, requires approval)", "/asset remove", "asset"),
@@ -258,6 +278,24 @@ internal static class CliCommandCatalog
             new("addressable bulk add --folder <path> --group <name> [--type <T>]", "Bulk add folder assets to an Addressables group", "addressable bulk add", "addressable"),
             new("addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]", "Bulk apply/remove Addressables label over folder assets", "addressable bulk label", "addressable"),
             new("addressable analyze [--duplicate]", "Analyze Addressables layout or duplicate dependencies", "addressable analyze", "addressable"),
+
+            // ── tag ───────────────────────────────────────────────────────
+            new("tag list", "List all tags (built-in and custom)", "tag list", "tag"),
+            new("tag ls", "Alias for tag list", "tag ls", "tag"),
+            new("tag add <name>", "Add a new custom tag", "tag add", "tag"),
+            new("tag a <name>", "Alias for tag add", "tag a", "tag"),
+            new("tag remove <name>", "Remove a custom tag", "tag remove", "tag"),
+            new("tag rm <name>", "Alias for tag remove", "tag rm", "tag"),
+
+            // ── layer ─────────────────────────────────────────────────────
+            new("layer list", "List all layers showing index and name", "layer list", "layer"),
+            new("layer ls", "Alias for layer list", "layer ls", "layer"),
+            new("layer add <name> [--index <idx>]", "Add a layer at first empty user slot (8-31) or specified index", "layer add", "layer"),
+            new("layer a <name> [--index <idx>]", "Alias for layer add", "layer a", "layer"),
+            new("layer rename <old-name|index> <new-name>", "Rename a user layer (fails for built-in layers 0-7)", "layer rename", "layer"),
+            new("layer rn <old-name|index> <new-name>", "Alias for layer rename", "layer rn", "layer"),
+            new("layer remove <name|index>", "Clear a user layer slot (fails for built-in layers 0-7)", "layer remove", "layer"),
+            new("layer rm <name|index>", "Alias for layer remove", "layer rm", "layer"),
 
             // ── asset ─────────────────────────────────────────────────────
             new("asset rename <path> <new-name>", "Rename an asset at the given path", "asset rename", "asset"),

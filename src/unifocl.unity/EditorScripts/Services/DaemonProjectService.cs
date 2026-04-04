@@ -394,6 +394,13 @@ namespace UniFocl.EditorBridge
                 "query-mk-types" => Task.FromResult(ExecuteQueryMkTypes()),
                 "query-hierarchy-mk-types" => Task.FromResult(ExecuteQueryHierarchyMkTypes()),
                 "query-component-types" => Task.FromResult(ExecuteQueryComponentTypes()),
+                "tag-list" => Task.FromResult(ExecuteTagList()),
+                "tag-add" => Task.FromResult(ExecuteTagAdd(request)),
+                "tag-remove" => Task.FromResult(ExecuteTagRemove(request)),
+                "layer-list" => Task.FromResult(ExecuteLayerList()),
+                "layer-add" => Task.FromResult(ExecuteLayerAdd(request)),
+                "layer-rename" => Task.FromResult(ExecuteLayerRename(request)),
+                "layer-remove" => Task.FromResult(ExecuteLayerRemove(request)),
                 _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
             };
         }
