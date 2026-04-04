@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.7.0 - 2026-04-04
+
+### Added
+- **Runtime operations surface (Sprint 1)**: Control, query, and observe running Unity player instances through the same typed, risk-classified interface used for editor operations.
+  - **Target management**: `runtime.target.list` (SafeRead), `runtime.attach` (SafeWrite), `runtime.status` (SafeRead), `runtime.detach` (SafeWrite) ExecV2 operations.
+  - **Target addressing**: `<platform>:<name>` format (e.g., `editor:playmode`, `android:pixel-7`) with partial name matching and wildcard support.
+  - **Transport layer**: Chunked JSON envelopes over Unity's `EditorConnection`/`PlayerConnection` APIs with 16 KB segments, correlation-based request/response matching, and UTF-8-safe chunking.
+  - **Player-side runtime assembly**: New `UniFocl.Runtime` assembly (`src/unifocl.unity/RuntimeScripts/`) that compiles into player builds (no UnityEditor dependency).
+  - **`[UnifoclRuntimeCommand]` attribute**: User-authored static methods marked with name, description, category, kind (Query/Command/Stream), and risk level (SafeRead/PrivilegedExec). Discovered automatically at player startup via reflection.
+  - **Runtime manifest**: Player builds expose a typed JSON manifest with command names, kinds, risk levels, and JSON Schema for args/results. Powers schema validation, MCP tool generation, and agent autocompletion.
+  - **Build-time mutation guard**: `UNIFOCL_RUNTIME_ALLOW_MUTATIONS` compile define gates non-SafeRead operations on player builds.
+  - **Full execution surface coverage**: All 6 layers wired — daemon HTTP endpoints (L1), ExecV2 risk registry (L2), CLI catalog (L3), ProjectViewService interactive handler (L4), CliOneShotExecutionService slash dispatch (L5), PR checklist (L6).
+  - **Documentation**: New `docs/runtime-operations.md` with architecture, target addressing, custom command authoring, transport protocol, and roadmap. Section 15 added to `docs/command-reference.md`. README feature pitch updated.
+
+### Officialized
+- Officialized `3.7.0` by closing the development cycle suffix.
+
 ## 3.6.0 - 2026-04-04
 
 ### Added

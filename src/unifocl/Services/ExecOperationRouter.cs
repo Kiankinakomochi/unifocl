@@ -13,6 +13,7 @@ internal sealed class ExecOperationRouter
     private readonly TestCommandService _testService;
     private readonly AssetDescribeService _assetDescribe;
     private readonly DebugArtifactService _debugArtifact;
+    private readonly RuntimeTargetService _runtimeTarget;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ExecOperationRouter(ExecCommandRegistry registry, ExecApprovalService approval, ExecSessionService sessions)
@@ -23,6 +24,7 @@ internal sealed class ExecOperationRouter
         _testService = new TestCommandService();
         _assetDescribe = new AssetDescribeService();
         _debugArtifact = new DebugArtifactService();
+        _runtimeTarget = new RuntimeTargetService(sessions);
     }
 
     /// <summary>Synchronous routing path used by the daemon HTTP endpoint.</summary>
@@ -82,6 +84,12 @@ internal sealed class ExecOperationRouter
                 ApprovalToken: token,
                 Message: $"operation '{request.Operation}' requires approval (risk: {risk}). " +
                          $"Re-submit with intent.approvalToken set to authorize execution.");
+        }
+
+        // runtime.* operations are dispatched via HTTP to the daemon's /runtime/* endpoints.
+        if (request.Operation.StartsWith("runtime.", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _runtimeTarget.HandleAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
         // test.* operations launch Unity as a subprocess — not dispatched through the daemon bridge.

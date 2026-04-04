@@ -730,3 +730,55 @@ What this command does:
 - Runs: `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
 
 Local artifacts are intentionally uncommitted (`local.config.json`, `.local/`).
+
+## 15. Runtime Operations
+
+Runtime operations allow you to control, query, and observe running Unity player instances (Editor PlayMode, standalone builds, device builds) through the same CLI/MCP interface used for editor operations.
+
+### Target Management
+
+| **Operation** | **Risk** | **Description** |
+| --- | --- | --- |
+| `runtime.target.list` | SafeRead | List available runtime targets (Editor PlayMode, devices, standalone builds) |
+| `runtime.attach` | SafeWrite | Attach to a runtime target by address (e.g. `editor:playmode`, `android:pixel-7`) |
+| `runtime.status` | SafeRead | Show connection status of the attached runtime target |
+| `runtime.detach` | SafeWrite | Disconnect from the current runtime target |
+
+**Target addressing** uses the format `<platform>:<name>`:
+- `editor:playmode` — Unity Editor in Play Mode
+- `android:pixel-7` — Android device by name
+- `ios:*` — first available iOS device
+- `windows:standalone` — local Windows standalone build
+
+### CLI Commands
+
+| **Command** | **Description** |
+| --- | --- |
+| `/runtime target list` | List available runtime targets |
+| `/runtime attach <target>` | Attach to a target (e.g. `/runtime attach editor:playmode`) |
+| `/runtime status` | Show runtime connection status |
+| `/runtime detach` | Disconnect from runtime target |
+
+### Architecture
+
+The runtime system uses Unity's `EditorConnection` / `PlayerConnection` APIs for transport between the editor and player builds. Messages are JSON envelopes chunked into 16 KB segments with correlation-based request/response matching.
+
+**Player-side extensibility** uses `[UnifoclRuntimeCommand]` attributes:
+
+```csharp
+using UniFocl.Runtime;
+
+public static class GameplayCommands
+{
+    [UnifoclRuntimeCommand("economy.grant", "Grant currency to player",
+        category: "liveops", kind: RuntimeCommandKind.Command,
+        risk: RuntimeRiskLevel.PrivilegedExec)]
+    public static object SpawnEnemy(string argsJson)
+    {
+        // project-specific logic
+        return new { success = true };
+    }
+}
+```
+
+Custom runtime commands are discovered at player startup via reflection, packaged into categories, and exposed through the same lazy-loading manifest system used for editor tools.

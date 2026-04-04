@@ -689,6 +689,74 @@ namespace UniFocl.EditorBridge
                     return;
                 }
 
+                // ── Runtime target operations ─────────────────────────────────
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/targets", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var targets = await ExecuteOnMainThreadAsync(() =>
+                    {
+                        DaemonRuntimeBridge.EnsureRegistered();
+                        var list = DaemonRuntimeBridge.ListTargets();
+                        var items = new List<object>();
+                        foreach (var t in list)
+                        {
+                            items.Add(new { t.playerId, t.name, t.platform, t.deviceId, t.isConnected });
+                        }
+                        return JsonUtility.ToJson(new RuntimeTargetListResponse { ok = true, targets = SerializeTargetList(list) });
+                    });
+                    await WriteJsonResponseAsync(context.Response, targets, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/attach", StringComparison.OrdinalIgnoreCase))
+                {
+                    var targetAddress = request.QueryString["target"] ?? "editor:playmode";
+                    MarkActivity();
+                    var result = await ExecuteOnMainThreadAsync(() =>
+                    {
+                        DaemonRuntimeBridge.EnsureRegistered();
+                        var success = DaemonRuntimeBridge.Attach(targetAddress);
+                        return JsonUtility.ToJson(new RuntimeSimpleResponse
+                        {
+                            ok = success,
+                            message = success
+                                ? $"attached to {targetAddress}"
+                                : $"no target found matching '{targetAddress}'"
+                        });
+                    });
+                    await WriteJsonResponseAsync(context.Response, result, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/status", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var status = await ExecuteOnMainThreadAsync(() =>
+                    {
+                        return JsonUtility.ToJson(new RuntimeStatusResponse
+                        {
+                            ok = true,
+                            state = DaemonRuntimeBridge.ConnectionState.ToString(),
+                            targetAddress = DaemonRuntimeBridge.AttachedTargetAddress,
+                            playerId = DaemonRuntimeBridge.AttachedPlayerId
+                        });
+                    });
+                    await WriteJsonResponseAsync(context.Response, status, cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/runtime/detach", StringComparison.OrdinalIgnoreCase))
+                {
+                    MarkActivity();
+                    var result = await ExecuteOnMainThreadAsync(() =>
+                    {
+                        DaemonRuntimeBridge.Detach();
+                        return JsonUtility.ToJson(new RuntimeSimpleResponse { ok = true, message = "detached" });
+                    });
+                    await WriteJsonResponseAsync(context.Response, result, cancellationToken: cancellationToken);
+                    return;
+                }
+
                 // ExecV2 structured command adapter
                 if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.Equals("/agent/exec", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1691,6 +1759,30 @@ namespace UniFocl.EditorBridge
 
                 return JsonUtility.ToJson(_projectCommandStatus);
             }
+        }
+
+        private static string SerializeTargetList(List<DaemonRuntimeBridge.RuntimeTargetInfo> list)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append('[');
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var t = list[i];
+                sb.Append("{\"playerId\":");
+                sb.Append(t.playerId);
+                sb.Append(",\"name\":\"");
+                sb.Append(t.name);
+                sb.Append("\",\"platform\":\"");
+                sb.Append(t.platform);
+                sb.Append("\",\"deviceId\":\"");
+                sb.Append(t.deviceId);
+                sb.Append("\",\"isConnected\":");
+                sb.Append(t.isConnected ? "true" : "false");
+                sb.Append('}');
+            }
+            sb.Append(']');
+            return sb.ToString();
         }
 
         internal static void MarkAssetIndexDirty() => DaemonAssetIndexService.MarkDirty();

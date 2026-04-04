@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="../unifocl.unity/SharedModels/*.cs" />
     <Compile Include="../unifocl.unity/EditorScripts/**/*.cs" />
+    <Compile Include="../unifocl.unity/RuntimeScripts/**/*.cs" />
   </ItemGroup>
 
   <!-- Run the unifocl Roslyn analyzer during the compat-check build so UNIFOCL001
