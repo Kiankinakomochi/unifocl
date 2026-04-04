@@ -363,7 +363,7 @@ public static class UnifoclMutateTools
             "data.dryRun": "bool"
           },
           "path_format": "Use '/' for scene root. '/Name' for a top-level object. '/Parent/Child' for nested. Names are case-sensitive and matched by exact name in the loaded scene.",
-          "mode_compatibility": "All ops work in both Host mode (batch daemon) and Bridge mode (interactive editor).",
+          "mode_compatibility": "All ops work in both Host mode (batch daemon) and Bridge mode (interactive editor). Note: add_component for newly created scripts requires a /close + /open cycle in Host mode (scripts compile only at startup). Run /validate scripts first to catch errors before restarting.",
           "session_tip": "Chain with --session-seed to keep project context across exec calls without repeating --project."
         }
         """;
@@ -780,8 +780,9 @@ public static class UnifoclAgentWorkflowTools
             "mutate_scene": "exec commands=[\"/mutate [{\\\"op\\\":\\\"create\\\",\\\"type\\\":\\\"canvas\\\",\\\"name\\\":\\\"HUD\\\"}]\"]",
             "inspect_object": "exec commands=[\"inspect /Canvas\", \"set renderMode ScreenSpaceOverlay\"]"
           },
+          "script_workflow": "When creating C# scripts: (1) write all .cs files first via asset.create_script, (2) run /validate scripts for offline Roslyn compile check (no editor needed), (3) fix errors before opening/restarting the project. This avoids costly /close + /open cycles for compile failures.",
           "modes_summary": "project (default, asset ops) | inspector (per-object mutations) | hierarchy (TUI-only, avoid in agentic)",
-          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, or 'all'"
+          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, script_workflow, or 'all'"
         }
         """;
 
@@ -806,6 +807,11 @@ public static class UnifoclAgentWorkflowTools
             "project": "Default after /open. Used for asset operations (mk script/material/prefab, load scene, upm).",
             "inspector": "Used for per-object mutations: rename, remove, move, comp add/remove, set/toggle fields. Target is preserved in session state via --session-seed.",
             "hierarchy": "TUI-only. Contextual commands (rm/rn/mv) do NOT execute in agentic exec. Use inspector mode or /mutate instead."
+          },
+          "host_mode_compilation": {
+            "limitation": "In Host mode (-batchmode), Unity compiles scripts ONLY at startup. Mid-session script creation does NOT trigger recompilation — AssetDatabase.Refresh() only refreshes asset metadata, not scripts.",
+            "workaround": "Write all .cs files first, run /validate scripts (offline Roslyn check, no editor needed), then /close + /open to compile. Never add scripts mid-session and expect add_component to find the new types.",
+            "bridge_mode": "In Bridge mode (GUI editor), /compile request triggers live recompilation. No /close + /open needed."
           }
         }
         """;
@@ -931,6 +937,22 @@ public static class UnifoclAgentWorkflowTools
             "inspector": "Used for per-object mutations: rename, remove, move, comp add/remove, set/toggle fields. Target is preserved in session state via --session-seed.",
             "hierarchy": "TUI-only. Contextual commands (rm/rn/mv) do NOT execute in agentic exec. Use inspector mode or /mutate instead."
           },
+          "host_mode_compilation": {
+            "limitation": "In Host mode (-batchmode), Unity compiles scripts ONLY at startup. Mid-session script creation does NOT trigger recompilation.",
+            "workaround": "Write all .cs files first, run /validate scripts (offline Roslyn check), then /close + /open to compile.",
+            "bridge_mode": "In Bridge mode (GUI editor), /compile request triggers live recompilation."
+          },
+          "script_workflow": {
+            "recommended_steps": [
+              "1. Create all .cs scripts upfront via asset.create_script",
+              "2. Run /validate scripts — offline compile check, no editor needed",
+              "3. Run /validate asmdef — verify assembly references",
+              "4. Fix errors and re-validate until clean",
+              "5. /open (or /close + /open) to compile scripts at startup",
+              "6. Proceed with add_component, /mutate, inspector ops"
+            ],
+            "why": "Each /close + /open cycle takes 30s+. Catching compile errors offline avoids wasted restarts."
+          },
           "session_storage": ".unifocl-runtime/agentic/sessions/<seed>.json (relative to CWD or project root)",
           "ansi_note": "Some responses prefix JSON with ANSI screen-clear codes. Strip with: sed 's/\\x1b\\[[0-9;]*[mJKH]//g' or find first '{' index before parsing.",
           "custom_commands": {
@@ -984,6 +1006,30 @@ public static class UnifoclAgentWorkflowTools
         }
         """;
 
+    private const string ScriptWorkflowJson = """
+        {
+          "script_workflow": {
+            "overview": "In Host mode (batch), Unity only compiles scripts at startup. New .cs files added mid-session are invisible to the type system until the next /close + /open cycle. Use this workflow to avoid wasted restarts.",
+            "recommended_steps": [
+              "1. Create all .cs scripts upfront: use asset.create_script (or write files directly to Assets/)",
+              "2. Run /validate scripts — offline Roslyn compile check against Unity stubs. No running editor needed. Catches CS#### errors before paying the startup cost.",
+              "3. Run /validate asmdef — verify assembly definition references, detect duplicates and cycles.",
+              "4. Fix any errors found in steps 2-3. Re-run validation until clean.",
+              "5. Now /open the project (or /close + /open if already open). Scripts compile on startup and new types become available.",
+              "6. Proceed with add_component, /mutate, inspector ops, etc."
+            ],
+            "why": "Each /close + /open cycle takes 30s+ for project reimport. Catching compile errors offline saves multiple restart cycles.",
+            "bridge_mode_alternative": "In Bridge mode (GUI editor), use /compile request for live recompilation after script changes. No restart needed.",
+            "validate_scripts_details": {
+              "what_it_checks": "Syntax errors, type resolution, missing references — same CS#### diagnostics as Unity's compiler.",
+              "what_it_references": "Unity Managed DLLs (auto-discovered from installed editors), Library/ScriptAssemblies (existing asmdef outputs), template packages (UI, TextMeshPro).",
+              "exec_usage": "exec commands=[\"/validate scripts\"] project=\"/path/to/project\"",
+              "execv2_usage": "operation: validate.scripts (SafeRead, no approval needed)"
+            }
+          }
+        }
+        """;
+
     private static readonly Dictionary<string, string> _sections = new(StringComparer.OrdinalIgnoreCase)
     {
         ["quick_start"] = QuickStartJson,
@@ -993,18 +1039,20 @@ public static class UnifoclAgentWorkflowTools
         ["categories"] = CategoriesJson,
         ["session"] = SessionJson,
         ["discovery"] = DiscoveryJson,
+        ["script_workflow"] = ScriptWorkflowJson,
         ["all"] = WorkflowGuideJson
     };
 
     [McpServerTool, Description(
         "Returns unifocl agentic workflow guidance. Call with no section for a quick-start summary (~200 tokens). " +
-        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery. " +
+        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery, script_workflow. " +
         "Replaces the need to read docs or call /help.")]
     public static string GetAgentWorkflowGuide(
         [Description("Section to retrieve: quick_start (default, minimal getting-started), " +
                      "exec_flags (all --flag details), modes (project/inspector/hierarchy semantics), " +
                      "mutate (/mutate batch guidance), categories (custom tool loading), " +
                      "session (--session-seed patterns), discovery (list_commands/lookup_command usage), " +
+                     "script_workflow (write-validate-open pattern for Host mode), " +
                      "or 'all' for the complete guide.")]
         string section = "quick_start")
     {

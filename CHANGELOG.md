@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.3.0 - 2026-04-04
+
+### Added
+- **`/validate scripts` command**: Offline Roslyn compile check for project C# scripts without a running Unity editor. Generates a temporary `.csproj` referencing Unity managed DLLs, runs `dotnet build`, and returns structured `ValidateResult` diagnostics with CS#### error codes and file locations.
+  - **Unity discovery**: Single-shot resolution chain — `UNIFOCL_UNITY_EDITOR_MANAGED_DIR` env var → exact project version match → any installed editor fallback.
+  - **ExecV2 support**: Registered as `validate.scripts` (SafeRead) with dedicated `ExecOperationRouter` dispatch — accessible via MCP `exec` tool and structured ExecV2 API.
+  - **Agent workflow hints updated**: New `script_workflow` section in `get_agent_workflow_guide`; `modes` section documents Host mode compilation limitation; mutate schema `mode_compatibility` warns about `add_component` requiring `/close + /open` for new scripts.
+- **MCP tool unit tests**: 41 xUnit tests for `ListCommands`, `LookupCommand`, `GetAgentWorkflowGuide`, `GetMutateSchema`, `ValidateMutateBatch`, and `ExecCommandRegistry` operations.
+
+### Officialized
+- Officialized `3.3.0` by closing the development cycle suffix.
+
 ## 3.2.1 - 2026-04-04
 
 ### Added

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Spectre.Console;
 
 internal sealed class ValidateCommandService
@@ -7,7 +9,7 @@ internal sealed class ValidateCommandService
 
     private readonly HierarchyDaemonClient _daemonClient = new();
 
-    private static readonly string[] AllValidators = ["scene-list", "missing-scripts", "packages", "build-settings", "asmdef", "asset-refs", "addressables"];
+    private static readonly string[] AllValidators = ["scene-list", "missing-scripts", "packages", "build-settings", "asmdef", "asset-refs", "addressables", "scripts"];
 
     public async Task HandleValidateCommandAsync(
         string input,
@@ -25,7 +27,7 @@ internal sealed class ValidateCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /validate <scene-list|missing-scripts|packages|build-settings|asmdef|asset-refs|addressables|all>");
+            log("[x] usage: /validate <scene-list|missing-scripts|packages|build-settings|asmdef|asset-refs|addressables|scripts|all>");
             return;
         }
 
@@ -60,9 +62,12 @@ internal sealed class ValidateCommandService
                 case "asmdef":
                     RunLocalAsmdefValidator(session, log);
                     break;
+                case "scripts":
+                    RunLocalScriptsValidator(session, log);
+                    break;
                 default:
                     log($"[x] unknown validator: {Markup.Escape(validator)}");
-                    log("supported: scene-list | missing-scripts | packages | build-settings | asmdef | asset-refs | addressables | all");
+                    log("supported: scene-list | missing-scripts | packages | build-settings | asmdef | asset-refs | addressables | scripts | all");
                     return;
             }
         }
@@ -214,6 +219,277 @@ internal sealed class ValidateCommandService
 
         RenderResult(result, log);
     }
+
+    /// <summary>
+    /// ExecV2 entry point for agentic validate.scripts dispatch.
+    /// Returns (ok, resultJson, error).
+    /// </summary>
+    public static (bool Ok, JsonElement? Result, string? Error) ExecScriptsValidation(string projectPath)
+    {
+        var logs = new List<string>();
+        var session = new CliSessionState { Mode = CliMode.Project, CurrentProjectPath = projectPath };
+        RunLocalScriptsValidator(session, line => logs.Add(line));
+
+        var result = JsonSerializer.SerializeToElement(new { logs }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return (true, result, null);
+    }
+
+    private static void RunLocalScriptsValidator(CliSessionState session, Action<string> log)
+    {
+        var projectPath = session.CurrentProjectPath!;
+        var diagnostics = new List<ValidateDiagnostic>();
+
+        // 1. Resolve Unity Managed directory (single-shot: env → exact version → any installed editor)
+        if (!TryResolveManagedDir(projectPath, out var managedDir, out var resolveError))
+        {
+            log($"[red]validate[/]: scripts — {Markup.Escape(resolveError ?? "could not locate Unity Managed directory")}");
+            return;
+        }
+
+        // 2. Collect .cs files under Assets/
+        var assetsPath = Path.Combine(projectPath, "Assets");
+        if (!Directory.Exists(assetsPath))
+        {
+            diagnostics.Add(new ValidateDiagnostic(ValidateSeverity.Error, "VSCS001", "Assets/ directory not found"));
+            RenderResult(new ValidateResult("scripts", false, 1, 0, diagnostics), log);
+            return;
+        }
+
+        var csFiles = Directory.GetFiles(assetsPath, "*.cs", SearchOption.AllDirectories);
+        if (csFiles.Length == 0)
+        {
+            RenderResult(new ValidateResult("scripts", true, 0, 0, []), log);
+            return;
+        }
+
+        log($"[grey]validate[/]: scripts — compiling {csFiles.Length} file(s) against Unity stubs ({Markup.Escape(managedDir)})...");
+
+        // 3. Generate temp csproj and run dotnet build
+        var tempDir = Path.Combine(Path.GetTempPath(), $"unifocl-validate-scripts-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var scriptAssembliesDir = Path.Combine(projectPath, "Library", "ScriptAssemblies");
+            var csprojContent = GenerateScriptsValidationCsproj(managedDir, scriptAssembliesDir, csFiles);
+            var csprojPath = Path.Combine(tempDir, "validate-scripts.csproj");
+            File.WriteAllText(csprojPath, csprojContent);
+
+            var psi = new ProcessStartInfo("dotnet", $"build \"{csprojPath}\" --disable-build-servers -v quiet")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = tempDir,
+            };
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                log("[red]validate[/]: scripts — failed to start dotnet build");
+                return;
+            }
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            diagnostics = ParseCompilerDiagnostics(stdout + "\n" + stderr, projectPath);
+            var errorCount = diagnostics.Count(d => d.Severity == ValidateSeverity.Error);
+            var warningCount = diagnostics.Count(d => d.Severity == ValidateSeverity.Warning);
+            RenderResult(new ValidateResult("scripts", errorCount == 0, errorCount, warningCount, diagnostics), log);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* best effort cleanup */ }
+        }
+    }
+
+    /// <summary>
+    /// Single-shot resolution of the Unity Managed directory containing UnityEditor.dll.
+    /// Fallback chain: env var → exact project version → any installed editor.
+    /// </summary>
+    private static bool TryResolveManagedDir(string projectPath, out string managedDir, out string? error)
+    {
+        managedDir = string.Empty;
+        error = null;
+
+        // 1. Explicit env var (same as compatcheck) — highest priority
+        var envManaged = Environment.GetEnvironmentVariable("UNIFOCL_UNITY_EDITOR_MANAGED_DIR");
+        if (!string.IsNullOrWhiteSpace(envManaged) && IsManagedDir(envManaged))
+        {
+            managedDir = envManaged;
+            return true;
+        }
+
+        // 2. Exact project-version match via UnityEditorPathService
+        if (UnityEditorPathService.TryResolveEditorForProject(projectPath, out var editorPath, out _, out _)
+            && TryDeriveManagedFromEditor(editorPath, out managedDir))
+        {
+            return true;
+        }
+
+        // 3. Fallback: any installed editor (for offline compile, exact version rarely matters)
+        var installed = UnityEditorPathService.DetectInstalledEditors(out _);
+        foreach (var editor in installed)
+        {
+            if (TryDeriveManagedFromEditor(editor.EditorPath, out managedDir))
+                return true;
+        }
+
+        error = installed.Count == 0
+            ? "no Unity editors found — install via Unity Hub or set UNIFOCL_UNITY_EDITOR_MANAGED_DIR"
+            : "could not derive Managed directory from any installed Unity editor";
+        return false;
+    }
+
+    private static bool TryDeriveManagedFromEditor(string editorPath, out string managedDir)
+    {
+        managedDir = string.Empty;
+
+        // macOS: .../Unity.app/Contents/MacOS/Unity → .../Unity.app/Contents/Managed
+        if (OperatingSystem.IsMacOS())
+        {
+            var contentsDir = Path.GetDirectoryName(Path.GetDirectoryName(editorPath));
+            if (!string.IsNullOrEmpty(contentsDir))
+            {
+                var candidate = Path.Combine(contentsDir, "Managed");
+                if (IsManagedDir(candidate))
+                {
+                    managedDir = candidate;
+                    return true;
+                }
+            }
+        }
+
+        // Windows/Linux: .../Editor/Unity[.exe] → .../Editor/Data/Managed
+        var editorDir = Path.GetDirectoryName(editorPath);
+        if (!string.IsNullOrEmpty(editorDir))
+        {
+            var candidate = Path.Combine(editorDir, "Data", "Managed");
+            if (IsManagedDir(candidate))
+            {
+                managedDir = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsManagedDir(string path) =>
+        Directory.Exists(path) && File.Exists(Path.Combine(path, "UnityEditor.dll"));
+
+    private static string GenerateScriptsValidationCsproj(
+        string managedDir,
+        string scriptAssembliesDir,
+        string[] csFiles)
+    {
+        // Derive template libcache dir for UnityEngine.UI / TextMeshPro
+        var templateLibcacheDir = managedDir
+            .Replace("/Contents/Resources/Scripting/Managed", "/Contents/Resources/PackageManager/ProjectTemplates/libcache")
+            .Replace("/Contents/Managed", "/Contents/Resources/PackageManager/ProjectTemplates/libcache")
+            .Replace("\\Contents\\Managed", "\\Contents\\Resources\\PackageManager\\ProjectTemplates\\libcache");
+
+        var compileItems = string.Join(Environment.NewLine,
+            csFiles.Select(f => $"    <Compile Include=\"{EscapeXml(f)}\" />"));
+
+        var scriptAssembliesRef = Directory.Exists(scriptAssembliesDir)
+            ? $"""
+                  <ItemGroup>
+                    <UnityProjectAssembly Include="{EscapeXml(scriptAssembliesDir)}/*.dll" />
+                    <Reference Include="@(UnityProjectAssembly)">
+                      <Private>false</Private>
+                    </Reference>
+                  </ItemGroup>
+              """
+            : string.Empty;
+
+        var templateRef = Directory.Exists(templateLibcacheDir)
+            ? $"""
+                  <ItemGroup>
+                    <UnityTemplateAssembly Include="{EscapeXml(templateLibcacheDir)}/**/ScriptAssemblies/UnityEngine.UI.dll" />
+                    <UnityTemplateAssembly Include="{EscapeXml(templateLibcacheDir)}/**/ScriptAssemblies/Unity.TextMeshPro.dll" />
+                    <Reference Include="@(UnityTemplateAssembly)">
+                      <Private>false</Private>
+                    </Reference>
+                  </ItemGroup>
+              """
+            : string.Empty;
+
+        return $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>netstandard2.1</TargetFramework>
+                <LangVersion>9.0</LangVersion>
+                <Nullable>disable</Nullable>
+                <ImplicitUsings>disable</ImplicitUsings>
+                <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+                <DefineConstants>$(DefineConstants);UNITY_EDITOR</DefineConstants>
+                <NoWarn>$(NoWarn);CS0649;CS1701;CS1702;CS0108;CS0114;CS0162;CS0414;CS0219</NoWarn>
+                <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+              </PropertyGroup>
+
+              <ItemGroup>
+            {compileItems}
+              </ItemGroup>
+
+              <ItemGroup>
+                <UnityManagedAssembly Include="{EscapeXml(managedDir)}/**/*.dll" />
+                <Reference Include="@(UnityManagedAssembly)">
+                  <Private>false</Private>
+                </Reference>
+              </ItemGroup>
+
+            {scriptAssembliesRef}
+            {templateRef}
+            </Project>
+            """;
+    }
+
+    private static readonly Regex DiagnosticPattern = new(
+        @"^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+(CS\d{4}):\s+(.+)$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static List<ValidateDiagnostic> ParseCompilerDiagnostics(string buildOutput, string projectPath)
+    {
+        var diagnostics = new List<ValidateDiagnostic>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (Match match in DiagnosticPattern.Matches(buildOutput))
+        {
+            var filePath = match.Groups[1].Value.Trim();
+            var line = match.Groups[2].Value;
+            var severity = match.Groups[4].Value;
+            var code = match.Groups[5].Value;
+            var message = match.Groups[6].Value.Trim();
+
+            // De-duplicate identical diagnostics
+            var key = $"{filePath}:{line}:{code}";
+            if (!seen.Add(key))
+                continue;
+
+            // Make path relative to project
+            var relativePath = filePath;
+            if (filePath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+            {
+                relativePath = filePath[(projectPath.Length + 1)..];
+            }
+
+            var diagSeverity = severity == "error" ? ValidateSeverity.Error : ValidateSeverity.Warning;
+            diagnostics.Add(new ValidateDiagnostic(
+                diagSeverity,
+                code,
+                message,
+                AssetPath: $"{relativePath}({line})"));
+        }
+
+        return diagnostics;
+    }
+
+    private static string EscapeXml(string value) =>
+        value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
     public async Task<BuildPreflightResult> BuildPreflightAsync(
         CliSessionState session,

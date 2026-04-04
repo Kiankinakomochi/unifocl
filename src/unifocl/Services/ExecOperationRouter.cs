@@ -95,6 +95,12 @@ internal sealed class ExecOperationRouter
                 .ConfigureAwait(false);
         }
 
+        // validate.scripts runs dotnet build locally — no daemon required.
+        if (request.Operation.Equals("validate.scripts", StringComparison.OrdinalIgnoreCase))
+        {
+            return DispatchScriptsValidation(request);
+        }
+
         return Dispatch(request, intent.DryRun, projectBridge);
     }
 
@@ -306,6 +312,25 @@ internal sealed class ExecOperationRouter
             default:
                 return Rejected(request.RequestId, $"unknown test operation: {request.Operation}");
         }
+    }
+
+    /// <summary>
+    /// Dispatches validate.scripts by running the offline Roslyn compile check.
+    /// </summary>
+    private ExecV2Response DispatchScriptsValidation(ExecV2Request request)
+    {
+        var session = _sessions.Get(request.SessionId);
+        if (session is null || string.IsNullOrWhiteSpace(session.ProjectPath))
+        {
+            return Rejected(request.RequestId,
+                "validate.scripts requires an active session with a projectPath. " +
+                "Open a session first with operation 'session.open'.");
+        }
+
+        var (ok, result, error) = ValidateCommandService.ExecScriptsValidation(session.ProjectPath);
+        return ok
+            ? new ExecV2Response(ExecV2Status.Completed, request.RequestId, Result: result)
+            : new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: error);
     }
 
     private static ExecV2Response Rejected(string requestId, string message)
