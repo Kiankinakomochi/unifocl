@@ -9,6 +9,7 @@ internal sealed class ExecCommandRegistry
         ["asset.remove"]        = ExecRiskLevel.DestructiveWrite,
         ["asset.create_script"] = ExecRiskLevel.SafeWrite,
         ["asset.create"]        = ExecRiskLevel.SafeWrite,
+        ["asset.describe"]      = ExecRiskLevel.SafeRead,
         // build operations
         ["build.run"]           = ExecRiskLevel.PrivilegedExec,
         ["build.exec"]          = ExecRiskLevel.PrivilegedExec,

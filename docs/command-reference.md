@@ -250,7 +250,74 @@ The `profiling` category provides capture, analysis, and live telemetry tools ba
 
 **Important:** Editor capture save/load (`.data` via `ProfilerDriver`) and runtime binary logging (`.raw` via `Profiler.logFile`) are separate flows — do not confuse them.
 
-## 6. Safe Mutation: Dry-Run Previews
+## 6. Asset Describe (Local Vision)
+
+The `asset.describe` command lets agents "see" Unity assets without burning tokens on multimodal vision. It exports a thumbnail from the Unity Editor and runs a local BLIP or CLIP model to produce a compact text description.
+
+**Architecture:** Two-phase composite command —
+1. Unity daemon exports a preview PNG via `AssetPreview` API
+2. CLI runs a Python captioning script locally via `uv run --script`
+3. Thumbnail is deleted after captioning; only the text description is returned
+
+**CLI usage:**
+
+```
+/asset describe Assets/Sprites/hero.png
+/asset describe Assets/Sprites/hero.png --engine clip
+```
+
+**Agentic exec usage:**
+
+```json
+{
+  "operation": "asset.describe",
+  "requestId": "req-042",
+  "args": {
+    "assetPath": "Assets/Sprites/hero.png",
+    "engine": "blip"
+  }
+}
+```
+
+**Parameters:**
+
+| Arg | Required | Default | Description |
+| --- | --- | --- | --- |
+| `assetPath` | Yes | — | Unity asset path (e.g., `Assets/Textures/Tile.png`) |
+| `engine` | No | `blip` | Captioning engine: `blip` (open-ended captions) or `clip` (zero-shot classification against game-asset labels) |
+
+**Response (agentic):**
+
+```json
+{
+  "status": "Completed",
+  "result": {
+    "assetPath": "Assets/Sprites/hero.png",
+    "assetType": "Texture2D",
+    "fileSizeBytes": 24576,
+    "description": "a cartoon character with a blue hat",
+    "engine": "blip",
+    "model": "Salesforce/blip-image-captioning-base@82a37760"
+  }
+}
+```
+
+**Prerequisites:**
+
+- `python3` (>= 3.10) and `uv` — run `unifocl init` to install if missing
+- First invocation downloads the model (~990 MB for BLIP, ~600 MB for CLIP); subsequent runs use the HuggingFace cache at `~/.cache/huggingface/`
+- Non-image assets (meshes, materials, prefabs) work if Unity can generate an `AssetPreview`; falls back to mini-thumbnail icon, then metadata-only
+
+**Security hardening:**
+
+- Model revisions are **pinned to exact commit SHAs** — a compromised HuggingFace account cannot silently swap model weights
+- Thumbnail paths are GUID-based (generated server-side), not influenced by agent input
+- The `engine` argument is validated to `blip|clip` by the Python script's argparse
+- Thumbnails are deleted immediately after captioning completes
+
+**Dry-run:** Returns a pre-flight check (asset existence, `uv`/`python3` availability, model cache status, estimated download size) without exporting a thumbnail or running inference.
+
+## 7. Safe Mutation: Dry-Run Previews
 
 Both human operators and AI agents can validate mutations safely before execution. `--dry-run` is supported for mutation commands in all interactive and agentic modes:
 
@@ -283,7 +350,7 @@ rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
 
-## 7. Dynamic C# Eval
+## 8. Dynamic C# Eval
 
 The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities — all without creating script files.
 
@@ -370,7 +437,7 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 - `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
 - The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
 
-## 8. Human Interface: TUI & Keybindings
+## 9. Human Interface: TUI & Keybindings
 
 For developers using the interactive CLI, unifocl features a composer with Intellisense and keyboard-driven navigation.
 
@@ -396,7 +463,7 @@ Once focused (`F7`), the arrow keys and tab behave contextually:
 | **`Shift+Tab`** | Collapse selected node | Move to parent folder | Back to component list |
 | **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
 
-## 9. Project Validation
+## 10. Project Validation
 
 The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
 
@@ -430,7 +497,7 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
-## 10. Build Workflow
+## 11. Build Workflow
 
 The build workflow commands extend `/build` with pre-build validation, post-build introspection, and a unified report surface. Build reports are automatically captured after every build via a `IPostprocessBuildWithReport` hook and stored at `Library/unifocl-last-build-report.json`.
 
@@ -459,7 +526,7 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
-## 11. Test Orchestration
+## 12. Test Orchestration
 
 The `test` commands run Unity's built-in test runner as a **direct subprocess** — no daemon, no running editor required. This makes them safe to call from CI, parallel agent sessions, or any headless environment.
 
@@ -509,7 +576,7 @@ ExecV2 operations: `test.list` (`SafeRead`) and `test.run` (`PrivilegedExec` —
 
 Full reference: [`test-orchestration.md`](test-orchestration.md)
 
-## 12. Project Diagnostics
+## 13. Project Diagnostics
 
 The `diag` command family provides read-only structural introspection of the project — assembly topology, define symbols, and asset dependency trees. Unlike `/validate`, `diag` commands are data dumps rather than pass/fail checks.
 

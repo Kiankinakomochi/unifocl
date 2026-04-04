@@ -155,6 +155,7 @@ internal static class CliCommandCatalog
             new("/asset remove <path>", "Delete an asset at the given path (DestructiveWrite, requires approval)", "/asset remove", "asset"),
             new("/asset create <type> <path>", "Create a new asset of the given type at path", "/asset create", "asset"),
             new("/asset create-script <name> <path>", "Create a new C# script at path", "/asset create-script", "asset"),
+            new("/asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model (SafeRead)", "/asset describe", "asset"),
 
             // ── scene ─────────────────────────────────────────────────────
             new("/scene load <path>", "Load a scene by path (replaces current)", "/scene load", "scene"),
@@ -302,6 +303,7 @@ internal static class CliCommandCatalog
             new("asset remove <path>", "Delete an asset at the given path", "asset remove", "asset"),
             new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create", "asset"),
             new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
+            new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),
