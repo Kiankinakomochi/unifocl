@@ -141,6 +141,7 @@ try
     var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();
     var tagLayerCommandService = new TagLayerCommandService();
+    var runtimeCommandService = new RuntimeCommandService();
     if (CliCommandParsingService.TryParseExecLaunchOptions(launchArgs, out var execOptions, out var execError))
     {
         if (!string.IsNullOrWhiteSpace(execError))
@@ -169,6 +170,7 @@ try
                 diagCommandService,
                 testCommandService,
                 tagLayerCommandService,
+                runtimeCommandService,
                 appCancellation.Token).WaitAsync(appCancellation.Token);
         }
         catch (OperationCanceledException) when (appCancellation.IsCancellationRequested)
@@ -615,6 +617,60 @@ try
             continue;
         }
 
+        if (matched.Trigger.StartsWith("/console", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleConsoleCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/playmode", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandlePlaymodeCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/time", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleTimeCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/compile", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleCompileCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/profiler", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleProfilerCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/recorder", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleRecorderCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
         if (matched.Trigger is "/keybinds" or "/shortcuts")
         {
             CliLogService.WriteKeybindsHelp(streamLog, session);
@@ -641,6 +697,69 @@ try
         {
             await AwaitWithCancellationAsync(
                 () => CliDumpService.HandleDumpCommandAsync(input, session, streamLog),
+                appCancellation.Token);
+            continue;
+        }
+
+        if (matched.Trigger.StartsWith("/debug-artifact", StringComparison.Ordinal))
+        {
+            if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                CliLogService.AppendLog(streamLog, "[yellow]mode[/]: open a project first with /open");
+                continue;
+            }
+
+            var isPrep = input.Contains("prep", StringComparison.OrdinalIgnoreCase);
+            await AwaitWithCancellationAsync(
+                async () =>
+                {
+                    var tier = 1;
+                    var tierMatch = System.Text.RegularExpressions.Regex.Match(input, @"--tier\s+(\d)");
+                    if (tierMatch.Success) tier = Math.Clamp(int.Parse(tierMatch.Groups[1].Value), 0, 3);
+
+                    var projectPath = session.CurrentProjectPath!;
+                    var daemonPort = DebugArtifactService.ResolveDaemonPort(projectPath);
+                    if (daemonPort <= 0)
+                    {
+                        CliLogService.AppendLog(streamLog, "[red]error[/]: no daemon available");
+                        return;
+                    }
+
+                    var service = new DebugArtifactService();
+
+                    if (isPrep)
+                    {
+                        CliLogService.AppendLog(streamLog, $"[grey]artifact[/]: preparing tier {tier} debug session...");
+                        var prep = await service.PrepAsync(tier, daemonPort, appCancellation.Token);
+
+                        var statusColor = prep.Ok ? "green" : "yellow";
+                        CliLogService.AppendLog(streamLog,
+                            $"[{statusColor}]artifact[/]: prep {(prep.Ok ? "complete" : "partial")} — " +
+                            $"console cleared: {prep.ConsoleCleared}, profiler: {prep.ProfilerStarted}, recorder: {prep.RecorderStarted}");
+                        if (prep.Errors.Count > 0)
+                        {
+                            foreach (var err in prep.Errors)
+                                CliLogService.AppendLog(streamLog, $"[yellow]  {Markup.Escape(err.Operation)}[/]: {Markup.Escape(err.Error)}");
+                        }
+                        CliLogService.AppendLog(streamLog, $"[grey]next[/]: {Markup.Escape(prep.NextStep)}");
+                    }
+                    else
+                    {
+                        CliLogService.AppendLog(streamLog, $"[grey]artifact[/]: collecting tier {tier} debug artifact...");
+                        var artifact = await service.CollectAsync(tier, daemonPort, null, appCancellation.Token);
+                        var outputPath = service.PersistArtifact(artifact, projectPath);
+
+                        CliLogService.AppendLog(streamLog,
+                            $"[green]artifact[/]: tier {tier} debug artifact collected → {Markup.Escape(outputPath)}");
+                        if (artifact.Errors.Count > 0)
+                        {
+                            CliLogService.AppendLog(streamLog,
+                                $"[yellow]artifact[/]: {artifact.Errors.Count} sub-operation(s) failed during collection");
+                        }
+                        CliLogService.AppendLog(streamLog,
+                            $"[grey]artifact[/]: duration {artifact.CollectionDurationMs:F0}ms");
+                    }
+                },
                 appCancellation.Token);
             continue;
         }

@@ -12,6 +12,7 @@ internal sealed class ExecOperationRouter
     private readonly ExecSessionService _sessions;
     private readonly TestCommandService _testService;
     private readonly AssetDescribeService _assetDescribe;
+    private readonly DebugArtifactService _debugArtifact;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ExecOperationRouter(ExecCommandRegistry registry, ExecApprovalService approval, ExecSessionService sessions)
@@ -21,6 +22,7 @@ internal sealed class ExecOperationRouter
         _sessions = sessions;
         _testService = new TestCommandService();
         _assetDescribe = new AssetDescribeService();
+        _debugArtifact = new DebugArtifactService();
     }
 
     /// <summary>Synchronous routing path used by the daemon HTTP endpoint.</summary>
@@ -99,6 +101,19 @@ internal sealed class ExecOperationRouter
         if (request.Operation.Equals("validate.scripts", StringComparison.OrdinalIgnoreCase))
         {
             return DispatchScriptsValidation(request);
+        }
+
+        // debug-artifact operations are composite — orchestrate multiple sub-operations.
+        if (request.Operation.Equals("debug-artifact.collect", StringComparison.OrdinalIgnoreCase))
+        {
+            return await DispatchDebugArtifactCollectAsync(request, projectBridge, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (request.Operation.Equals("debug-artifact.prep", StringComparison.OrdinalIgnoreCase))
+        {
+            return await DispatchDebugArtifactPrepAsync(request, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         return Dispatch(request, intent.DryRun, projectBridge);
@@ -331,6 +346,72 @@ internal sealed class ExecOperationRouter
         return ok
             ? new ExecV2Response(ExecV2Status.Completed, request.RequestId, Result: result)
             : new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: error);
+    }
+
+    /// <summary>
+    /// Dispatches debug-artifact.collect by orchestrating multiple sub-operations
+    /// and persisting the assembled artifact to disk.
+    /// </summary>
+    private async Task<ExecV2Response> DispatchDebugArtifactCollectAsync(
+        ExecV2Request request,
+        ProjectDaemonBridge projectBridge,
+        CancellationToken ct)
+    {
+        var tier = 1;
+        if (request.Args.HasValue
+            && request.Args.Value.TryGetProperty("tier", out var tierProp)
+            && tierProp.ValueKind == JsonValueKind.Number)
+        {
+            tier = Math.Clamp(tierProp.GetInt32(), 0, 3);
+        }
+
+        DebugArtifactTicketMeta? ticketMeta = null;
+        if (request.Args.HasValue
+            && request.Args.Value.TryGetProperty("ticketMeta", out var tmProp)
+            && tmProp.ValueKind == JsonValueKind.Object)
+        {
+            ticketMeta = JsonSerializer.Deserialize<DebugArtifactTicketMeta>(tmProp.GetRawText(), JsonOptions);
+        }
+
+        var session = _sessions.Get(request.SessionId);
+        var projectPath = session?.ProjectPath ?? Environment.CurrentDirectory;
+        var daemonPort = DebugArtifactService.ResolveDaemonPort(projectPath);
+
+        var artifact = await _debugArtifact.CollectAsync(tier, daemonPort, ticketMeta, ct);
+        var outputPath = _debugArtifact.PersistArtifact(artifact, projectPath);
+
+        return new ExecV2Response(
+            ExecV2Status.Completed,
+            request.RequestId,
+            Message: $"debug artifact collected (tier {tier}) → {outputPath}",
+            Result: new { outputPath, artifact });
+    }
+
+    private async Task<ExecV2Response> DispatchDebugArtifactPrepAsync(
+        ExecV2Request request,
+        CancellationToken ct)
+    {
+        var tier = 1;
+        if (request.Args.HasValue
+            && request.Args.Value.TryGetProperty("tier", out var tierProp)
+            && tierProp.ValueKind == JsonValueKind.Number)
+        {
+            tier = Math.Clamp(tierProp.GetInt32(), 0, 3);
+        }
+
+        var session = _sessions.Get(request.SessionId);
+        var projectPath = session?.ProjectPath ?? Environment.CurrentDirectory;
+        var daemonPort = DebugArtifactService.ResolveDaemonPort(projectPath);
+
+        var result = await _debugArtifact.PrepAsync(tier, daemonPort, ct);
+
+        return new ExecV2Response(
+            result.Ok ? ExecV2Status.Completed : ExecV2Status.Failed,
+            request.RequestId,
+            Message: result.Ok
+                ? $"prep complete (tier {tier}). {result.NextStep}"
+                : $"prep partially failed (tier {tier}). {result.NextStep}",
+            Result: result);
     }
 
     private static ExecV2Response Rejected(string requestId, string message)

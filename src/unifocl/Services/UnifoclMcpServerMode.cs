@@ -782,7 +782,7 @@ public static class UnifoclAgentWorkflowTools
           },
           "script_workflow": "When creating C# scripts: (1) write all .cs files first via asset.create_script, (2) run /validate scripts for offline Roslyn compile check (no editor needed), (3) fix errors before opening/restarting the project. This avoids costly /close + /open cycles for compile failures.",
           "modes_summary": "project (default, asset ops) | inspector (per-object mutations) | hierarchy (TUI-only, avoid in agentic)",
-          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, script_workflow, or 'all'"
+          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, script_workflow, debug_artifact, or 'all'"
         }
         """;
 
@@ -1030,6 +1030,48 @@ public static class UnifoclAgentWorkflowTools
         }
         """;
 
+    private const string DebugArtifactJson = """
+        {
+          "debug_artifact": {
+            "overview": "Tiered debug report that captures project state as structured JSON. Use prep to set up instrumentation, then collect after reproducing the issue.",
+            "tiers": {
+              "0": "Environment only: PlayerSettings, compile status (~2-5KB)",
+              "1": "Standard: + console errors/warnings, compile errors, 6 validators (~20-50KB)",
+              "2": "Extended: + hierarchy snapshot, build report, profiler state, frame timing (~100-300KB)",
+              "3": "Full: + profiler frames/GC alloc/markers, recorder output, memory snapshot (~500KB-2MB)"
+            },
+            "workflow": [
+              "1. Prep: exec '/debug-artifact prep --tier 3' — clears console, starts profiler (T2+), starts recorder (T3). Returns next-step instructions.",
+              "2. Playmode: exec '/playmode start' — enter playmode, reproduce the issue.",
+              "3. Stop captures: exec '/playmode stop' then exec '/profiler stop', and if T3: exec '/recorder stop'.",
+              "4. Collect: exec '/debug-artifact collect --tier 3' — snapshots all data, writes artifact JSON to .unifocl-runtime/artifacts/.",
+              "5. Read the artifact file and use it to generate reports, create tickets, or triage."
+            ],
+            "exec_examples": {
+              "prep_t2": "exec '/debug-artifact prep --tier 2' --agentic --session-seed dbg",
+              "prep_t3": "exec '/debug-artifact prep --tier 3' --agentic --session-seed dbg",
+              "playmode_start": "exec '/playmode start' --agentic --session-seed dbg",
+              "playmode_stop": "exec '/playmode stop' --agentic --session-seed dbg",
+              "profiler_stop": "exec '/profiler stop' --agentic --session-seed dbg",
+              "recorder_stop": "exec '/recorder stop' --agentic --session-seed dbg",
+              "collect": "exec '/debug-artifact collect --tier 3' --agentic --session-seed dbg"
+            },
+            "execv2_operations": {
+              "debug-artifact.prep": "PrivilegedExec — starts profiler/recorder. Args: { tier: 0-3 }",
+              "debug-artifact.collect": "SafeRead — snapshots current state. Args: { tier: 0-3, ticketMeta?: { title, severity, labels, repro } }"
+            },
+            "key_points": [
+              "prep is PrivilegedExec (starts profiler/recorder), collect is SafeRead (read-only snapshot).",
+              "Always stop profiler and recorder BEFORE collecting — collect reads whatever state exists at call time.",
+              "T0/T1 do not need prep — they only read console logs and validation data that are always available.",
+              "The artifact JSON preserves raw daemon responses. Use ticketMeta to pre-populate issue tracker fields.",
+              "Artifacts are written to {projectPath}/.unifocl-runtime/artifacts/{timestamp}-debug-artifact.json."
+            ],
+            "output_schema": "See docs/schemas/debug-artifact.schema.json for the full JSON Schema definition."
+          }
+        }
+        """;
+
     private static readonly Dictionary<string, string> _sections = new(StringComparer.OrdinalIgnoreCase)
     {
         ["quick_start"] = QuickStartJson,
@@ -1040,12 +1082,13 @@ public static class UnifoclAgentWorkflowTools
         ["session"] = SessionJson,
         ["discovery"] = DiscoveryJson,
         ["script_workflow"] = ScriptWorkflowJson,
+        ["debug_artifact"] = DebugArtifactJson,
         ["all"] = WorkflowGuideJson
     };
 
     [McpServerTool, Description(
         "Returns unifocl agentic workflow guidance. Call with no section for a quick-start summary (~200 tokens). " +
-        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery, script_workflow. " +
+        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery, script_workflow, debug_artifact. " +
         "Replaces the need to read docs or call /help.")]
     public static string GetAgentWorkflowGuide(
         [Description("Section to retrieve: quick_start (default, minimal getting-started), " +
@@ -1053,6 +1096,7 @@ public static class UnifoclAgentWorkflowTools
                      "mutate (/mutate batch guidance), categories (custom tool loading), " +
                      "session (--session-seed patterns), discovery (list_commands/lookup_command usage), " +
                      "script_workflow (write-validate-open pattern for Host mode), " +
+                     "debug_artifact (prep-playmode-collect workflow for debug reports), " +
                      "or 'all' for the complete guide.")]
         string section = "quick_start")
     {

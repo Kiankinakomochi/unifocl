@@ -143,22 +143,6 @@ public class McpToolTests
         Assert.Contains("/validate scripts", json);
     }
 
-    [Theory]
-    [InlineData("quick_start")]
-    [InlineData("exec_flags")]
-    [InlineData("modes")]
-    [InlineData("mutate")]
-    [InlineData("categories")]
-    [InlineData("session")]
-    [InlineData("discovery")]
-    [InlineData("script_workflow")]
-    [InlineData("all")]
-    public void GetAgentWorkflowGuide_AllSections_ReturnNonError(string section)
-    {
-        var json = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide(section);
-        Assert.DoesNotContain("\"error\"", json);
-    }
-
     [Fact]
     public void GetAgentWorkflowGuide_UnknownSection_ReturnsError()
     {
@@ -268,5 +252,199 @@ public class McpToolTests
     {
         var registry = new ExecCommandRegistry();
         Assert.True(registry.IsKnown(op), $"operation '{op}' should be registered");
+    }
+
+    // ── Debug Artifact: ExecRegistry ──────────────────────────────────────────
+
+    [Fact]
+    public void ExecRegistry_DebugArtifactCollect_IsRegisteredAsSafeRead()
+    {
+        var registry = new ExecCommandRegistry();
+        Assert.True(registry.IsKnown("debug-artifact.collect"), "debug-artifact.collect should be registered");
+        Assert.True(registry.TryGetRisk("debug-artifact.collect", out var risk));
+        Assert.Equal(ExecRiskLevel.SafeRead, risk);
+    }
+
+    [Fact]
+    public void ExecRegistry_DebugArtifactPrep_IsRegisteredAsPrivilegedExec()
+    {
+        var registry = new ExecCommandRegistry();
+        Assert.True(registry.IsKnown("debug-artifact.prep"), "debug-artifact.prep should be registered");
+        Assert.True(registry.TryGetRisk("debug-artifact.prep", out var risk));
+        Assert.Equal(ExecRiskLevel.PrivilegedExec, risk);
+    }
+
+    [Fact]
+    public void ExecRegistry_DebugArtifactOps_AreRouterHandled()
+    {
+        var registry = new ExecCommandRegistry();
+        Assert.False(
+            registry.TryBuildProjectRequest(
+                new ExecV2Request("test", null, "debug-artifact.collect", null, null),
+                false, out _, out var collectError));
+        Assert.Contains("handled by the router", collectError);
+
+        Assert.False(
+            registry.TryBuildProjectRequest(
+                new ExecV2Request("test", null, "debug-artifact.prep", null, null),
+                false, out _, out var prepError));
+        Assert.Contains("handled by the router", prepError);
+    }
+
+    // ── Debug Artifact: CLI Catalog ───────────────────────────────────────────
+
+    [Fact]
+    public void CliCatalog_DebugArtifactCollect_IsRegistered()
+    {
+        var commands = CliCommandCatalog.CreateRootCommands();
+        Assert.Contains(commands, c => c.Trigger == "/debug-artifact collect");
+    }
+
+    [Fact]
+    public void CliCatalog_DebugArtifactPrep_IsRegistered()
+    {
+        var commands = CliCommandCatalog.CreateRootCommands();
+        Assert.Contains(commands, c => c.Trigger == "/debug-artifact prep");
+    }
+
+    [Fact]
+    public void CliCatalog_DebugArtifactCommands_InDiagCategory()
+    {
+        var commands = CliCommandCatalog.CreateRootCommands();
+        var artifactCommands = commands.Where(c => c.Trigger.StartsWith("/debug-artifact")).ToList();
+        Assert.True(artifactCommands.Count >= 3, "should have prep, collect, and parent entries");
+        Assert.All(artifactCommands, c =>
+            Assert.Equal("diag", c.Category));
+    }
+
+    // ── Debug Artifact: Workflow Guide ────────────────────────────────────────
+
+    [Fact]
+    public void GetAgentWorkflowGuide_DebugArtifact_ReturnsWorkflow()
+    {
+        var json = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide("debug_artifact");
+        Assert.DoesNotContain("\"error\"", json);
+        Assert.Contains("prep", json);
+        Assert.Contains("collect", json);
+        Assert.Contains("playmode", json);
+        Assert.Contains("profiler", json);
+        Assert.Contains("tier", json);
+    }
+
+    [Fact]
+    public void GetAgentWorkflowGuide_DebugArtifact_ContainsExecExamples()
+    {
+        var json = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide("debug_artifact");
+        Assert.Contains("exec_examples", json);
+        Assert.Contains("--session-seed", json);
+        Assert.Contains("debug-artifact.prep", json);
+        Assert.Contains("debug-artifact.collect", json);
+    }
+
+    [Fact]
+    public void GetAgentWorkflowGuide_DebugArtifact_DocumentsTiers()
+    {
+        var json = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide("debug_artifact");
+        Assert.Contains("\"0\"", json);
+        Assert.Contains("\"1\"", json);
+        Assert.Contains("\"2\"", json);
+        Assert.Contains("\"3\"", json);
+    }
+
+    [Fact]
+    public void GetAgentWorkflowGuide_QuickStart_MentionsDebugArtifact()
+    {
+        var json = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide("quick_start");
+        Assert.Contains("debug_artifact", json);
+    }
+
+    // ── Debug Artifact: Workflow Guide Section Registry ───────────────────────
+
+    [Theory]
+    [InlineData("quick_start")]
+    [InlineData("exec_flags")]
+    [InlineData("modes")]
+    [InlineData("mutate")]
+    [InlineData("categories")]
+    [InlineData("session")]
+    [InlineData("discovery")]
+    [InlineData("script_workflow")]
+    [InlineData("debug_artifact")]
+    [InlineData("all")]
+    public void GetAgentWorkflowGuide_AllSections_ReturnNonError(string section)
+    {
+        var json = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide(section);
+        Assert.DoesNotContain("\"error\"", json);
+    }
+
+    // ── Debug Artifact: Runtime Command Catalog ──────────────────────────────
+
+    [Theory]
+    [InlineData("/console dump")]
+    [InlineData("/console tail")]
+    [InlineData("/console clear")]
+    [InlineData("/playmode start")]
+    [InlineData("/playmode stop")]
+    [InlineData("/profiler inspect")]
+    [InlineData("/profiler start")]
+    [InlineData("/profiler stop")]
+    [InlineData("/recorder start")]
+    [InlineData("/recorder stop")]
+    [InlineData("/recorder status")]
+    [InlineData("/time scale")]
+    [InlineData("/compile request")]
+    [InlineData("/compile status")]
+    public void CliCatalog_RuntimeCommands_AreRegistered(string trigger)
+    {
+        var commands = CliCommandCatalog.CreateRootCommands();
+        Assert.Contains(commands, c => c.Trigger == trigger);
+    }
+
+    // ── Debug Artifact: ExecRegistry Runtime Ops ─────────────────────────────
+
+    [Theory]
+    [InlineData("console dump")]
+    [InlineData("console clear")]
+    [InlineData("playmode.start")]
+    [InlineData("playmode.stop")]
+    [InlineData("time.scale")]
+    [InlineData("compile.status")]
+    [InlineData("compile.request")]
+    [InlineData("profiling.inspect")]
+    [InlineData("profiling.start_recording")]
+    [InlineData("profiling.stop_recording")]
+    [InlineData("recorder.start")]
+    [InlineData("recorder.stop")]
+    [InlineData("recorder.status")]
+    public void ExecRegistry_RuntimeOps_AreRegistered(string op)
+    {
+        var registry = new ExecCommandRegistry();
+        Assert.True(registry.IsKnown(op), $"operation '{op}' should be registered");
+    }
+
+    [Fact]
+    public void ExecRegistry_RuntimeOps_HaveExpectedRiskLevels()
+    {
+        var registry = new ExecCommandRegistry();
+
+        void AssertRisk(string op, ExecRiskLevel expected)
+        {
+            Assert.True(registry.TryGetRisk(op, out var risk), $"{op} should have a risk level");
+            Assert.Equal(expected, risk);
+        }
+
+        AssertRisk("console dump", ExecRiskLevel.SafeRead);
+        AssertRisk("console clear", ExecRiskLevel.SafeWrite);
+        AssertRisk("playmode.start", ExecRiskLevel.PrivilegedExec);
+        AssertRisk("playmode.stop", ExecRiskLevel.PrivilegedExec);
+        AssertRisk("time.scale", ExecRiskLevel.SafeWrite);
+        AssertRisk("compile.status", ExecRiskLevel.SafeRead);
+        AssertRisk("compile.request", ExecRiskLevel.SafeWrite);
+        AssertRisk("profiling.inspect", ExecRiskLevel.SafeRead);
+        AssertRisk("profiling.start_recording", ExecRiskLevel.PrivilegedExec);
+        AssertRisk("profiling.stop_recording", ExecRiskLevel.PrivilegedExec);
+        AssertRisk("recorder.start", ExecRiskLevel.PrivilegedExec);
+        AssertRisk("recorder.stop", ExecRiskLevel.PrivilegedExec);
+        AssertRisk("recorder.status", ExecRiskLevel.SafeRead);
     }
 }

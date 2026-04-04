@@ -156,6 +156,9 @@ internal sealed class ExecCommandRegistry
         ["profiling.annotate_frame"]  = ExecRiskLevel.SafeWrite,
         ["profiling.gpu_capture_begin"] = ExecRiskLevel.PrivilegedExec,
         ["profiling.gpu_capture_end"]   = ExecRiskLevel.PrivilegedExec,
+        // debug artifact (composite, handled by router)
+        ["debug-artifact.collect"]  = ExecRiskLevel.SafeRead,
+        ["debug-artifact.prep"]     = ExecRiskLevel.PrivilegedExec,
     };
 
     public bool TryGetRisk(string operation, out ExecRiskLevel risk)
@@ -1233,6 +1236,9 @@ internal sealed class ExecCommandRegistry
             case "test.flaky-report":
             // validate.scripts runs dotnet build locally — not dispatched through daemon
             case "validate.scripts":
+            // debug-artifact operations are composite, orchestrated by the router
+            case "debug-artifact.collect":
+            case "debug-artifact.prep":
             {
                 // These operations do not dispatch through ProjectDaemonBridge
                 validationError = $"operation '{req.Operation}' is handled by the router, not the project bridge";
