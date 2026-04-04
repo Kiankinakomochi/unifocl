@@ -749,6 +749,10 @@ These commands manage your session, project loading, and configuration. In the i
 | `/prefab revert <idx>` |  | Discard local overrides, revert to the source Prefab Asset. |
 | `/prefab unpack <idx> [--completely]` |  | Break the prefab connection, turning the instance into a regular GameObject. |
 | `/prefab variant <source-path> <new-path>` |  | Create a Prefab Variant inheriting from a base prefab. |
+| `/animator param add <asset-path> <name> <type>` |  | Add a parameter to an AnimatorController. `<type>` must be `float`, `int`, `bool`, or `trigger`. (SafeWrite) |
+| `/animator param remove <asset-path> <name>` |  | Remove an existing parameter from an AnimatorController by name. (DestructiveWrite) |
+| `/animator state add <asset-path> <name> [--layer <n>]` |  | Add a new state to the target layer's root state machine (layer 0 by default). (SafeWrite) |
+| `/animator transition add <asset-path> <from-state> <to-state> [--layer <n>]` |  | Create a transition between two states in the specified layer. Use `AnyState` as `<from-state>` to route from the Any State. (SafeWrite) |
 | `/init [path]` |  | Generate bridge-mode config and install editor-side dependencies. |
 | `/keybinds` | `/shortcuts` | Show modal keybinds and shortcuts. |
 | `/version` |  | Show CLI and protocol version. |
@@ -881,6 +885,10 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `prefab revert <idx>` |  | Discard local overrides, revert to source Prefab Asset in project mode. |
 | `prefab unpack <idx> [--completely]` |  | Break prefab connection in project mode. |
 | `prefab variant <source-path> <new-path>` |  | Create Prefab Variant from base prefab in project mode. |
+| `animator param add <asset-path> <name> <type>` |  | Add a parameter to an AnimatorController. `<type>`: `float`, `int`, `bool`, or `trigger`. |
+| `animator param remove <asset-path> <name>` |  | Remove a parameter from an AnimatorController by name. |
+| `animator state add <asset-path> <name> [--layer <n>]` |  | Add a new state to the target layer's root state machine (layer 0 by default). |
+| `animator transition add <asset-path> <from-state> <to-state> [--layer <n>]` |  | Create a transition between two states. Use `AnyState` as `<from-state>` for Any State transitions. |
 
 ## 5. Profiling (Lazy-Loaded Category)
 

@@ -4,6 +4,11 @@ internal sealed class ExecCommandRegistry
 {
     private static readonly Dictionary<string, ExecRiskLevel> Operations = new(StringComparer.OrdinalIgnoreCase)
     {
+        // animator operations
+        ["animator.param.add"]        = ExecRiskLevel.SafeWrite,
+        ["animator.param.remove"]     = ExecRiskLevel.DestructiveWrite,
+        ["animator.state.add"]        = ExecRiskLevel.SafeWrite,
+        ["animator.transition.add"]   = ExecRiskLevel.SafeWrite,
         // asset operations
         ["asset.rename"]        = ExecRiskLevel.DestructiveWrite,
         ["asset.remove"]        = ExecRiskLevel.DestructiveWrite,
@@ -847,6 +852,79 @@ internal sealed class ExecCommandRegistry
                     && dupProp.ValueKind == JsonValueKind.True;
                 var content = JsonSerializer.Serialize(new { operation = "analyze", duplicate });
                 dto = new ProjectCommandRequestDto("addressables-cli", null, null, content, req.RequestId);
+                return true;
+            }
+
+            // ── animator operations ────────────────────────────────────────
+            case "animator.param.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var name = GetString(req.Args, "name");
+                var type = GetString(req.Args, "type");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(type))
+                {
+                    validationError = "animator.param.add requires args.assetPath, args.name, and args.type (float|int|bool|trigger)";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { name, type });
+                var base_ = new ProjectCommandRequestDto("animator-param-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "animator.param.remove":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "animator.param.remove requires args.assetPath and args.name";
+                    return false;
+                }
+
+                var content = JsonSerializer.Serialize(new { name });
+                var base_ = new ProjectCommandRequestDto("animator-param-remove", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "animator.state.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var name = GetString(req.Args, "name");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(name))
+                {
+                    validationError = "animator.state.add requires args.assetPath and args.name";
+                    return false;
+                }
+
+                var layer = GetInt(req.Args, "layer") ?? 0;
+                var content = JsonSerializer.Serialize(new { name, layer });
+                var base_ = new ProjectCommandRequestDto("animator-state-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
+                return true;
+            }
+
+            case "animator.transition.add":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                var fromState = GetString(req.Args, "fromState");
+                var toState = GetString(req.Args, "toState");
+                if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(fromState) || string.IsNullOrWhiteSpace(toState))
+                {
+                    validationError = "animator.transition.add requires args.assetPath, args.fromState, and args.toState";
+                    return false;
+                }
+
+                var layer = GetInt(req.Args, "layer") ?? 0;
+                var content = JsonSerializer.Serialize(new { fromState, toState, layer });
+                var base_ = new ProjectCommandRequestDto("animator-transition-add", assetPath, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
                 return true;
             }
 
