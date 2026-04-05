@@ -29,6 +29,24 @@ void ReleaseCancellationReference()
     Interlocked.Decrement(ref cancellationRefCount);
 }
 
+static string ResolveRuntimePath()
+{
+    // Prefer a runtime dir beside the CWD, but fall back to the user home directory
+    // when CWD is read-only (e.g. / in container/MCP environments).
+    var cwdCandidate = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
+    try
+    {
+        Directory.CreateDirectory(cwdCandidate);
+        return cwdCandidate;
+    }
+    catch (IOException) { }
+    catch (UnauthorizedAccessException) { }
+
+    return Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".unifocl-runtime");
+}
+
 void TryCancelApplication()
 {
     if (!TryAcquireCancellationReference())
@@ -101,7 +119,7 @@ try
     var inspectorCommands = CliCommandCatalog.CreateInspectorCommands();
 
     var streamLog = new List<string>();
-    var runtimePath = Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime");
+    var runtimePath = ResolveRuntimePath();
     var daemonRuntime = new DaemonRuntime(runtimePath);
     var session = new CliSessionState();
     var daemonControlService = new DaemonControlService();
