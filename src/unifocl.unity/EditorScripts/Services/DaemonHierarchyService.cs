@@ -783,7 +783,7 @@ namespace UniFocl.EditorBridge
 
         private static GameObject EnsureSceneCanvas(Scene scene)
         {
-            foreach (var canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+            foreach (var canvas in UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None))
             {
                 if (canvas.gameObject.scene == scene)
                 {
@@ -804,7 +804,7 @@ namespace UniFocl.EditorBridge
 
         private static void EnsureEventSystemExists(Scene scene)
         {
-            foreach (var eventSystem in UnityEngine.Object.FindObjectsOfType<EventSystem>())
+            foreach (var eventSystem in UnityEngine.Object.FindObjectsByType<EventSystem>(FindObjectsSortMode.None))
             {
                 if (eventSystem.gameObject.scene == scene)
                 {

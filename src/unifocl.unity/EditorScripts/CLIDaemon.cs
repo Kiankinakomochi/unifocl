@@ -191,7 +191,7 @@ namespace UniFocl.EditorBridge
 
                 var recursiveDeps = InstallDependenciesRecursivelyFromPackageJson(
                     packageId,
-                    listRequest.Result,
+                    listRequest.Result!,
                     processId,
                     statusPath);
                 if (!recursiveDeps.Success)

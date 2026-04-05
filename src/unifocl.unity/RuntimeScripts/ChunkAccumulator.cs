@@ -17,7 +17,7 @@ namespace UniFocl.Runtime
         /// Feed a single envelope. Returns the reassembled payload when all chunks for
         /// the correlation ID have arrived, or null if chunks are still missing.
         /// </summary>
-        public string TryAccumulate(RuntimeEnvelope envelope)
+        public string? TryAccumulate(RuntimeEnvelope envelope)
         {
             if (!envelope.isChunked)
             {

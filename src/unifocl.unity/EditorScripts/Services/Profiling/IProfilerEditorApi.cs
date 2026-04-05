@@ -25,13 +25,13 @@ namespace UniFocl.EditorBridge.Profiling
         /// Get a raw frame data view. Caller MUST dispose the returned object.
         /// Returns null if the frame/thread combination is invalid.
         /// </summary>
-        UnityEditor.Profiling.RawFrameDataView GetRawFrameDataView(int frameIndex, int threadIndex);
+        UnityEditor.Profiling.RawFrameDataView? GetRawFrameDataView(int frameIndex, int threadIndex);
 
         /// <summary>
         /// Get a hierarchy frame data view. Caller MUST dispose the returned object.
         /// Returns null if the frame/thread combination is invalid.
         /// </summary>
-        UnityEditor.Profiling.HierarchyFrameDataView GetHierarchyFrameDataView(
+        UnityEditor.Profiling.HierarchyFrameDataView? GetHierarchyFrameDataView(
             int frameIndex, int threadIndex,
             UnityEditor.Profiling.HierarchyFrameDataView.ViewModes viewMode,
             int sortColumn, bool sortAscending);

@@ -28,6 +28,20 @@ Every PR branch must pass these steps before pushing or creating a pull request:
 - **Branch from:** `main` (or `origin/main`)
 - **PR template:** `.github/pull_request_template.md`
 
+## Compile Warning Policy
+
+**Zero-warning builds are mandatory.** Every build (CLI and compatcheck) must produce 0 warnings.
+
+- **Best-effort fix first:** Resolve warnings by adding null guards, initializing fields, updating
+  obsolete API calls, or adjusting signatures. Prefer concrete fixes over suppression.
+- **Suppress only as last resort:** Use `#pragma warning disable` only when the warning cannot be
+  fixed without breaking semantics (e.g. obsolete API with no drop-in replacement). Always include
+  a comment explaining why.
+- **Pre-existing warnings are your responsibility too.** If the build already has warnings before
+  your changes, fix them in the same branch. Do not leave warnings for someone else.
+- **Nullable declarations are acceptable when semantically correct** (a method genuinely returns
+  null), but prefer non-nullable designs — initialize fields, use `?? default`, add guards.
+
 ## Scope
 
 Agent edits are restricted to:

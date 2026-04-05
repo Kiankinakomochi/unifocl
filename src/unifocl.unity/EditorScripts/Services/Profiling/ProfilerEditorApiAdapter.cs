@@ -43,13 +43,13 @@ namespace UniFocl.EditorBridge.Profiling
             => ProfilerDriver.LoadProfile(path, keepExistingData);
 
         // ── Frame data views ────────────────────────────────────────
-        public RawFrameDataView GetRawFrameDataView(int frameIndex, int threadIndex)
+        public RawFrameDataView? GetRawFrameDataView(int frameIndex, int threadIndex)
         {
             var view = ProfilerDriver.GetRawFrameDataView(frameIndex, threadIndex);
             return view != null && view.valid ? view : null;
         }
 
-        public HierarchyFrameDataView GetHierarchyFrameDataView(
+        public HierarchyFrameDataView? GetHierarchyFrameDataView(
             int frameIndex, int threadIndex,
             HierarchyFrameDataView.ViewModes viewMode,
             int sortColumn, bool sortAscending)
