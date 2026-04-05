@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.8.6 - 2026-04-05
+
+### Fixed
+- **Daemon runtime path fails on read-only file systems**: `Program.cs` previously hardcoded `<CWD>/.unifocl-runtime`, causing exit code 134 in container/MCP environments where CWD is `/`. Added `ResolveRuntimePath()` which tries the CWD-relative path first and falls back to `~/.unifocl-runtime` on `IOException`/`UnauthorizedAccessException`.
+
+### Officialized
+- Officialized `3.8.6` by closing the development cycle suffix.
+
 ## 3.8.5 - 2026-04-05
 
 ### Changed
