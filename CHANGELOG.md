@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.8.5 - 2026-04-05
+
+### Changed
+- **csproj embedded resources via directory globs**: Replaced 60+ explicit `EmbeddedResource Include` entries in `unifocl.csproj` with three glob patterns (`EditorScripts/**/*.cs`, `RuntimeScripts/**/*.cs`, `SharedModels/**/*.cs`). New files added to those directories are now embedded automatically with the correct `Payload/…` logical name.
+
+### Fixed
+- **CA1416 platform warnings in `CliBootLogo.cs`**: Wrapped `Console.SetBufferSize` and `Console.SetWindowSize` calls in `OperatingSystem.IsWindows()` guards; both are Windows-only APIs.
+
+### Officialized
+- Officialized `3.8.5` by closing the development cycle suffix.
+
 ## 3.8.4 - 2026-04-05
 
 ### Fixed
