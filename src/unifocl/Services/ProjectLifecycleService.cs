@@ -871,6 +871,7 @@ internal sealed partial class ProjectLifecycleService
             return false;
         }
 
+        log($"[green]open[/]: project mode active -> [white]{Markup.Escape(projectPath)}[/]");
         _projectViewService.OpenInitialView(session);
         _ = _projectViewService.SyncMkTypeCacheAsync(session);
         _ = _projectViewService.SyncComponentTypeCacheAsync(session);
