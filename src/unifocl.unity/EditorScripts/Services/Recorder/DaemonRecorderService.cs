@@ -72,9 +72,10 @@ namespace UniFocl.EditorBridge.Recorder
                         "enable at least one profile or specify --profile <name>");
                 }
 
-                var controller = Activator.CreateInstance(resolved.ControllerType!, new object[] { settings });
-                resolved.ControllerType!.GetMethod("PrepareRecording")?.Invoke(controller, null);
-                resolved.ControllerType.GetMethod("StartRecording")?.Invoke(controller, null);
+                var controllerType = resolved.ControllerType!;
+                var controller = Activator.CreateInstance(controllerType, new object[] { settings });
+                controllerType.GetMethod("PrepareRecording")?.Invoke(controller, null);
+                controllerType.GetMethod("StartRecording")?.Invoke(controller, null);
 
                 var activeProfile = GetActiveProfileName(recordersList, resolved.RecorderSettingsType);
                 return JsonUtility.ToJson(new RecorderResponse
