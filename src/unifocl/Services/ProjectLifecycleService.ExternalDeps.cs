@@ -1,4 +1,7 @@
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
@@ -879,7 +882,43 @@ internal sealed partial class ProjectLifecycleService
             return await HandleAgentInstallCodexAsync(workspacePathRaw, serverName, configRootRaw, dryRun, log);
         }
 
-        return await HandleAgentInstallClaudeAsync(dryRun, log);
+        return await HandleAgentInstallClaudeAsync(workspacePathRaw, serverName, configRootRaw, dryRun, log);
+    }
+
+    private async Task<bool> HandleAgentSetupFromInputAsync(
+        string input,
+        CommandSpec matched,
+        Action<string> log)
+    {
+        var args = ParseCommandArgs(input, matched.Trigger);
+        string? projectPath = null;
+        var dryRun = false;
+
+        foreach (var arg in args)
+        {
+            if (arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                log($"[red]error[/]: unrecognized option {Markup.Escape(arg)}; usage: /agent setup [path-to-unity-project] [--dry-run]");
+                return true;
+            }
+
+            if (projectPath is not null)
+            {
+                log("[red]error[/]: too many arguments; usage: /agent setup [path-to-unity-project] [--dry-run]");
+                return true;
+            }
+
+            projectPath = arg;
+        }
+
+        await HandleAgentSetupAsync(projectPath, dryRun, AgentSetupTarget.Both, log);
+        return true;
     }
 
     private static bool TryParseAgentInstallArgs(
@@ -994,7 +1033,7 @@ internal sealed partial class ProjectLifecycleService
         if (!Directory.Exists(workspacePath))
         {
             log($"[red]agent[/]: workspace path does not exist: [white]{Markup.Escape(workspacePath)}[/]");
-            return true;
+            return false;
         }
 
         var configRoot = string.IsNullOrWhiteSpace(configRootRaw)
@@ -1013,6 +1052,8 @@ internal sealed partial class ProjectLifecycleService
             "--mcp-server"
         ]);
 
+        var agentsMdPath = Path.Combine(workspacePath, "AGENTS.md");
+
         if (dryRun)
         {
             log("[grey]agent[/]: dry-run (no changes applied)");
@@ -1020,13 +1061,14 @@ internal sealed partial class ProjectLifecycleService
             log($"[grey]agent[/]: config-root [white]{Markup.Escape(configRoot)}[/]");
             log($"[grey]agent[/]: would run [white]codex {Markup.Escape(removeArgs)}[/]");
             log($"[grey]agent[/]: would run [white]codex {Markup.Escape(addArgs)}[/]");
+            log($"[grey]agent[/]: would merge [white]{Markup.Escape(agentsMdPath)}[/] — unifocl fenced section");
             return true;
         }
 
         if (!await IsCommandAvailableAsync("codex"))
         {
             log("[red]agent[/]: codex is not installed or not available on PATH");
-            return true;
+            return false;
         }
 
         Directory.CreateDirectory(configRoot);
@@ -1036,46 +1078,484 @@ internal sealed partial class ProjectLifecycleService
         {
             var reason = SummarizeProcessError(addResult);
             log($"[red]agent[/]: failed to install codex integration ({Markup.Escape(reason)})");
-            return true;
+            return false;
+        }
+
+        try
+        {
+            MergeMarkdownFile(agentsMdPath, BuildAgentsMdSection(serverName));
+            log("[grey]agent[/]: merged [white]AGENTS.md[/] — unifocl fenced section");
+        }
+        catch (Exception ex)
+        {
+            log($"[red]agent[/]: failed to merge AGENTS.md: {Markup.Escape(ex.Message)}");
         }
 
         log("[green]agent[/]: codex integration installed");
-        log($"[grey]agent[/]: server [white]{Markup.Escape(serverName)}[/] -> [white]unifocl --mcp-server[/]");
+        log($"[grey]agent[/]: server [white]{Markup.Escape(serverName)}[/] -> [white]unifocl --mcp-server[/] (registered globally in ~/.codex/config.toml)");
         log($"[grey]agent[/]: config-root [white]{Markup.Escape(configRoot)}[/]");
+        log("[grey]agent[/]: commit [white]AGENTS.md[/] to share agent instructions with your team");
         log("[grey]agent[/]: restart Codex session to load the MCP tools");
         return true;
     }
 
     private async Task<bool> HandleAgentInstallClaudeAsync(
+        string? workspacePathRaw,
+        string serverName,
+        string? configRootRaw,
         bool dryRun,
         Action<string> log)
     {
-        const string ClaudeInstallArgs = "mcp add unifocl -- unifocl --mcp-server";
+        var currentDirectory = Directory.GetCurrentDirectory();
+        var workspacePath = ResolveAbsolutePath(
+            string.IsNullOrWhiteSpace(workspacePathRaw) ? currentDirectory : workspacePathRaw,
+            currentDirectory);
+        if (!Directory.Exists(workspacePath))
+        {
+            log($"[red]agent[/]: workspace path does not exist: [white]{Markup.Escape(workspacePath)}[/]");
+            return true;
+        }
+
+        var configRoot = string.IsNullOrWhiteSpace(configRootRaw)
+            ? Path.Combine(workspacePath, ".local")
+            : ResolveAbsolutePath(configRootRaw, currentDirectory);
+
+        var claudeDir = Path.Combine(workspacePath, ".claude");
+        var settingsJsonPath = Path.Combine(claudeDir, "settings.json");
+        var settingsLocalJsonPath = Path.Combine(claudeDir, "settings.local.json");
+        var claudeMdPath = Path.Combine(workspacePath, "CLAUDE.md");
+        var gitignorePath = Path.Combine(workspacePath, ".gitignore");
+
         if (dryRun)
         {
             log("[grey]agent[/]: dry-run (no changes applied)");
-            log($"[grey]agent[/]: would run [white]claude {Markup.Escape(ClaudeInstallArgs)}[/]");
+            log($"[grey]agent[/]: workspace [white]{Markup.Escape(workspacePath)}[/]");
+            log($"[grey]agent[/]: config-root [white]{Markup.Escape(configRoot)}[/]");
+            log($"[grey]agent[/]: would merge [white]{Markup.Escape(settingsJsonPath)}[/] — mcpServers.{Markup.Escape(serverName)}");
+            log($"[grey]agent[/]: would merge [white]{Markup.Escape(claudeMdPath)}[/] — unifocl fenced section");
+            log($"[grey]agent[/]: would merge [white]{Markup.Escape(settingsLocalJsonPath)}[/] — permissions.allow");
+            log($"[grey]agent[/]: would check [white]{Markup.Escape(gitignorePath)}[/] — .claude/settings.local.json entry");
             return true;
         }
 
-        if (!await IsCommandAvailableAsync("claude"))
+        var errorCount = 0;
+
+        // 1. Merge .claude/settings.json — project-scoped MCP registration (commit this)
+        try
         {
-            log("[red]agent[/]: claude CLI is not installed or not available on PATH");
-            return true;
+            Directory.CreateDirectory(claudeDir);
+            MergeClaudeSettings(settingsJsonPath, serverName, configRoot);
+            log($"[grey]agent[/]: merged [white]settings.json[/] — mcpServers.{Markup.Escape(serverName)}");
         }
-
-        var installResult = await RunProcessAsync("claude", ClaudeInstallArgs, Directory.GetCurrentDirectory(), ExternalDependencyProbeTimeout);
-        if (installResult.ExitCode != 0)
+        catch (Exception ex)
         {
-            var reason = SummarizeProcessError(installResult);
-            log($"[red]agent[/]: failed to install claude integration ({Markup.Escape(reason)})");
-            return true;
+            errorCount++;
+            log($"[red]agent[/]: failed to merge settings.json: {Markup.Escape(ex.Message)}");
         }
 
-        log("[green]agent[/]: claude integration installed");
-        log("[grey]agent[/]: MCP server [white]unifocl[/] registered (unifocl --mcp-server)");
-        log("[grey]agent[/]: restart Claude Code to ensure MCP/tooling refresh");
+        // 2. Merge CLAUDE.md — project instructions for Claude Code (commit this)
+        try
+        {
+            MergeClaudeMd(claudeMdPath, serverName);
+            log("[grey]agent[/]: merged [white]CLAUDE.md[/] — unifocl fenced section");
+        }
+        catch (Exception ex)
+        {
+            errorCount++;
+            log($"[red]agent[/]: failed to merge CLAUDE.md: {Markup.Escape(ex.Message)}");
+        }
+
+        // 3. Merge .claude/settings.local.json — machine-local permission allows (do not commit)
+        try
+        {
+            MergeClaudeSettingsLocal(settingsLocalJsonPath, serverName);
+            log("[grey]agent[/]: merged [white]settings.local.json[/] — permissions.allow");
+        }
+        catch (Exception ex)
+        {
+            errorCount++;
+            log($"[red]agent[/]: failed to merge settings.local.json: {Markup.Escape(ex.Message)}");
+        }
+
+        // 4. Ensure settings.local.json is gitignored
+        try
+        {
+            MergeGitignore(gitignorePath);
+            log("[grey]agent[/]: checked [white].gitignore[/] — .claude/settings.local.json");
+        }
+        catch (Exception ex)
+        {
+            errorCount++;
+            log($"[red]agent[/]: failed to update .gitignore: {Markup.Escape(ex.Message)}");
+        }
+
+        if (errorCount == 0)
+        {
+            log("[green]agent[/]: claude integration installed");
+            log("[grey]agent[/]: commit [white].claude/settings.json[/] and [white]CLAUDE.md[/] to share with all users");
+            log("[grey]agent[/]: [white]settings.local.json[/] is machine-local — do not commit");
+            log("[grey]agent[/]: restart Claude Code to load the MCP tools");
+        }
+        else
+        {
+            log($"[yellow]agent[/]: install completed with {errorCount} error(s) — review output above");
+        }
+
         return true;
+    }
+
+    // ── agent setup ──────────────────────────────────────────────────────────
+
+    internal static string? FindAgentSetupRoot(string startDirectory)
+    {
+        var dir = new DirectoryInfo(startDirectory);
+        while (dir is not null)
+        {
+            var agentsMdPath = Path.Combine(dir.FullName, "AGENTS.md");
+            if (File.Exists(agentsMdPath) && HasUnifoclAgentsSection(agentsMdPath))
+            {
+                return dir.FullName;
+            }
+
+            var settingsPath = Path.Combine(dir.FullName, ".claude", "settings.json");
+            if (File.Exists(settingsPath) && HasUnifoclMcpEntry(settingsPath))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return null;
+    }
+
+    private static bool HasUnifoclAgentsSection(string agentsMdPath)
+    {
+        try
+        {
+            var content = File.ReadAllText(agentsMdPath, Encoding.UTF8);
+            return content.Contains(MdBeginMarker, StringComparison.Ordinal)
+                && content.Contains("unifocl", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasUnifoclMcpEntry(string settingsPath)
+    {
+        try
+        {
+            var raw = File.ReadAllText(settingsPath, Encoding.UTF8);
+            if (JsonNode.Parse(raw, nodeOptions: null, documentOptions: LenientJsonDocumentOptions) is not JsonObject root)
+            {
+                return false;
+            }
+
+            if (root["mcpServers"] is not JsonObject mcpServers)
+            {
+                return false;
+            }
+
+            return mcpServers.Any(kvp =>
+                kvp.Value is JsonObject server &&
+                server["command"]?.GetValue<string>()
+                    .Equals("unifocl", StringComparison.OrdinalIgnoreCase) == true);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal async Task<bool> HandleAgentSetupAsync(
+        string? projectPathRaw,
+        bool dryRun,
+        AgentSetupTarget target,
+        Action<string> log)
+    {
+        var currentDirectory = Directory.GetCurrentDirectory();
+        var absolutePath = string.IsNullOrWhiteSpace(projectPathRaw)
+            ? currentDirectory
+            : ResolveAbsolutePath(projectPathRaw, currentDirectory);
+
+        if (!Directory.Exists(absolutePath))
+        {
+            log($"[red]setup[/]: directory does not exist: [white]{Markup.Escape(absolutePath)}[/]");
+            return false;
+        }
+
+        if (!IsLikelyUnityProject(absolutePath))
+        {
+            log($"[yellow]setup[/]: [white]{Markup.Escape(absolutePath)}[/] does not look like a Unity project (no Assets/, ProjectSettings/, or Packages/manifest.json found)");
+            log("[grey]setup[/]: proceeding — re-run from the Unity project root if results are unexpected");
+        }
+
+        log($"[grey]setup[/]: configuring agent MCP integration for [white]{Markup.Escape(absolutePath)}[/]");
+
+        var installed = 0;
+
+        if (target is AgentSetupTarget.Claude or AgentSetupTarget.Both)
+        {
+            if (await IsCommandAvailableAsync("claude"))
+            {
+                log("[grey]setup[/]: detected [white]claude[/] — configuring Claude Code integration");
+                await HandleAgentInstallClaudeAsync(absolutePath, "unifocl", null, dryRun, log);
+                installed++;
+            }
+            else
+            {
+                log("[grey]setup[/]: [white]claude[/] not found on PATH — skipping Claude Code integration");
+                log("[grey]setup[/]:   install Claude Code then run [white]unifocl agent setup[/] again");
+            }
+        }
+
+        if (target is AgentSetupTarget.Codex or AgentSetupTarget.Both)
+        {
+            if (await IsCommandAvailableAsync("codex"))
+            {
+                log("[grey]setup[/]: detected [white]codex[/] — configuring Codex integration");
+                var codexInstalled = await HandleAgentInstallCodexAsync(absolutePath, "unifocl", null, dryRun, log);
+                if (codexInstalled)
+                {
+                    installed++;
+                }
+                else
+                {
+                    log("[yellow]setup[/]: Codex integration failed — see errors above");
+                }
+            }
+            else if (target == AgentSetupTarget.Codex)
+            {
+                log("[grey]setup[/]: [white]codex[/] not found on PATH");
+                log("[grey]setup[/]:   install Codex then run [white]unifocl agent setup[/] again");
+            }
+        }
+
+        if (installed == 0)
+        {
+            log("[yellow]setup[/]: no supported agent tool found on PATH (claude, codex)");
+            log("[grey]setup[/]:   install Claude Code (https://claude.ai/code) and re-run");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsLikelyUnityProject(string path) =>
+        Directory.Exists(Path.Combine(path, "Assets")) ||
+        Directory.Exists(Path.Combine(path, "ProjectSettings")) ||
+        File.Exists(Path.Combine(path, "Packages", "manifest.json"));
+
+    // ── JSON / file merge helpers ─────────────────────────────────────────────
+
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new() { WriteIndented = true };
+
+    private static readonly JsonDocumentOptions LenientJsonDocumentOptions = new()
+    {
+        AllowTrailingCommas = true,
+        CommentHandling = JsonCommentHandling.Skip,
+    };
+
+    private static void MergeClaudeSettings(string settingsJsonPath, string serverName, string configRoot)
+    {
+        JsonObject root;
+        if (File.Exists(settingsJsonPath))
+        {
+            var raw = File.ReadAllText(settingsJsonPath, Encoding.UTF8);
+            root = JsonNode.Parse(raw, nodeOptions: null, documentOptions: LenientJsonDocumentOptions) as JsonObject
+                ?? throw new InvalidOperationException("settings.json root is not a JSON object");
+        }
+        else
+        {
+            root = new JsonObject();
+        }
+
+        if (root["mcpServers"] is not JsonObject mcpServers)
+        {
+            mcpServers = new JsonObject();
+            root["mcpServers"] = mcpServers;
+        }
+
+        mcpServers[serverName] = new JsonObject
+        {
+            ["command"] = "unifocl",
+            ["args"] = new JsonArray { "--mcp-server" },
+            ["env"] = new JsonObject
+            {
+                ["UNIFOCL_CONFIG_ROOT"] = configRoot,
+            },
+        };
+
+        File.WriteAllText(settingsJsonPath, root.ToJsonString(IndentedJsonOptions), Encoding.UTF8);
+    }
+
+    private static void MergeClaudeSettingsLocal(string settingsLocalJsonPath, string serverName)
+    {
+        JsonObject root;
+        if (File.Exists(settingsLocalJsonPath))
+        {
+            var raw = File.ReadAllText(settingsLocalJsonPath, Encoding.UTF8);
+            root = JsonNode.Parse(raw, nodeOptions: null, documentOptions: LenientJsonDocumentOptions) as JsonObject
+                ?? throw new InvalidOperationException("settings.local.json root is not a JSON object");
+        }
+        else
+        {
+            root = new JsonObject();
+        }
+
+        if (root["permissions"] is not JsonObject permissions)
+        {
+            permissions = new JsonObject();
+            root["permissions"] = permissions;
+        }
+
+        if (permissions["allow"] is not JsonArray allow)
+        {
+            allow = new JsonArray();
+            permissions["allow"] = allow;
+        }
+
+        var existing = allow
+            .Select(n =>
+            {
+                try { return n?.GetValue<string>(); }
+                catch { return null; }
+            })
+            .Where(s => s != null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)!;
+
+        string[] toolsToAdd =
+        [
+            $"mcp__{serverName}__exec",
+            $"mcp__{serverName}__list_commands",
+            $"mcp__{serverName}__lookup_command",
+            $"mcp__{serverName}__get_agent_workflow_guide",
+            $"mcp__{serverName}__get_categories",
+            $"mcp__{serverName}__get_mutate_schema",
+            $"mcp__{serverName}__load_category",
+            $"mcp__{serverName}__reload_manifest",
+            $"mcp__{serverName}__unload_category",
+            $"mcp__{serverName}__use_category",
+            $"mcp__{serverName}__validate_mutate_batch",
+        ];
+
+        foreach (var tool in toolsToAdd)
+        {
+            if (!existing.Contains(tool))
+            {
+                allow.Add(tool);
+            }
+        }
+
+        File.WriteAllText(settingsLocalJsonPath, root.ToJsonString(IndentedJsonOptions), Encoding.UTF8);
+    }
+
+    private const string MdBeginMarker = "<!-- unifocl:begin -->";
+    private const string MdEndMarker = "<!-- unifocl:end -->";
+
+    private static void MergeMarkdownFile(string filePath, string section)
+    {
+        var block = $"{MdBeginMarker}\n{section}\n{MdEndMarker}";
+
+        if (!File.Exists(filePath))
+        {
+            File.WriteAllText(filePath, block + "\n", Encoding.UTF8);
+            return;
+        }
+
+        var content = File.ReadAllText(filePath, Encoding.UTF8);
+        var beginIdx = content.IndexOf(MdBeginMarker, StringComparison.Ordinal);
+        var endIdx = content.IndexOf(MdEndMarker, StringComparison.Ordinal);
+
+        if (beginIdx >= 0 && endIdx > beginIdx)
+        {
+            var endOfBlock = endIdx + MdEndMarker.Length;
+            content = content[..beginIdx] + block + content[endOfBlock..];
+            File.WriteAllText(filePath, content, Encoding.UTF8);
+        }
+        else
+        {
+            var needsNewlines = content.Length > 0 && content[^1] != '\n';
+            File.AppendAllText(filePath, (needsNewlines ? "\n\n" : "\n") + block + "\n", Encoding.UTF8);
+        }
+    }
+
+    private static void MergeClaudeMd(string claudeMdPath, string serverName) =>
+        MergeMarkdownFile(claudeMdPath, BuildClaudeMdSection(serverName));
+
+    private static void MergeAgentsMd(string agentsMdPath, string serverName) =>
+        MergeMarkdownFile(agentsMdPath, BuildAgentsMdSection(serverName));
+
+    private static string BuildClaudeMdSection(string serverName) =>
+        $"""
+        ## unifocl — Unity MCP Integration
+
+        The `{serverName}` MCP server gives Claude Code live access to the Unity Editor:
+        hierarchy, inspector, assets, build, tests, and more.
+
+        ### Getting started
+
+        1. Attach to the project: call `mcp__{serverName}__exec` with command `/open <path-to-unity-project>`
+        2. Discover commands: `mcp__{serverName}__list_commands`
+        3. Read the full agentic guide: `mcp__{serverName}__get_agent_workflow_guide`
+
+        ### Key MCP tools
+
+        | Tool | Purpose |
+        |------|---------|
+        | `mcp__{serverName}__exec` | Run any unifocl command against the live Unity Editor |
+        | `mcp__{serverName}__list_commands` | List available commands by category |
+        | `mcp__{serverName}__lookup_command` | Look up a command's signature and usage |
+        | `mcp__{serverName}__get_agent_workflow_guide` | Full agentic workflow guide |
+        | `mcp__{serverName}__get_mutate_schema` | JSON schema for `/mutate` batch ops |
+        """;
+
+    private static string BuildAgentsMdSection(string serverName) =>
+        $"""
+        ## unifocl — Unity MCP Integration
+
+        The `{serverName}` MCP server gives Codex live access to the Unity Editor:
+        hierarchy, inspector, assets, build, tests, and more.
+
+        ### Getting started
+
+        1. Attach to the project: call `mcp__{serverName}__exec` with command `/open <path-to-unity-project>`
+        2. Discover commands: call `mcp__{serverName}__list_commands`
+        3. Read the full agentic guide: call `mcp__{serverName}__get_agent_workflow_guide`
+
+        ### Key MCP tools
+
+        | Tool | Purpose |
+        |------|---------|
+        | `mcp__{serverName}__exec` | Run any unifocl command against the live Unity Editor |
+        | `mcp__{serverName}__list_commands` | List available commands by category |
+        | `mcp__{serverName}__lookup_command` | Look up a command's signature and usage |
+        | `mcp__{serverName}__get_agent_workflow_guide` | Full agentic workflow guide |
+        | `mcp__{serverName}__get_mutate_schema` | JSON schema for `/mutate` batch ops |
+        """;
+
+    private static void MergeGitignore(string gitignorePath)
+    {
+        const string Entry = ".claude/settings.local.json";
+
+        if (File.Exists(gitignorePath))
+        {
+            var lines = File.ReadAllLines(gitignorePath, Encoding.UTF8);
+            if (lines.Any(l => l.Trim().Equals(Entry, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            var content = File.ReadAllText(gitignorePath, Encoding.UTF8);
+            var needsNewline = content.Length > 0 && content[^1] != '\n';
+            File.AppendAllText(gitignorePath, (needsNewline ? "\n" : "") + Entry + "\n", Encoding.UTF8);
+        }
+        else
+        {
+            File.WriteAllText(gitignorePath, Entry + "\n", Encoding.UTF8);
+        }
     }
 
     private static string BuildProcessArgumentString(IReadOnlyList<string> tokens)
@@ -1097,4 +1577,11 @@ internal sealed partial class ProjectLifecycleService
 
         return $"\"{token.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
+}
+
+internal enum AgentSetupTarget
+{
+    Both,
+    Claude,
+    Codex,
 }

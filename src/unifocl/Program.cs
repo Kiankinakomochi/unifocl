@@ -84,6 +84,14 @@ static async Task AwaitWithCancellationAsync(Func<Task> operation, CancellationT
 try
 {
     var launchArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+    if (launchArgs.Length == 1
+        && (launchArgs[0].Equals("--version", StringComparison.OrdinalIgnoreCase)
+            || launchArgs[0].Equals("-v", StringComparison.OrdinalIgnoreCase)))
+    {
+        Console.WriteLine(CliVersion.SemVer);
+        return;
+    }
+
     if (UnifoclMcpServerMode.IsRequested(launchArgs))
     {
         await UnifoclMcpServerMode.RunAsync(launchArgs, appCancellation.Token);
@@ -127,31 +135,54 @@ try
     var projectCommandRouterService = new ProjectCommandRouterService();
     var hierarchyTui = new HierarchyTui();
     var buildCommandService = new BuildCommandService();
-    if (CliCommandParsingService.TryParseAgentInstallCommandText(launchArgs, out var agentInstallCommandText, out var agentInstallError))
+    if (launchArgs.Length > 0 && launchArgs[0].Equals("agent", StringComparison.OrdinalIgnoreCase))
     {
-        if (!string.IsNullOrWhiteSpace(agentInstallError))
+        if (CliCommandParsingService.TryParseAgentInstallCommandText(launchArgs, out var agentInstallCommandText, out var agentInstallError))
         {
-            CliTheme.MarkupLine($"[red]{Markup.Escape(agentInstallError)}[/]");
-            Environment.ExitCode = 2;
+            if (!string.IsNullOrWhiteSpace(agentInstallError))
+            {
+                CliTheme.MarkupLine($"[red]{Markup.Escape(agentInstallError)}[/]");
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            var matched = CliCommandParsingService.MatchCommand(agentInstallCommandText!, commands);
+            if (matched is null)
+            {
+                CliTheme.MarkupLine("[red]error[/]: internal command routing failed for /agent install");
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            var handled = await projectLifecycleService.TryHandleLifecycleCommandAsync(
+                agentInstallCommandText!,
+                matched,
+                session,
+                daemonControlService,
+                daemonRuntime,
+                line => CliTheme.MarkupLine(line));
+            Environment.ExitCode = handled ? 0 : 2;
             return;
         }
 
-        var matched = CliCommandParsingService.MatchCommand(agentInstallCommandText!, commands);
-        if (matched is null)
+        if (CliCommandParsingService.TryParseAgentSetupArgs(launchArgs, out var setupPath, out var setupDryRun, out var setupError))
         {
-            CliTheme.MarkupLine("[red]error[/]: internal command routing failed for /agent install");
-            Environment.ExitCode = 2;
+            if (!string.IsNullOrWhiteSpace(setupError))
+            {
+                CliTheme.MarkupLine($"[red]{Markup.Escape(setupError!)}[/]");
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            var setupOk = await projectLifecycleService.HandleAgentSetupAsync(setupPath, setupDryRun, AgentSetupTarget.Both, line => CliTheme.MarkupLine(line));
+            Environment.ExitCode = setupOk ? 0 : 1;
             return;
         }
 
-        var handled = await projectLifecycleService.TryHandleLifecycleCommandAsync(
-            agentInstallCommandText!,
-            matched,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => CliTheme.MarkupLine(line));
-        Environment.ExitCode = handled ? 0 : 2;
+        CliTheme.MarkupLine("[red]error[/]: unknown agent subcommand");
+        CliTheme.MarkupLine("[grey]      [/]: unifocl agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]");
+        CliTheme.MarkupLine("[grey]      [/]: unifocl agent setup [path-to-unity-project] [--dry-run]");
+        Environment.ExitCode = 2;
         return;
     }
 
@@ -227,6 +258,68 @@ try
 
     CliBootLogo.SeedBootLog(streamLog);
     CliLogService.RenderInitialLog(streamLog);
+
+    if (ProjectLifecycleService.FindAgentSetupRoot(Environment.CurrentDirectory) is null
+        && !appCancellation.IsCancellationRequested)
+    {
+        try
+        {
+            const string ChoiceYesCwd = "Yes \u2014 set up for this directory";
+            const string ChoiceYesPath = "Yes \u2014 specify a path";
+            const string ChoiceNo = "No \u2014 skip for now";
+
+            var choice = CliTheme.PromptWithDividers(() =>
+                AnsiConsole.Prompt(
+                    new SelectionPrompt<string>()
+                        .Title("[yellow]setup[/]: no agent MCP integration found in this directory tree. Configure now?")
+                        .HighlightStyle(CliTheme.SelectionHighlightStyle)
+                        .AddChoices(ChoiceYesCwd, ChoiceYesPath, ChoiceNo)));
+
+            if (choice != ChoiceNo)
+            {
+                string? setupPath = null;
+                if (choice == ChoiceYesPath)
+                {
+                    setupPath = CliTheme.PromptWithDividers(() =>
+                        AnsiConsole.Prompt(
+                            new TextPrompt<string>("[grey]setup[/]: path to Unity project:")
+                                .PromptStyle(CliTheme.SelectionHighlightStyle)));
+                }
+
+                const string TargetBoth = "Both (Claude Code + Codex)";
+                const string TargetClaude = "Claude Code only";
+                const string TargetCodex = "Codex only";
+
+                var agentChoice = CliTheme.PromptWithDividers(() =>
+                    AnsiConsole.Prompt(
+                        new SelectionPrompt<string>()
+                            .Title("[grey]setup[/]: which agent integration to configure?")
+                            .HighlightStyle(CliTheme.SelectionHighlightStyle)
+                            .AddChoices(TargetBoth, TargetClaude, TargetCodex)));
+
+                var target = agentChoice switch
+                {
+                    TargetClaude => AgentSetupTarget.Claude,
+                    TargetCodex => AgentSetupTarget.Codex,
+                    _ => AgentSetupTarget.Both,
+                };
+
+                await projectLifecycleService.HandleAgentSetupAsync(
+                    setupPath,
+                    false,
+                    target,
+                    line => CliLogService.AppendLog(streamLog, line));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Non-interactive terminal or prompt interrupted — continue to main loop
+        }
+    }
 
     while (true)
     {

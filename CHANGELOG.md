@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.8.7 - 2026-04-06
+
+### Added
+- **`unifocl --version` / `-v` early exit**: Prints the semver string and exits immediately without booting the TUI or logo.
+- **`unifocl agent setup [path] [--dry-run]`**: One-command MCP onboarding. Auto-detects `claude` and `codex` on PATH and configures both. Defaults to CWD when no path is given. Available as an early-exit CLI command and via `exec "/agent setup"` in agentic sessions.
+- **File-based Claude Code MCP install**: `agent install claude` now writes project-local files instead of calling `claude mcp add` (global). Merges `.claude/settings.json` (MCP server registration), `CLAUDE.md` (agent instructions, fenced block), `.claude/settings.local.json` (permission allows), and `.gitignore` — all idempotent, never overwrites content outside managed sections.
+- **`AGENTS.md` merge for Codex**: `agent install codex` now also merges an `AGENTS.md` fenced section with Codex-appropriate tool names alongside the existing `codex mcp add` registration.
+- **Agent setup boot prompt**: On TUI boot, if no unifocl MCP setup is found in the directory tree, a `SelectionPrompt` appears asking whether to configure now — with options for the current directory, a specified path, or skip. A second prompt selects Claude Code only, Codex only, or both.
+- **Reverse traversal setup detection**: Mirrors git's `.git` lookup — walks up from CWD through ancestor directories to find `.claude/settings.json` with a unifocl `mcpServers` entry. Prevents the boot prompt from firing when running from a subdirectory of an already-configured project.
+- **`AgentSetupTarget` enum**: `Both`, `Claude`, `Codex` — controls which agent tools are configured during setup; passed through all call sites including the interactive boot prompt.
+
+### Officialized
+- Officialized `3.8.7` by closing the development cycle suffix.
+
 ## 3.8.6 - 2026-04-05
 
 ### Fixed

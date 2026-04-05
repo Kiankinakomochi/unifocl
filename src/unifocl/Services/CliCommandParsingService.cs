@@ -14,8 +14,7 @@ internal static class CliCommandParsingService
 
         if (args.Length < 2 || !args[1].Equals("install", StringComparison.OrdinalIgnoreCase))
         {
-            error = "usage: unifocl agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]";
-            return true;
+            return false; // not "install" — let other agent subcommand parsers handle it
         }
 
         if (args.Length < 3)
@@ -29,6 +28,52 @@ internal static class CliCommandParsingService
             .Select(QuoteShellLikeToken)
             .ToArray();
         commandText = "/agent install " + string.Join(' ', remaining);
+        return true;
+    }
+
+    public static bool TryParseAgentSetupArgs(
+        string[] args,
+        out string? projectPath,
+        out bool dryRun,
+        out string? error)
+    {
+        projectPath = null;
+        dryRun = false;
+        error = null;
+
+        if (args.Length == 0 || !args[0].Equals("agent", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (args.Length < 2 || !args[1].Equals("setup", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        for (var i = 2; i < args.Length; i++)
+        {
+            if (args[i].Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                error = $"unrecognized option {args[i]}; usage: unifocl agent setup [path-to-unity-project] [--dry-run]";
+                return true;
+            }
+
+            if (projectPath is not null)
+            {
+                error = "too many arguments; usage: unifocl agent setup [path-to-unity-project] [--dry-run]";
+                return true;
+            }
+
+            projectPath = args[i];
+        }
+
         return true;
     }
 

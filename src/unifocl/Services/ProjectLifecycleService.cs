@@ -64,6 +64,7 @@ internal sealed partial class ProjectLifecycleService
             "/update" => await HandleUpdateAsync(log),
             "/install-hook" => await HandleInstallHookAsync(session, daemonControlService, daemonRuntime, log),
             "/agent install" => await HandleAgentInstallAsync(input, matched, log),
+            "/agent setup" => await HandleAgentSetupFromInputAsync(input, matched, log),
             "/unity detect" => await HandleUnityDetectAsync(log),
             "/unity set" => await HandleUnitySetAsync(input, matched, log),
             "/close" => await HandleCloseAsync(session, daemonControlService, daemonRuntime, log),
