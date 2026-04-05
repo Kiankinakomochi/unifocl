@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.8.3 - 2026-04-05
+
+### Fixed
+- **`/open` startup log noise**: Unity process stdout is now filtered to errors/exceptions/failures only during Host mode startup; informational boot lines (GfxDevice, Mono paths, domain-reload profiling, etc.) are suppressed.
+- **`/open` TUI transition**: Console is cleared when project mode is successfully entered, eliminating startup log clutter before the project view renders.
+
+### Added
+- **`/open` success banner**: A green `open: project mode active` line is printed immediately before the project view renders, confirming successful entry into project mode.
+
+### Officialized
+- Officialized `3.8.3` by closing the development cycle suffix.
+
 ## 3.8.1 - 2026-04-05
 
 ### Fixed

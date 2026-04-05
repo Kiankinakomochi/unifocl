@@ -64,23 +64,26 @@ internal static class CliBootLogo
 
             if (targetWindowWidth > 0 && targetWindowHeight > 0)
             {
-                try
+                if (OperatingSystem.IsWindows())
                 {
-                    var targetBufferWidth = Math.Max(Console.BufferWidth, targetWindowWidth);
-                    var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
-                    if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
+                    try
                     {
-                        Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
+                        var targetBufferWidth = Math.Max(Console.BufferWidth, targetWindowWidth);
+                        var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
+                        if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
+                        {
+                            Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
+                        }
                     }
-                }
-                catch
-                {
-                    // Some terminals do not support buffer resizing.
-                }
+                    catch
+                    {
+                        // Some terminals do not support buffer resizing.
+                    }
 
-                if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
-                {
-                    Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
+                    if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
+                    {
+                        Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
+                    }
                 }
             }
         }

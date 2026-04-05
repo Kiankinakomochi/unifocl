@@ -62,7 +62,7 @@ internal sealed partial class DaemonControlService
                 outputLines,
                 resolvedStartupTimeout,
                 elapsed => log($"[grey]daemon[/]: startup in progress... {elapsed.TotalSeconds:0}s elapsed"),
-                line => log($"[grey]unity[/]: {Markup.Escape(line)}"))
+                line => { if (IsUnityOutputLineWorthLogging(line)) log($"[grey]unity[/]: {Markup.Escape(line)}"); })
             : await WaitForDaemonReadyAsync(startOptions.Port, resolvedStartupTimeout);
         if (!ready)
         {
@@ -295,6 +295,16 @@ internal sealed partial class DaemonControlService
         }
 
         tail.Enqueue(trimmed);
+    }
+
+    private static bool IsUnityOutputLineWorthLogging(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return false;
+        return line.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("crash", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("fatal", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildProcessFailureSummary(Queue<string> outputTail)

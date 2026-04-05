@@ -64,9 +64,13 @@ namespace UniFocl.EditorBridge
             if (preview == null)
             {
                 // Unity generates previews asynchronously — poll briefly.
+                // GetInstanceID/IsLoadingAssetPreview(int) deprecated in Unity 6; EntityId replacements
+                // unavailable in Unity 2021–2022 LTS — suppress until minimum version is raised.
+#pragma warning disable CS0618
                 var instanceId = asset.GetInstanceID();
                 var deadline = DateTime.UtcNow.AddSeconds(2);
                 while (AssetPreview.IsLoadingAssetPreview(instanceId) && DateTime.UtcNow < deadline)
+#pragma warning restore CS0618
                 {
                     System.Threading.Thread.Sleep(50);
                     preview = AssetPreview.GetAssetPreview(asset);

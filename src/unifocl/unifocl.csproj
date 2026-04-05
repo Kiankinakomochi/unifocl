@@ -17,6 +17,7 @@
     </ParameterGroup>
     <Task>
       <Code Type="Fragment" Language="cs"><![CDATA[
+        #pragma warning disable CS0162 // Unreachable code: MSBuild wraps fragment with its own trailing return true
         if (!System.IO.File.Exists(FilePath))
         {
             Log.LogError($"CliVersion file not found: {FilePath}");

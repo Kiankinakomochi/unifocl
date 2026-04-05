@@ -30,7 +30,12 @@ if [[ -z "${unity_editor_app}" ]]; then
   exit 1
 fi
 
-unity_editor_managed_dir="${unity_editor_app}/Contents/Managed"
+if [[ -d "${unity_editor_app}/Contents/Resources/Scripting/Managed" ]]; then
+  # Unity 6+ moved the managed assemblies under Resources/Scripting/Managed
+  unity_editor_managed_dir="${unity_editor_app}/Contents/Resources/Scripting/Managed"
+else
+  unity_editor_managed_dir="${unity_editor_app}/Contents/Managed"
+fi
 unity_editor_executable="${unity_editor_app}/Contents/MacOS/Unity"
 unity_version="$(basename "$(dirname "${unity_editor_app}")")"
 unity_script_assemblies_dir="${benchmark_project_path}/Library/ScriptAssemblies"

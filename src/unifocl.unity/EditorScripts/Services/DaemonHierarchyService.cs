@@ -1,4 +1,8 @@
 #if UNITY_EDITOR
+// GetInstanceID() and InstanceIDToObject(int) are deprecated in Unity 6 in favour of EntityId-based
+// APIs, but those APIs are unavailable in Unity 2021–2022 LTS. Suppress until minimum supported
+// version is raised to Unity 6.
+#pragma warning disable CS0618
 using System;
 using System.Collections.Generic;
 using System.IO;
