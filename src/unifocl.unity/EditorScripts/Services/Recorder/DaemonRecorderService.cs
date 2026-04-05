@@ -425,6 +425,12 @@ namespace UniFocl.EditorBridge.Recorder
                 if (!string.IsNullOrWhiteSpace(dir) && !System.IO.Directory.Exists(dir))
                     System.IO.Directory.CreateDirectory(dir);
 
+                if (!UnityEditor.EditorApplication.isPlaying)
+                {
+                    return ErrorResponse(
+                        "recorder.snapshot requires Play mode — enter Play mode before capturing a screenshot");
+                }
+
                 var superSize = payload.superSize > 0 ? payload.superSize : 1;
                 UnityEngine.ScreenCapture.CaptureScreenshot(fullPath, superSize);
 

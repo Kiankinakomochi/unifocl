@@ -565,6 +565,26 @@ internal sealed class RuntimeCommandService
                 return;
             }
 
+            // In interactive TUI mode, prefer the human-friendly message when there is no embedded
+            // content payload. In agentic/exec surfaces SuppressConsoleOutput is true, so the full
+            // JSON is preserved for structured consumption.
+            if (!CliRuntimeState.SuppressConsoleOutput)
+            {
+                var hasContent = result.TryGetProperty("content", out var contentEl)
+                    && contentEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(contentEl.GetString());
+
+                if (!hasContent && result.TryGetProperty("message", out var okMsgProp))
+                {
+                    var msg = okMsgProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(msg))
+                    {
+                        log($"[green]{label}[/]: {Markup.Escape(msg)}");
+                        return;
+                    }
+                }
+            }
+
             RenderJsonElement(result, label, log);
         }
         catch (Exception ex)
