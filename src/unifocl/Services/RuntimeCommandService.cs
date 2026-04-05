@@ -556,7 +556,21 @@ internal sealed class RuntimeCommandService
                 return;
             }
 
-            var result = JsonSerializer.Deserialize<JsonElement>(body);
+            var outer = JsonSerializer.Deserialize<JsonElement>(body);
+
+            // The MCP transport wraps the recorder/profiler JSON string inside a "result" field.
+            // Unwrap it so we can inspect the actual command response.
+            var result = outer;
+            if (outer.TryGetProperty("result", out var resultProp)
+                && resultProp.ValueKind == JsonValueKind.String)
+            {
+                var inner = resultProp.GetString();
+                if (!string.IsNullOrWhiteSpace(inner))
+                {
+                    try { result = JsonSerializer.Deserialize<JsonElement>(inner); }
+                    catch { /* leave result as outer if inner is not valid JSON */ }
+                }
+            }
 
             if (result.TryGetProperty("ok", out var okProp) && okProp.ValueKind == JsonValueKind.False)
             {
