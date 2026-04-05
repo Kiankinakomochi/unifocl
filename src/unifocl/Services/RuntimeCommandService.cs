@@ -408,7 +408,7 @@ internal sealed class RuntimeCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /recorder <start|stop|status|config|switch>");
+            log("[x] usage: /recorder <start|stop|status|config|switch|snapshot>");
             return;
         }
 
@@ -460,6 +460,18 @@ internal sealed class RuntimeCommandService
                 if (tokens.Count < 3) { log("[x] usage: /recorder switch <profile-name>"); return; }
                 toolName = "recorder.switch";
                 argsJson = JsonSerializer.Serialize(new { profileName = tokens[2] });
+                break;
+            }
+            case "snapshot":
+            {
+                var outputPath = ParseStringArg(tokens, "--output");
+                var superSize = ParseIntArg(tokens, "--super-size");
+                toolName = "recorder.snapshot";
+                argsJson = JsonSerializer.Serialize(new
+                {
+                    outputPath = outputPath ?? string.Empty,
+                    superSize = superSize >= 1 ? superSize : 1
+                });
                 break;
             }
             default:
@@ -544,13 +556,47 @@ internal sealed class RuntimeCommandService
                 return;
             }
 
-            var result = JsonSerializer.Deserialize<JsonElement>(body);
+            var outer = JsonSerializer.Deserialize<JsonElement>(body);
+
+            // The MCP transport wraps the recorder/profiler JSON string inside a "result" field.
+            // Unwrap it so we can inspect the actual command response.
+            var result = outer;
+            if (outer.TryGetProperty("result", out var resultProp)
+                && resultProp.ValueKind == JsonValueKind.String)
+            {
+                var inner = resultProp.GetString();
+                if (!string.IsNullOrWhiteSpace(inner))
+                {
+                    try { result = JsonSerializer.Deserialize<JsonElement>(inner); }
+                    catch { /* leave result as outer if inner is not valid JSON */ }
+                }
+            }
 
             if (result.TryGetProperty("ok", out var okProp) && okProp.ValueKind == JsonValueKind.False)
             {
                 var msg = result.TryGetProperty("message", out var msgProp) ? msgProp.GetString() : "failed";
                 log($"[red]{label}[/]: {Markup.Escape(msg ?? "failed")}");
                 return;
+            }
+
+            // In interactive TUI mode, prefer the human-friendly message when there is no embedded
+            // content payload. In agentic/exec surfaces SuppressConsoleOutput is true, so the full
+            // JSON is preserved for structured consumption.
+            if (!CliRuntimeState.SuppressConsoleOutput)
+            {
+                var hasContent = result.TryGetProperty("content", out var contentEl)
+                    && contentEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(contentEl.GetString());
+
+                if (!hasContent && result.TryGetProperty("message", out var okMsgProp))
+                {
+                    var msg = okMsgProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(msg))
+                    {
+                        log($"[green]{label}[/]: {Markup.Escape(msg)}");
+                        return;
+                    }
+                }
             }
 
             RenderJsonElement(result, label, log);

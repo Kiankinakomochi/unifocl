@@ -205,12 +205,13 @@ internal static class CliCommandCatalog
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
 
             // ── recorder ─────────────────────────────────────────────
-            new("/recorder <start|stop|status|config|switch>", "Unity Recorder capture commands (requires com.unity.recorder package)", "/recorder", "recorder"),
+            new("/recorder <start|stop|status|config|switch|snapshot>", "Unity Recorder capture commands (requires com.unity.recorder package, except snapshot)", "/recorder", "recorder"),
             new("/recorder start [--profile <name>]", "Start a Recorder capture session under the named profile (default: current). Errors if none configured (PrivilegedExec)", "/recorder start", "recorder"),
             new("/recorder stop", "Stop recording and flush output to disk (PrivilegedExec)", "/recorder stop", "recorder"),
             new("/recorder status", "Show current Recorder state, active profile, and all configured profiles (SafeRead)", "/recorder status", "recorder"),
             new("/recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile's output, frame rate, and resolution (SafeWrite)", "/recorder config", "recorder"),
             new("/recorder switch <profile-name>", "Switch the active recorder profile (enables named profile, disables all others) (SafeWrite)", "/recorder switch", "recorder"),
+            new("/recorder snapshot [--output <path>] [--super-size <n>]", "Capture a single screenshot frame via ScreenCapture. No Unity Recorder package required (PrivilegedExec)", "/recorder snapshot", "recorder"),
 
             // ── debug-artifact ──────────────────────────────────────────
             new("/debug-artifact prep [--tier 0|1|2|3]", "Prepare for debug artifact collection: clears console, starts profiler (T2+), starts recorder (T3). Run before playmode.", "/debug-artifact prep", "diag"),
@@ -383,6 +384,7 @@ internal static class CliCommandCatalog
             new("recorder status", "Show Recorder state, active profile, and all profiles", "recorder status", "recorder"),
             new("recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile", "recorder config", "recorder"),
             new("recorder switch <profile-name>", "Switch the active recorder profile", "recorder switch", "recorder"),
+            new("recorder snapshot [--output <path>] [--super-size <n>]", "Capture a single screenshot frame via ScreenCapture (no Unity Recorder package required)", "recorder snapshot", "recorder"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),

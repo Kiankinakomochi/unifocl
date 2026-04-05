@@ -39,6 +39,10 @@ namespace UniFocl.EditorBridge.Recorder
         {
             try
             {
+                if (!UnityEditor.EditorApplication.isPlaying)
+                    return ErrorResponse(
+                        "recorder.start requires Play mode — enter Play mode before starting a recording session");
+
                 var resolved = ResolveRecorderTypes();
                 if (resolved.Error is not null) return resolved.Error;
 
@@ -104,6 +108,10 @@ namespace UniFocl.EditorBridge.Recorder
         {
             try
             {
+                if (!UnityEditor.EditorApplication.isPlaying)
+                    return ErrorResponse(
+                        "recorder.stop requires Play mode — no recording session is active outside Play mode");
+
                 var controllerType = Type.GetType(RecorderControllerTypeName);
                 if (controllerType is null)
                     return PackageNotInstalledResponse();
@@ -393,6 +401,60 @@ namespace UniFocl.EditorBridge.Recorder
             }
         }
 
+        // ── recorder.snapshot ────────────────────────────────────────
+
+        [UnifoclCommand(
+            "recorder.snapshot",
+            "Capture a single screenshot frame using ScreenCapture. Pass {\"outputPath\":\"<path>\"} to " +
+            "specify the output file (relative to project root, default: Captures/snapshot_<timestamp>.png). " +
+            "Pass {\"superSize\":<n>} to multiply resolution (default: 1). " +
+            "Does not require the com.unity.recorder package.",
+            "recorder")]
+        public static string TakeSnapshot(string json)
+        {
+            try
+            {
+                var payload = SafeFromJson<SnapshotPayload>(json);
+
+                var outputPath = payload.outputPath;
+                if (string.IsNullOrWhiteSpace(outputPath))
+                {
+                    var timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                    outputPath = $"Captures/snapshot_{timestamp}.png";
+                }
+
+                // Resolve to absolute path relative to project root
+                var projectRoot = System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath) ?? "";
+                var fullPath = System.IO.Path.IsPathRooted(outputPath)
+                    ? outputPath
+                    : System.IO.Path.Combine(projectRoot, outputPath);
+
+                var dir = System.IO.Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrWhiteSpace(dir) && !System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
+
+                if (!UnityEditor.EditorApplication.isPlaying)
+                {
+                    return ErrorResponse(
+                        "recorder.snapshot requires Play mode — enter Play mode before capturing a screenshot");
+                }
+
+                var superSize = payload.superSize > 0 ? payload.superSize : 1;
+                UnityEngine.ScreenCapture.CaptureScreenshot(fullPath, superSize);
+
+                return JsonUtility.ToJson(new RecorderResponse
+                {
+                    ok = true,
+                    message = $"snapshot captured: {outputPath}",
+                    outputPath = fullPath
+                });
+            }
+            catch (Exception ex)
+            {
+                return ErrorResponse($"recorder snapshot failed: {ex.Message}");
+            }
+        }
+
         // ── Helpers ──────────────────────────────────────────────────
 
         private static ResolvedTypes ResolveRecorderTypes()
@@ -606,6 +668,13 @@ namespace UniFocl.EditorBridge.Recorder
             public Type? ControllerType;
             public Type? RecorderSettingsType;
             public string? Error;
+        }
+
+        [Serializable]
+        private sealed class SnapshotPayload
+        {
+            public string outputPath = string.Empty;
+            public int superSize;
         }
 
         [Serializable]
