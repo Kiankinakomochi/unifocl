@@ -98,6 +98,43 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/UnifoclManifestGenerator.cs" LogicalName="Payload/EditorScripts/UnifoclManifestGenerator.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Models/UnifoclEditorConfig.cs" LogicalName="Payload/EditorScripts/Models/UnifoclEditorConfig.cs" />
     <EmbeddedResource Include="../unifocl.unity/SharedModels/BridgeModels.cs" LogicalName="Payload/SharedModels/BridgeModels.cs" />
+    <!-- Runtime operations (3.7.0+) -->
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonRuntimeBridge.cs" LogicalName="Payload/EditorScripts/Services/DaemonRuntimeBridge.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonRuntimeModels.cs" LogicalName="Payload/EditorScripts/Services/DaemonRuntimeModels.cs" />
+    <!-- DaemonProjectService partials added in recent sprints -->
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Animator.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Animator.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.AssetFields.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.AssetFields.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Clip.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Clip.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Console.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Console.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Playmode.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Playmode.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.TagLayer.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.TagLayer.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/DaemonProjectService.Time.cs" LogicalName="Payload/EditorScripts/Services/DaemonProjectService.Time.cs" />
+    <!-- Profiler services -->
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.BinaryLog.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.BinaryLog.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Capture.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Capture.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Compare.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Compare.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Frames.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Frames.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Gpu.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Gpu.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Live.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Live.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Markers.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Markers.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Session.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Session.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Snapshot.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Snapshot.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/IProfilerEditorApi.cs" LogicalName="Payload/EditorScripts/Services/Profiling/IProfilerEditorApi.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/IProfilerRuntimeApi.cs" LogicalName="Payload/EditorScripts/Services/Profiling/IProfilerRuntimeApi.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/ProfilerDtos.cs" LogicalName="Payload/EditorScripts/Services/Profiling/ProfilerDtos.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/ProfilerEditorApiAdapter.cs" LogicalName="Payload/EditorScripts/Services/Profiling/ProfilerEditorApiAdapter.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/ProfilerPathUtils.cs" LogicalName="Payload/EditorScripts/Services/Profiling/ProfilerPathUtils.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/ProfilerRuntimeApiAdapter.cs" LogicalName="Payload/EditorScripts/Services/Profiling/ProfilerRuntimeApiAdapter.cs" />
+    <!-- Recorder service -->
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Recorder/DaemonRecorderService.cs" LogicalName="Payload/EditorScripts/Services/Recorder/DaemonRecorderService.cs" />
+    <!-- Runtime scripts (player-side) -->
+    <EmbeddedResource Include="../unifocl.unity/RuntimeScripts/ChunkAccumulator.cs" LogicalName="Payload/RuntimeScripts/ChunkAccumulator.cs" />
+    <EmbeddedResource Include="../unifocl.unity/RuntimeScripts/RuntimeCommandRegistry.cs" LogicalName="Payload/RuntimeScripts/RuntimeCommandRegistry.cs" />
+    <EmbeddedResource Include="../unifocl.unity/RuntimeScripts/RuntimeEnvelope.cs" LogicalName="Payload/RuntimeScripts/RuntimeEnvelope.cs" />
+    <EmbeddedResource Include="../unifocl.unity/RuntimeScripts/UnifoclRuntimeClient.cs" LogicalName="Payload/RuntimeScripts/UnifoclRuntimeClient.cs" />
+    <EmbeddedResource Include="../unifocl.unity/RuntimeScripts/UnifoclRuntimeCommandAttribute.cs" LogicalName="Payload/RuntimeScripts/UnifoclRuntimeCommandAttribute.cs" />
   </ItemGroup>
 
 </Project>

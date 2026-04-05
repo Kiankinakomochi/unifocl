@@ -40,6 +40,43 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonEvalServiceResource = "Payload/EditorScripts/Services/DaemonEvalService.cs";
     private const string UnifoclCompilationServiceResource = "Payload/EditorScripts/Services/UnifoclCompilationService.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
+    // Runtime operations (3.7.0+)
+    private const string DaemonRuntimeBridgeResource = "Payload/EditorScripts/Services/DaemonRuntimeBridge.cs";
+    private const string DaemonRuntimeModelsServiceResource = "Payload/EditorScripts/Services/DaemonRuntimeModels.cs";
+    // DaemonProjectService partials added in recent sprints
+    private const string DaemonProjectServiceAnimatorResource = "Payload/EditorScripts/Services/DaemonProjectService.Animator.cs";
+    private const string DaemonProjectServiceAssetFieldsResource = "Payload/EditorScripts/Services/DaemonProjectService.AssetFields.cs";
+    private const string DaemonProjectServiceClipResource = "Payload/EditorScripts/Services/DaemonProjectService.Clip.cs";
+    private const string DaemonProjectServiceConsoleResource = "Payload/EditorScripts/Services/DaemonProjectService.Console.cs";
+    private const string DaemonProjectServicePlaymodeResource = "Payload/EditorScripts/Services/DaemonProjectService.Playmode.cs";
+    private const string DaemonProjectServiceTagLayerResource = "Payload/EditorScripts/Services/DaemonProjectService.TagLayer.cs";
+    private const string DaemonProjectServiceTimeResource = "Payload/EditorScripts/Services/DaemonProjectService.Time.cs";
+    // Profiler services
+    private const string DaemonProfilerServiceResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.cs";
+    private const string DaemonProfilerServiceBinaryLogResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.BinaryLog.cs";
+    private const string DaemonProfilerServiceCaptureResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Capture.cs";
+    private const string DaemonProfilerServiceCompareResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Compare.cs";
+    private const string DaemonProfilerServiceFramesResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Frames.cs";
+    private const string DaemonProfilerServiceGpuResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Gpu.cs";
+    private const string DaemonProfilerServiceLiveResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Live.cs";
+    private const string DaemonProfilerServiceMarkersResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Markers.cs";
+    private const string DaemonProfilerServiceMetadataResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs";
+    private const string DaemonProfilerServiceSessionResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Session.cs";
+    private const string DaemonProfilerServiceSnapshotResource = "Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Snapshot.cs";
+    private const string ProfilerEditorApiInterfaceResource = "Payload/EditorScripts/Services/Profiling/IProfilerEditorApi.cs";
+    private const string ProfilerRuntimeApiInterfaceResource = "Payload/EditorScripts/Services/Profiling/IProfilerRuntimeApi.cs";
+    private const string ProfilerDtosResource = "Payload/EditorScripts/Services/Profiling/ProfilerDtos.cs";
+    private const string ProfilerEditorApiAdapterResource = "Payload/EditorScripts/Services/Profiling/ProfilerEditorApiAdapter.cs";
+    private const string ProfilerPathUtilsResource = "Payload/EditorScripts/Services/Profiling/ProfilerPathUtils.cs";
+    private const string ProfilerRuntimeApiAdapterResource = "Payload/EditorScripts/Services/Profiling/ProfilerRuntimeApiAdapter.cs";
+    // Recorder service
+    private const string DaemonRecorderServiceResource = "Payload/EditorScripts/Services/Recorder/DaemonRecorderService.cs";
+    // Runtime scripts (player-side)
+    private const string RuntimeChunkAccumulatorResource = "Payload/RuntimeScripts/ChunkAccumulator.cs";
+    private const string RuntimeCommandRegistryResource = "Payload/RuntimeScripts/RuntimeCommandRegistry.cs";
+    private const string RuntimeEnvelopeResource = "Payload/RuntimeScripts/RuntimeEnvelope.cs";
+    private const string RuntimeClientResource = "Payload/RuntimeScripts/UnifoclRuntimeClient.cs";
+    private const string RuntimeCommandAttributeResource = "Payload/RuntimeScripts/UnifoclRuntimeCommandAttribute.cs";
 
     public OperationResult InitializeProject(string projectPath, Action<string> log)
     {
@@ -131,6 +168,7 @@ internal sealed class EditorDependencyInitializerService
         var requiredFiles = new[]
         {
             Path.Combine(packagePath, "Editor", "UniFocl.EditorBridge.asmdef"),
+            Path.Combine(packagePath, "Runtime", "UniFocl.Runtime.asmdef"),
             Path.Combine(packagePath, "Editor", "CLIDaemon.cs"),
             Path.Combine(packagePath, "Editor", "BridgeModels.cs"),
             Path.Combine(packagePath, "Editor", "Models", "DaemonBridgeModels.cs"),
@@ -161,7 +199,44 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Models", "UnifoclEditorConfig.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonCustomToolService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonEvalService.cs"),
-            Path.Combine(packagePath, "Editor", "Services", "UnifoclCompilationService.cs")
+            Path.Combine(packagePath, "Editor", "Services", "UnifoclCompilationService.cs"),
+            // Runtime operations (3.7.0+)
+            Path.Combine(packagePath, "Editor", "Services", "DaemonRuntimeBridge.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonRuntimeModels.cs"),
+            // DaemonProjectService partials
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Animator.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.AssetFields.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Clip.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Console.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Playmode.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.TagLayer.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonProjectService.Time.cs"),
+            // Profiler services
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.BinaryLog.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Capture.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Compare.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Frames.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Gpu.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Live.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Markers.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Metadata.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Session.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "DaemonProfilerService.Snapshot.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "IProfilerEditorApi.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "IProfilerRuntimeApi.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerDtos.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerEditorApiAdapter.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerPathUtils.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs"),
+            // Recorder service
+            Path.Combine(packagePath, "Editor", "Services", "Recorder", "DaemonRecorderService.cs"),
+            // Runtime scripts (player-side)
+            Path.Combine(packagePath, "Runtime", "ChunkAccumulator.cs"),
+            Path.Combine(packagePath, "Runtime", "RuntimeCommandRegistry.cs"),
+            Path.Combine(packagePath, "Runtime", "RuntimeEnvelope.cs"),
+            Path.Combine(packagePath, "Runtime", "UnifoclRuntimeClient.cs"),
+            Path.Combine(packagePath, "Runtime", "UnifoclRuntimeCommandAttribute.cs")
         };
         foreach (var requiredFile in requiredFiles)
         {
@@ -219,6 +294,9 @@ internal sealed class EditorDependencyInitializerService
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Models"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Profiling"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Recorder"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Runtime"));
 
             var packageJson =
                 """
@@ -239,6 +317,9 @@ internal sealed class EditorDependencyInitializerService
                 {
                   "name": "UniFocl.EditorBridge",
                   "rootNamespace": "UniFocl",
+                  "references": [
+                    "UniFocl.Runtime"
+                  ],
                   "includePlatforms": [
                     "Editor"
                   ],
@@ -253,8 +334,26 @@ internal sealed class EditorDependencyInitializerService
                 }
                 """;
 
+            var runtimeAsmdef =
+                """
+                {
+                  "name": "UniFocl.Runtime",
+                  "rootNamespace": "UniFocl.Runtime",
+                  "includePlatforms": [],
+                  "excludePlatforms": [],
+                  "allowUnsafeCode": false,
+                  "overrideReferences": false,
+                  "precompiledReferences": [],
+                  "autoReferenced": true,
+                  "defineConstraints": [],
+                  "versionDefines": [],
+                  "noEngineReferences": false
+                }
+                """;
+
             File.WriteAllText(Path.Combine(payloadPath, "package.json"), packageJson + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "UniFocl.EditorBridge.asmdef"), asmdef + Environment.NewLine, Encoding.UTF8);
+            File.WriteAllText(Path.Combine(payloadPath, "Runtime", "UniFocl.Runtime.asmdef"), runtimeAsmdef + Environment.NewLine, Encoding.UTF8);
 
             var resourceToTarget = new (string Resource, string RelativePath)[]
             {
@@ -289,7 +388,44 @@ internal sealed class EditorDependencyInitializerService
                 (UnifoclEditorConfigResource,           Path.Combine("Editor", "Models", "UnifoclEditorConfig.cs")),
                 (DaemonCustomToolServiceResource,       Path.Combine("Editor", "Services", "DaemonCustomToolService.cs")),
                 (DaemonEvalServiceResource,             Path.Combine("Editor", "Services", "DaemonEvalService.cs")),
-                (UnifoclCompilationServiceResource,     Path.Combine("Editor", "Services", "UnifoclCompilationService.cs"))
+                (UnifoclCompilationServiceResource,     Path.Combine("Editor", "Services", "UnifoclCompilationService.cs")),
+                // Runtime operations (3.7.0+)
+                (DaemonRuntimeBridgeResource,           Path.Combine("Editor", "Services", "DaemonRuntimeBridge.cs")),
+                (DaemonRuntimeModelsServiceResource,    Path.Combine("Editor", "Services", "DaemonRuntimeModels.cs")),
+                // DaemonProjectService partials
+                (DaemonProjectServiceAnimatorResource,   Path.Combine("Editor", "Services", "DaemonProjectService.Animator.cs")),
+                (DaemonProjectServiceAssetFieldsResource, Path.Combine("Editor", "Services", "DaemonProjectService.AssetFields.cs")),
+                (DaemonProjectServiceClipResource,       Path.Combine("Editor", "Services", "DaemonProjectService.Clip.cs")),
+                (DaemonProjectServiceConsoleResource,    Path.Combine("Editor", "Services", "DaemonProjectService.Console.cs")),
+                (DaemonProjectServicePlaymodeResource,   Path.Combine("Editor", "Services", "DaemonProjectService.Playmode.cs")),
+                (DaemonProjectServiceTagLayerResource,   Path.Combine("Editor", "Services", "DaemonProjectService.TagLayer.cs")),
+                (DaemonProjectServiceTimeResource,       Path.Combine("Editor", "Services", "DaemonProjectService.Time.cs")),
+                // Profiler services
+                (DaemonProfilerServiceResource,          Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.cs")),
+                (DaemonProfilerServiceBinaryLogResource, Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.BinaryLog.cs")),
+                (DaemonProfilerServiceCaptureResource,   Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Capture.cs")),
+                (DaemonProfilerServiceCompareResource,   Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Compare.cs")),
+                (DaemonProfilerServiceFramesResource,    Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Frames.cs")),
+                (DaemonProfilerServiceGpuResource,       Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Gpu.cs")),
+                (DaemonProfilerServiceLiveResource,      Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Live.cs")),
+                (DaemonProfilerServiceMarkersResource,   Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Markers.cs")),
+                (DaemonProfilerServiceMetadataResource,  Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Metadata.cs")),
+                (DaemonProfilerServiceSessionResource,   Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Session.cs")),
+                (DaemonProfilerServiceSnapshotResource,  Path.Combine("Editor", "Services", "Profiling", "DaemonProfilerService.Snapshot.cs")),
+                (ProfilerEditorApiInterfaceResource,     Path.Combine("Editor", "Services", "Profiling", "IProfilerEditorApi.cs")),
+                (ProfilerRuntimeApiInterfaceResource,    Path.Combine("Editor", "Services", "Profiling", "IProfilerRuntimeApi.cs")),
+                (ProfilerDtosResource,                   Path.Combine("Editor", "Services", "Profiling", "ProfilerDtos.cs")),
+                (ProfilerEditorApiAdapterResource,       Path.Combine("Editor", "Services", "Profiling", "ProfilerEditorApiAdapter.cs")),
+                (ProfilerPathUtilsResource,              Path.Combine("Editor", "Services", "Profiling", "ProfilerPathUtils.cs")),
+                (ProfilerRuntimeApiAdapterResource,      Path.Combine("Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs")),
+                // Recorder service
+                (DaemonRecorderServiceResource,          Path.Combine("Editor", "Services", "Recorder", "DaemonRecorderService.cs")),
+                // Runtime scripts (player-side)
+                (RuntimeChunkAccumulatorResource,        Path.Combine("Runtime", "ChunkAccumulator.cs")),
+                (RuntimeCommandRegistryResource,         Path.Combine("Runtime", "RuntimeCommandRegistry.cs")),
+                (RuntimeEnvelopeResource,                Path.Combine("Runtime", "RuntimeEnvelope.cs")),
+                (RuntimeClientResource,                  Path.Combine("Runtime", "UnifoclRuntimeClient.cs")),
+                (RuntimeCommandAttributeResource,        Path.Combine("Runtime", "UnifoclRuntimeCommandAttribute.cs"))
             };
 
             foreach (var item in resourceToTarget)
