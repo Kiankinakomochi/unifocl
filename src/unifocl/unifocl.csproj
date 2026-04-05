@@ -118,7 +118,7 @@
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Gpu.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Gpu.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Live.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Live.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Markers.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Markers.cs" />
-    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs" />
+    <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Metadata.cs" WithCulture="false" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Session.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Session.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/DaemonProfilerService.Snapshot.cs" LogicalName="Payload/EditorScripts/Services/Profiling/DaemonProfilerService.Snapshot.cs" />
     <EmbeddedResource Include="../unifocl.unity/EditorScripts/Services/Profiling/IProfilerEditorApi.cs" LogicalName="Payload/EditorScripts/Services/Profiling/IProfilerEditorApi.cs" />
