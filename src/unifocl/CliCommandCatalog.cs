@@ -47,6 +47,7 @@ internal static class CliCommandCatalog
             new("/unity set <path>", "Set default Unity editor path", "/unity set", "setup"),
             new("/install-hook", "Install/validate Bridge mode integration", "/install-hook", "setup"),
             new("/agent install <codex|claude> [--workspace <path>] [--server-name <name>] [--config-root <path>] [--dry-run]", "Install/update agent MCP integration for Codex or Claude", "/agent install", "setup"),
+            new("/agent setup [path-to-unity-project] [--dry-run]", "Auto-detect installed agent tools (claude, codex) and configure MCP integration for a Unity project. Defaults to current directory.", "/agent setup", "setup"),
             new("/examples", "Show common next-step flows", "/examples", "setup"),
             new("/keybinds", "Show modal keybinds/shortcuts", "/keybinds", "setup"),
             new("/shortcuts", "Alias for keybinds", "/shortcuts", "setup"),

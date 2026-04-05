@@ -56,19 +56,13 @@ iwr -useb https://raw.githubusercontent.com/Kiankinakomochi/unifocl/main/scripts
 
 Download pre-built archives from the [latest GitHub release](https://github.com/Kiankinakomochi/unifocl/releases/latest) and place the binary anywhere in your `PATH`.
 
-### Agent Plugins (Codex + Claude Code)
-
-unifocl provides a built-in installer for agent integrations:
+### Agent Setup (Claude Code & Codex)
 
 ```sh
-# Codex
-unifocl agent install codex
-
-# Claude Code
-unifocl agent install claude
+unifocl agent setup /path/to/your-unity-project
 ```
 
-This replaces manual MCP JSON edits and plugin management. Same command works for Homebrew, Winget, and release-binary users. Idempotent install/update flow versioned with the CLI lifecycle.
+Auto-detects installed agent tools (`claude`, `codex`) and writes the required config files into the project directory. Commit the generated `.claude/settings.json` and `CLAUDE.md` to share the integration with your team — each contributor runs `agent setup` once locally for their own permissions.
 
 ## Requirements
 
