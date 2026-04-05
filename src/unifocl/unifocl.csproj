@@ -17,6 +17,7 @@
     </ParameterGroup>
     <Task>
       <Code Type="Fragment" Language="cs"><![CDATA[
+#pragma warning disable CS0162 // RoslynCodeTaskFactory appends an implicit return; all paths already return above
         if (!System.IO.File.Exists(FilePath))
         {
             Log.LogError($"CliVersion file not found: {FilePath}");

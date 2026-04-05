@@ -147,11 +147,12 @@ internal sealed class ExecCommandRegistry
         ["session.status"]      = ExecRiskLevel.SafeRead,
         ["approval.confirm"]    = ExecRiskLevel.SafeRead,
         // recorder operations (lazy-loaded category)
-        ["recorder.start"]  = ExecRiskLevel.PrivilegedExec,
-        ["recorder.stop"]   = ExecRiskLevel.PrivilegedExec,
-        ["recorder.status"] = ExecRiskLevel.SafeRead,
-        ["recorder.config"] = ExecRiskLevel.SafeWrite,
-        ["recorder.switch"] = ExecRiskLevel.SafeWrite,
+        ["recorder.start"]    = ExecRiskLevel.PrivilegedExec,
+        ["recorder.stop"]     = ExecRiskLevel.PrivilegedExec,
+        ["recorder.status"]   = ExecRiskLevel.SafeRead,
+        ["recorder.config"]   = ExecRiskLevel.SafeWrite,
+        ["recorder.switch"]   = ExecRiskLevel.SafeWrite,
+        ["recorder.snapshot"] = ExecRiskLevel.PrivilegedExec,
         // profiling operations (lazy-loaded category)
         ["profiling.capabilities"]    = ExecRiskLevel.SafeRead,
         ["profiling.inspect"]         = ExecRiskLevel.SafeRead,

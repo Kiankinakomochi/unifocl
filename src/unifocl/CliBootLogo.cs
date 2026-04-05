@@ -70,7 +70,9 @@ internal static class CliBootLogo
                     var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
                     if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
                     {
+#pragma warning disable CA1416 // Windows-only; silently fails via catch on other platforms
                         Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
+#pragma warning restore CA1416
                     }
                 }
                 catch
@@ -80,7 +82,9 @@ internal static class CliBootLogo
 
                 if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
                 {
+#pragma warning disable CA1416 // Windows-only; silently fails via outer catch on other platforms
                     Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
+#pragma warning restore CA1416
                 }
             }
         }

@@ -408,7 +408,7 @@ internal sealed class RuntimeCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /recorder <start|stop|status|config|switch>");
+            log("[x] usage: /recorder <start|stop|status|config|switch|snapshot>");
             return;
         }
 
@@ -460,6 +460,18 @@ internal sealed class RuntimeCommandService
                 if (tokens.Count < 3) { log("[x] usage: /recorder switch <profile-name>"); return; }
                 toolName = "recorder.switch";
                 argsJson = JsonSerializer.Serialize(new { profileName = tokens[2] });
+                break;
+            }
+            case "snapshot":
+            {
+                var outputPath = ParseStringArg(tokens, "--output");
+                var superSize = ParseIntArg(tokens, "--super-size");
+                toolName = "recorder.snapshot";
+                argsJson = JsonSerializer.Serialize(new
+                {
+                    outputPath = outputPath ?? string.Empty,
+                    superSize = superSize >= 1 ? superSize : 1
+                });
                 break;
             }
             default:
