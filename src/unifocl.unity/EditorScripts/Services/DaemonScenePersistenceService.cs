@@ -70,7 +70,11 @@ namespace UniFocl.EditorBridge
                     continue;
                 }
 
+                // SceneHandle implicit int conversion deprecated in Unity 6; GetRawData() replacement
+                // unavailable in Unity 2021–2022 LTS — suppress until minimum version is raised.
+#pragma warning disable CS0618
                 if (!seen.Add(sceneToSave.handle))
+#pragma warning restore CS0618
                 {
                     continue;
                 }

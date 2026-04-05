@@ -1,11 +1,23 @@
 # Changelog
 
-## 3.8.3 - 2026-04-05
+## 3.8.4 - 2026-04-05
 
 ### Fixed
 - **`recorder.snapshot` play mode guard**: `ScreenCapture.CaptureScreenshot` is a no-op in Edit mode; the command now returns an explicit error instead of a false-positive success.
 - **`recorder.start` / `recorder.stop` play mode guard**: Same false-positive fix — both commands require an active Play mode session and now reject calls made from Edit mode.
 - **Human-friendly output for recorder/profiler commands in interactive TUI**: `DispatchCustomToolAsync` now unwraps the inner recorder JSON from the MCP transport envelope and displays the `message` field as a green/red log line instead of dumping the raw JSON. Agentic/exec surfaces are unaffected — they still receive the full structured JSON.
+
+### Officialized
+- Officialized `3.8.4` by closing the development cycle suffix.
+
+## 3.8.3 - 2026-04-05
+
+### Fixed
+- **`/open` startup log noise**: Unity process stdout is now filtered to errors/exceptions/failures only during Host mode startup; informational boot lines (GfxDevice, Mono paths, domain-reload profiling, etc.) are suppressed.
+- **`/open` TUI transition**: Console is cleared when project mode is successfully entered, eliminating startup log clutter before the project view renders.
+
+### Added
+- **`/open` success banner**: A green `open: project mode active` line is printed immediately before the project view renders, confirming successful entry into project mode.
 
 ### Officialized
 - Officialized `3.8.3` by closing the development cycle suffix.

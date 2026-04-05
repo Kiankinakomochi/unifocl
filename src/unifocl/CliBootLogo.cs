@@ -64,27 +64,26 @@ internal static class CliBootLogo
 
             if (targetWindowWidth > 0 && targetWindowHeight > 0)
             {
-                try
+                if (OperatingSystem.IsWindows())
                 {
-                    var targetBufferWidth = Math.Max(Console.BufferWidth, targetWindowWidth);
-                    var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
-                    if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
+                    try
                     {
-#pragma warning disable CA1416 // Windows-only; silently fails via catch on other platforms
-                        Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
-#pragma warning restore CA1416
+                        var targetBufferWidth = Math.Max(Console.BufferWidth, targetWindowWidth);
+                        var targetBufferHeight = Math.Max(Console.BufferHeight, targetWindowHeight);
+                        if (targetBufferWidth != Console.BufferWidth || targetBufferHeight != Console.BufferHeight)
+                        {
+                            Console.SetBufferSize(targetBufferWidth, targetBufferHeight);
+                        }
                     }
-                }
-                catch
-                {
-                    // Some terminals do not support buffer resizing.
-                }
+                    catch
+                    {
+                        // Some terminals do not support buffer resizing.
+                    }
 
-                if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
-                {
-#pragma warning disable CA1416 // Windows-only; silently fails via outer catch on other platforms
-                    Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
-#pragma warning restore CA1416
+                    if (targetWindowWidth != currentWindowWidth || targetWindowHeight != currentWindowHeight)
+                    {
+                        Console.SetWindowSize(targetWindowWidth, targetWindowHeight);
+                    }
                 }
             }
         }
