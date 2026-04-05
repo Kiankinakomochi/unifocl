@@ -39,6 +39,10 @@ namespace UniFocl.EditorBridge.Recorder
         {
             try
             {
+                if (!UnityEditor.EditorApplication.isPlaying)
+                    return ErrorResponse(
+                        "recorder.start requires Play mode — enter Play mode before starting a recording session");
+
                 var resolved = ResolveRecorderTypes();
                 if (resolved.Error is not null) return resolved.Error;
 
@@ -104,6 +108,10 @@ namespace UniFocl.EditorBridge.Recorder
         {
             try
             {
+                if (!UnityEditor.EditorApplication.isPlaying)
+                    return ErrorResponse(
+                        "recorder.stop requires Play mode — no recording session is active outside Play mode");
+
                 var controllerType = Type.GetType(RecorderControllerTypeName);
                 if (controllerType is null)
                     return PackageNotInstalledResponse();
