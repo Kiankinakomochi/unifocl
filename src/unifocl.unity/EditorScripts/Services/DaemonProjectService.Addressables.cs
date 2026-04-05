@@ -1072,7 +1072,7 @@ namespace UniFocl.EditorBridge
                     {
                         guid = guid,
                         assetPath = assetPath,
-                        address = GetPropertyString(entry, "address"),
+                        address = GetPropertyString(entry, "address") ?? string.Empty,
                         assetType = assetType,
                         labels = GetEntryLabels(entry).OrderBy(label => label, StringComparer.OrdinalIgnoreCase).ToArray()
                     });
@@ -1227,7 +1227,7 @@ namespace UniFocl.EditorBridge
 
             if (settings is null)
             {
-                var settingsType = addressablesAssembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettings");
+                var settingsType = addressablesAssembly!.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettings");
                 var createMethod = settingsType is null ? null : FindMethod(settingsType, "Create", 4);
                 if (createMethod is not null)
                 {
@@ -1846,7 +1846,7 @@ namespace UniFocl.EditorBridge
                     TrySetEntryLabel(entry, existingLabel, false);
                 }
 
-                foreach (var label in state.labels)
+                foreach (var label in state.labels ?? Array.Empty<string>())
                 {
                     if (string.IsNullOrWhiteSpace(label))
                     {

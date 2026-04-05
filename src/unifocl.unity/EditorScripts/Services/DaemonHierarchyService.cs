@@ -783,7 +783,13 @@ namespace UniFocl.EditorBridge
 
         private static GameObject EnsureSceneCanvas(Scene scene)
         {
+#if UNITY_2022_1_OR_NEWER
+            foreach (var canvas in UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None))
+#else
+#pragma warning disable CS0618 // FindObjectsOfType is obsolete; fallback for pre-2022.1
             foreach (var canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
+#pragma warning restore CS0618
+#endif
             {
                 if (canvas.gameObject.scene == scene)
                 {
@@ -804,7 +810,13 @@ namespace UniFocl.EditorBridge
 
         private static void EnsureEventSystemExists(Scene scene)
         {
+#if UNITY_2022_1_OR_NEWER
+            foreach (var eventSystem in UnityEngine.Object.FindObjectsByType<EventSystem>(FindObjectsSortMode.None))
+#else
+#pragma warning disable CS0618 // FindObjectsOfType is obsolete; fallback for pre-2022.1
             foreach (var eventSystem in UnityEngine.Object.FindObjectsOfType<EventSystem>())
+#pragma warning restore CS0618
+#endif
             {
                 if (eventSystem.gameObject.scene == scene)
                 {

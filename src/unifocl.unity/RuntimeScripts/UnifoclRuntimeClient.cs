@@ -15,7 +15,7 @@ namespace UniFocl.Runtime
     /// </summary>
     public sealed class UnifoclRuntimeClient : MonoBehaviour
     {
-        private static UnifoclRuntimeClient _instance;
+        private static UnifoclRuntimeClient? _instance;
         private readonly ChunkAccumulator _accumulator = new();
         private readonly Dictionary<string, Func<string, string>> _handlers = new(StringComparer.OrdinalIgnoreCase);
 

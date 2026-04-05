@@ -611,7 +611,7 @@ namespace UniFocl.EditorBridge
                     _buildState.finishedAtUtc = DateTime.UtcNow.ToString("O");
                     _buildState.success = parsed.ok;
                     _buildState.message = parsed.message ?? string.Empty;
-                    _buildState.outputPath = outputPath;
+                    _buildState.outputPath = outputPath ?? string.Empty;
                     _buildState.lastHeartbeatUtc = DateTime.UtcNow.ToString("O");
                 }
             }

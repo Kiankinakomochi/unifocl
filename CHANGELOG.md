@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.8.1 - 2026-04-05
+
+### Fixed
+- **Eliminate all nullable / compile warnings** across `src/unifocl.unity/` (40+ warnings resolved).
+  - Initialized `MutationIntentEnvelope` fields in bridge models.
+  - Added null guards and `?? string.Empty` coalescing for reflection-heavy Addressables, Recorder, and Runtime Bridge code.
+  - Replaced obsolete `FindObjectsOfType<T>()` with `FindObjectsByType<T>(FindObjectsSortMode.None)`.
+  - Suppressed unavoidable obsolete-API warnings (`AssemblyBuilder`, `GetScriptingDefineSymbolsForGroup`) with justifying comments.
+  - Corrected nullable return types on `TryAccumulate`, `GetJobStatus`, profiler frame-data views, and eval compilation helpers.
+
+### Changed
+- **Zero-warning build policy**: Added compile-warning policy to `CLAUDE.md` and `AGENT.md` — all builds must produce 0 warnings; pre-existing warnings must be fixed in the same branch.
+
+### Officialized
+- Officialized `3.8.1` by closing the development cycle suffix.
+
 ## 3.8.0 - 2026-04-04
 
 ### Added

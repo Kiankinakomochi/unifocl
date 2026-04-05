@@ -70,6 +70,11 @@ unifocl agent install claude
 
 This replaces manual MCP JSON edits and plugin management. Same command works for Homebrew, Winget, and release-binary users. Idempotent install/update flow versioned with the CLI lifecycle.
 
+## Requirements
+
+- **.NET 10** (or later) for the CLI.
+- **Unity 2020.1 or later** for editor scripts. Unity 2022.1+ is recommended — newer APIs (e.g. `FindObjectsByType`) are used when available, with automatic fallbacks for older versions. The Roslyn analyzer integration requires Unity 2022.2+.
+
 ## Quick Start
 
 ### For Humans (The TUI)

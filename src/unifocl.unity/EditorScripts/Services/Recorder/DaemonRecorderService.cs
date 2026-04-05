@@ -42,7 +42,7 @@ namespace UniFocl.EditorBridge.Recorder
                 var resolved = ResolveRecorderTypes();
                 if (resolved.Error is not null) return resolved.Error;
 
-                var settings = LoadControllerSettings(resolved.ControllerSettingsType);
+                var settings = LoadControllerSettings(resolved.ControllerSettingsType!);
                 if (settings is null)
                 {
                     return ErrorResponse("No RecorderControllerSettings found. " +
@@ -60,8 +60,8 @@ namespace UniFocl.EditorBridge.Recorder
                 var payload = SafeFromJson<StartPayload>(json);
                 if (!string.IsNullOrWhiteSpace(payload.profile))
                 {
-                    var switched = SwitchToProfile(settings, resolved.ControllerSettingsType,
-                        resolved.RecorderSettingsType, payload.profile);
+                    var switched = SwitchToProfile(settings, resolved.ControllerSettingsType!,
+                        resolved.RecorderSettingsType!, payload.profile);
                     if (!switched.ok) return JsonUtility.ToJson(switched);
                 }
 
@@ -72,9 +72,10 @@ namespace UniFocl.EditorBridge.Recorder
                         "enable at least one profile or specify --profile <name>");
                 }
 
-                var controller = Activator.CreateInstance(resolved.ControllerType, new object[] { settings });
-                resolved.ControllerType.GetMethod("PrepareRecording")?.Invoke(controller, null);
-                resolved.ControllerType.GetMethod("StartRecording")?.Invoke(controller, null);
+                var controllerType = resolved.ControllerType!;
+                var controller = Activator.CreateInstance(controllerType, new object[] { settings });
+                controllerType.GetMethod("PrepareRecording")?.Invoke(controller, null);
+                controllerType.GetMethod("StartRecording")?.Invoke(controller, null);
 
                 var activeProfile = GetActiveProfileName(recordersList, resolved.RecorderSettingsType);
                 return JsonUtility.ToJson(new RecorderResponse
@@ -246,12 +247,12 @@ namespace UniFocl.EditorBridge.Recorder
                 if (string.IsNullOrWhiteSpace(payload.profile))
                     return ErrorResponse("recorder.switch requires 'profile' (profile name)");
 
-                var settings = LoadControllerSettings(resolved.ControllerSettingsType);
+                var settings = LoadControllerSettings(resolved.ControllerSettingsType!);
                 if (settings is null)
                     return ErrorResponse("no RecorderControllerSettings found");
 
-                var result = SwitchToProfile(settings, resolved.ControllerSettingsType,
-                    resolved.RecorderSettingsType, payload.profile);
+                var result = SwitchToProfile(settings, resolved.ControllerSettingsType!,
+                    resolved.RecorderSettingsType!, payload.profile);
                 return JsonUtility.ToJson(result);
             }
             catch (Exception ex)
@@ -281,7 +282,7 @@ namespace UniFocl.EditorBridge.Recorder
                 if (string.IsNullOrWhiteSpace(payload.profile))
                     return ErrorResponse("recorder.config requires 'profile' (profile name)");
 
-                var settings = LoadControllerSettings(resolved.ControllerSettingsType);
+                var settings = LoadControllerSettings(resolved.ControllerSettingsType!);
                 if (settings is null)
                     return ErrorResponse("no RecorderControllerSettings found");
 
@@ -289,17 +290,18 @@ namespace UniFocl.EditorBridge.Recorder
                 if (recordersList is null || recordersList.Count == 0)
                     return ErrorResponse("no recorder profiles configured");
 
-                var target = FindProfileByName(recordersList, resolved.RecorderSettingsType, payload.profile);
+                var target = FindProfileByName(recordersList, resolved.RecorderSettingsType!, payload.profile);
                 if (target is null)
                     return ErrorResponse($"profile '{payload.profile}' not found");
 
                 var targetType = target.GetType();
+                var recorderSettingsType = resolved.RecorderSettingsType!;
                 var applied = new List<string>();
 
                 // outputFile — available on RecorderSettings base
                 if (!string.IsNullOrWhiteSpace(payload.outputFile))
                 {
-                    var prop = resolved.RecorderSettingsType.GetProperty("OutputFile",
+                    var prop = recorderSettingsType.GetProperty("OutputFile",
                         BindingFlags.Public | BindingFlags.Instance);
                     if (prop is not null)
                     {
@@ -311,7 +313,7 @@ namespace UniFocl.EditorBridge.Recorder
                 // captureFrameRate — on RecorderSettings
                 if (payload.captureFrameRate > 0)
                 {
-                    var prop = resolved.RecorderSettingsType.GetProperty("FrameRate",
+                    var prop = recorderSettingsType.GetProperty("FrameRate",
                         BindingFlags.Public | BindingFlags.Instance);
                     if (prop is not null)
                     {
@@ -323,7 +325,7 @@ namespace UniFocl.EditorBridge.Recorder
                 // capFrameRate — on RecorderSettings (lock frame rate to capture rate)
                 if (payload.setCapFrameRate)
                 {
-                    var prop = resolved.RecorderSettingsType.GetProperty("CapFrameRate",
+                    var prop = recorderSettingsType.GetProperty("CapFrameRate",
                         BindingFlags.Public | BindingFlags.Instance);
                     if (prop is not null)
                     {
@@ -415,7 +417,7 @@ namespace UniFocl.EditorBridge.Recorder
             };
         }
 
-        private static object LoadControllerSettings(Type controllerSettingsType)
+        private static object? LoadControllerSettings(Type controllerSettingsType)
         {
             var getGlobal = controllerSettingsType.GetMethod("GetGlobalSettings",
                 BindingFlags.Public | BindingFlags.Static);
@@ -425,7 +427,7 @@ namespace UniFocl.EditorBridge.Recorder
             return FindRecorderSettingsAsset(controllerSettingsType);
         }
 
-        private static object FindRecorderSettingsAsset(Type settingsType)
+        private static object? FindRecorderSettingsAsset(Type settingsType)
         {
             var guids = UnityEditor.AssetDatabase.FindAssets($"t:{settingsType.Name}");
             if (guids is null || guids.Length == 0) return null;
@@ -434,10 +436,10 @@ namespace UniFocl.EditorBridge.Recorder
             return UnityEditor.AssetDatabase.LoadAssetAtPath(path, settingsType);
         }
 
-        private static System.Collections.IList GetRecorderSettingsList(
-            object controllerSettings, Type controllerSettingsType)
+        private static System.Collections.IList? GetRecorderSettingsList(
+            object? controllerSettings, Type? controllerSettingsType)
         {
-            if (controllerSettings is null) return null;
+            if (controllerSettings is null || controllerSettingsType is null) return null;
 
             var prop = controllerSettingsType.GetProperty("RecorderSettings",
                 BindingFlags.Public | BindingFlags.Instance);
@@ -445,7 +447,7 @@ namespace UniFocl.EditorBridge.Recorder
         }
 
         private static bool HasEnabledRecorder(
-            System.Collections.IList recordersList, Type recorderSettingsType)
+            System.Collections.IList? recordersList, Type? recorderSettingsType)
         {
             if (recordersList is null || recorderSettingsType is null) return false;
 
@@ -462,7 +464,7 @@ namespace UniFocl.EditorBridge.Recorder
         }
 
         private static string GetActiveProfileName(
-            System.Collections.IList recordersList, Type recorderSettingsType)
+            System.Collections.IList? recordersList, Type? recorderSettingsType)
         {
             if (recordersList is null || recorderSettingsType is null) return "";
 
@@ -481,8 +483,8 @@ namespace UniFocl.EditorBridge.Recorder
             return "";
         }
 
-        private static object FindProfileByName(
-            System.Collections.IList recordersList, Type recorderSettingsType, string profileName)
+        private static object? FindProfileByName(
+            System.Collections.IList? recordersList, Type recorderSettingsType, string profileName)
         {
             if (recordersList is null) return null;
 
@@ -600,10 +602,10 @@ namespace UniFocl.EditorBridge.Recorder
 
         private sealed class ResolvedTypes
         {
-            public Type ControllerSettingsType;
-            public Type ControllerType;
-            public Type RecorderSettingsType;
-            public string Error;
+            public Type? ControllerSettingsType;
+            public Type? ControllerType;
+            public Type? RecorderSettingsType;
+            public string? Error;
         }
 
         [Serializable]

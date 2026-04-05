@@ -616,7 +616,7 @@ namespace UniFocl.EditorBridge
                 return false;
             }
 
-            var group = createGroup.Invoke(settings, new object[] { displayName, false, false, false, null, null });
+            var group = createGroup.Invoke(settings, new object?[] { displayName, false, false, false, null, null });
             if (group is not UnityEngine.Object groupObject)
             {
                 error = "failed to create Addressables group";

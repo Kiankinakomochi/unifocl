@@ -39,7 +39,9 @@ namespace UniFocl.EditorBridge
                 string defines;
                 try
                 {
+#pragma warning disable CS0618 // GetScriptingDefineSymbolsForGroup is obsolete but NamedBuildTarget variant requires Unity 2021.2+
                     defines = PlayerSettings.GetScriptingDefineSymbolsForGroup(group) ?? string.Empty;
+#pragma warning restore CS0618
                 }
                 catch
                 {

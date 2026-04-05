@@ -145,7 +145,7 @@ namespace UniFocl.EditorBridge
         /// back to the <c>UnitySynchronizationContext</c>, which would deadlock
         /// if the main thread is occupied by the drain loop.
         /// </summary>
-        private static async Task<object> RunAndAwaitAsync(MethodInfo method, CancellationToken ct)
+        private static async Task<object?> RunAndAwaitAsync(MethodInfo method, CancellationToken ct)
         {
             // Temporarily clear the SynchronizationContext so that any await
             // inside the user's async code does NOT capture the Unity main-thread
@@ -181,7 +181,7 @@ namespace UniFocl.EditorBridge
         /// loads the resulting assembly from bytes, and returns the entry-point
         /// <see cref="MethodInfo"/>. Temp artefacts are always cleaned up.
         /// </summary>
-        private static async Task<(MethodInfo method, string error)> CompileToMethodAsync(string code, string declarations)
+        private static async Task<(MethodInfo? method, string? error)> CompileToMethodAsync(string code, string declarations)
         {
             var seq = ++_sequence;
             var typeName = $"_UnifoclEval{seq}_";
@@ -268,7 +268,7 @@ namespace UniFocl.EditorBridge
         /// not pump Unity's internal update and <c>buildFinished</c> never fires.
         /// Returns null on success or a newline-joined error string.
         /// </summary>
-        private static Task<string> CompileSourceAsync(string srcPath, string dllPath)
+        private static Task<string?> CompileSourceAsync(string srcPath, string dllPath)
         {
             return Application.isBatchMode
                 ? CompileViaProcessAsync(srcPath, dllPath)
@@ -277,17 +277,19 @@ namespace UniFocl.EditorBridge
 
         // ── AssemblyBuilder path (bridge mode) ─────────────────────────────────
 
-        private static async Task<string> CompileViaAssemblyBuilderAsync(string srcPath, string dllPath)
+        private static async Task<string?> CompileViaAssemblyBuilderAsync(string srcPath, string dllPath)
         {
             try
             {
                 var done = new TaskCompletionSource<CompilerMessage[]>();
+#pragma warning disable CS0618 // AssemblyBuilder is obsolete but still functional
                 var builder = new AssemblyBuilder(dllPath, srcPath)
                 {
                     referencesOptions = ReferencesOptions.UseEngineModules,
                     additionalReferences = CollectReferences()
                 };
                 builder.buildFinished += (_, msgs) => done.TrySetResult(msgs);
+#pragma warning restore CS0618
 
                 if (!builder.Build())
                     return "AssemblyBuilder failed to start — is the editor compiling?";
@@ -298,16 +300,15 @@ namespace UniFocl.EditorBridge
                     return "compilation timed out (30 s) — AssemblyBuilder.buildFinished was never invoked";
 
                 var messages = done.Task.Result;
-                StringBuilder errors = null;
+                var errors = new StringBuilder();
                 foreach (var m in messages)
                 {
                     if (m.type != CompilerMessageType.Error) continue;
-                    errors ??= new StringBuilder();
                     if (errors.Length > 0) errors.AppendLine();
                     errors.Append(m.message);
                 }
 
-                return errors?.ToString();
+                return errors.Length > 0 ? errors.ToString() : null;
             }
             catch (Exception ex)
             {
@@ -317,17 +318,17 @@ namespace UniFocl.EditorBridge
 
         // ── Process-based path (host / batchmode) ──────────────────────────────
 
-        private static Task<string> CompileViaProcessAsync(string srcPath, string dllPath)
+        private static Task<string?> CompileViaProcessAsync(string srcPath, string dllPath)
         {
             try
             {
                 var (dotnetPath, cscPath) = ResolveBundledCompiler();
                 if (dotnetPath is null)
-                    return Task.FromResult("cannot locate Unity's bundled dotnet/csc — eval is unavailable in batchmode");
+                    return Task.FromResult<string?>("cannot locate Unity's bundled dotnet/csc — eval is unavailable in batchmode");
 
                 var refs = CollectReferences();
                 var sb = new StringBuilder();
-                sb.Append("exec ").Append(Quote(cscPath));
+                sb.Append("exec ").Append(Quote(cscPath!));
                 sb.Append(" -target:library");
                 sb.Append(" -out:").Append(Quote(Path.GetFullPath(dllPath)));
                 sb.Append(" -nologo -nowarn:CS0162,CS1998");
@@ -347,7 +348,7 @@ namespace UniFocl.EditorBridge
 
                 using var proc = Process.Start(psi);
                 if (proc is null)
-                    return Task.FromResult("failed to start compiler process");
+                    return Task.FromResult<string?>("failed to start compiler process");
 
                 var stdout = proc.StandardOutput.ReadToEnd();
                 var stderr = proc.StandardError.ReadToEnd();
@@ -356,24 +357,24 @@ namespace UniFocl.EditorBridge
                 if (!proc.HasExited)
                 {
                     try { proc.Kill(); } catch { }
-                    return Task.FromResult("compiler process timed out (30 s)");
+                    return Task.FromResult<string?>("compiler process timed out (30 s)");
                 }
 
                 if (proc.ExitCode != 0)
                 {
                     var output = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-                    return Task.FromResult($"compilation failed (exit {proc.ExitCode}):\n{output.Trim()}");
+                    return Task.FromResult<string?>($"compilation failed (exit {proc.ExitCode}):\n{output.Trim()}");
                 }
 
-                return Task.FromResult<string>(null);
+                return Task.FromResult<string?>(null);
             }
             catch (Exception ex)
             {
-                return Task.FromResult($"process compiler error: {ex.Message}");
+                return Task.FromResult<string?>($"process compiler error: {ex.Message}");
             }
         }
 
-        private static (string dotnet, string csc) ResolveBundledCompiler()
+        private static (string? dotnet, string? csc) ResolveBundledCompiler()
         {
             var contentsPath = EditorApplication.applicationContentsPath; // .../Unity.app/Contents
             var scriptingRoot = Path.Combine(contentsPath, "Resources", "Scripting");
@@ -436,7 +437,7 @@ namespace UniFocl.EditorBridge
         // Unlike a simple ToString() fallback, this produces machine-parseable
         // JSON for structs, arrays, dictionaries, and nested objects.
 
-        private static string Serialize(object obj)
+        private static string Serialize(object? obj)
         {
             if (obj is null) return "null";
             if (obj is string s) return s;

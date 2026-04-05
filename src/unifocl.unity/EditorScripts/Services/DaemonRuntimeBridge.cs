@@ -72,7 +72,7 @@ namespace UniFocl.EditorBridge
                     {
                         playerId = player.playerId,
                         name = player.name ?? $"player-{player.playerId}",
-                        platform = ResolvePlatform(player.name),
+                        platform = ResolvePlatform(player.name ?? string.Empty),
                         deviceId = player.playerId.ToString(),
                         isConnected = _attachedPlayerId == player.playerId
                     });
@@ -293,7 +293,7 @@ namespace UniFocl.EditorBridge
             return jobId;
         }
 
-        public static RuntimeJobState GetJobStatus(string jobId)
+        public static RuntimeJobState? GetJobStatus(string jobId)
         {
             return Jobs.TryGetValue(jobId, out var job) ? job : null;
         }
