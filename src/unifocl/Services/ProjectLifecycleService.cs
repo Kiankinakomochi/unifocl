@@ -871,6 +871,11 @@ internal sealed partial class ProjectLifecycleService
             return false;
         }
 
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Write("\u001b[H\u001b[0J");
+        }
+
         log($"[green]open[/]: project mode active -> [white]{Markup.Escape(projectPath)}[/]");
         _projectViewService.OpenInitialView(session);
         _ = _projectViewService.SyncMkTypeCacheAsync(session);
