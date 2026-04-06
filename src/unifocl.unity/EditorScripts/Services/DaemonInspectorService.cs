@@ -15,6 +15,9 @@ namespace UniFocl.EditorBridge
 {
     internal static class DaemonInspectorService
     {
+        // Stores scene dirty-state captured at batch-dry-run begin, used at end to restore correctly.
+        private static (Scene[] Scenes, bool[] IsDirty)? _batchDryRunPreDirtyState;
+
         private readonly struct NumericClampConstraint
         {
             public NumericClampConstraint(bool hasMin, float min, bool hasMax, float max)
@@ -166,6 +169,15 @@ namespace UniFocl.EditorBridge
                             SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
                             setFieldError));
 
+                    case "read-field":
+                        return ExecuteReadField(request.targetPath, request.componentIndex, request.componentName, request.fieldName);
+
+                    case "begin-batch-dry-run":
+                        return ExecuteBeginBatchDryRun();
+
+                    case "end-batch-dry-run":
+                        return ExecuteEndBatchDryRun(request.componentIndex);
+
                     default:
                         return JsonUtility.ToJson(new InspectorMutationResponse
                         {
@@ -193,8 +205,62 @@ namespace UniFocl.EditorBridge
             };
         }
 
+        private static string ExecuteReadField(string? targetPath, int componentIndex, string? componentName, string? fieldName)
+        {
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "field name is required for read-field"
+                });
+            }
+
+            var component = ResolveComponent(targetPath, componentIndex, componentName);
+            if (component is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "component was not found on target object"
+                });
+            }
+
+            var serializedObject = new SerializedObject(component);
+            var property = FindPropertyByNameOrPath(serializedObject, fieldName!);
+            if (property is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"serialized field was not found: {fieldName}"
+                });
+            }
+
+            var result = new ReadFieldResult
+            {
+                field = property.propertyPath,
+                type = property.propertyType.ToString(),
+                value = FormatPropertyValue(property)
+            };
+
+            return JsonUtility.ToJson(new InspectorMutationResponse
+            {
+                ok = true,
+                content = JsonUtility.ToJson(result)
+            });
+        }
+
         private static string ExecuteDryRunMutation(InspectorBridgeRequest request)
         {
+            // When deferRevert is true (batch dry-run mode), execute the mutation and capture
+            // the diff but do NOT revert — the caller will send a batch-revert request later.
+            // This allows subsequent ops in the batch to see the effects of prior ops.
+            if (request.deferRevert)
+            {
+                return ExecuteDeferredDryRunMutation(request);
+            }
+
             var target = ResolveTarget(request.targetPath);
             if (target is null)
             {
@@ -253,6 +319,107 @@ namespace UniFocl.EditorBridge
                 {
                     ok = false,
                     message = $"inspector dry-run failed: {ex.Message}"
+                });
+            }
+        }
+
+        /// <summary>
+        /// Returns the current undo group index so the CLI can pass it back to end-batch-dry-run.
+        /// Captures scene dirty state before any ops run so it can be restored at end.
+        /// </summary>
+        private static string ExecuteBeginBatchDryRun()
+        {
+            _batchDryRunPreDirtyState = DaemonDryRunSceneRestoreService.CaptureDirtyState();
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl batch dry-run");
+
+            return JsonUtility.ToJson(new InspectorMutationResponse
+            {
+                ok = true,
+                message = "batch dry-run started",
+                assignedIndex = undoGroup
+            });
+        }
+
+        /// <summary>
+        /// Reverts all undo operations down to the specified undo group, cleaning up a
+        /// batch dry-run. The undoGroup is passed via the componentIndex field of the request.
+        /// Uses the pre-batch dirty-state snapshot to correctly restore scenes that were clean before.
+        /// </summary>
+        private static string ExecuteEndBatchDryRun(int undoGroup)
+        {
+            var (scenes, wasDirty) = _batchDryRunPreDirtyState ?? DaemonDryRunSceneRestoreService.CaptureDirtyState();
+            _batchDryRunPreDirtyState = null;
+
+            try
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(scenes, wasDirty);
+
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = true,
+                    message = "batch dry-run reverted"
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"batch dry-run revert failed: {ex.Message}"
+                });
+            }
+        }
+
+        /// <summary>
+        /// Executes a single mutation as part of a batch dry-run. The mutation is applied
+        /// within a new undo group but NOT reverted — the CLI will send a batch-revert
+        /// request after all ops complete. This allows sequential ops within a batch
+        /// to see each other's effects (e.g., op 0 creates an object, op 1 sets a field on it).
+        /// </summary>
+        private static string ExecuteDeferredDryRunMutation(InspectorBridgeRequest request)
+        {
+            var target = ResolveTarget(request.targetPath);
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "inspector target was not found"
+                });
+            }
+
+            var beforeJson = DaemonDryRunDiffService.SnapshotObject(target);
+
+            // Start a new undo group for this op so the batch-revert can undo everything.
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl batch dry-run op");
+
+            try
+            {
+                InspectorMutationResponse mutation;
+                using (DaemonDryRunContext.Enter())
+                {
+                    mutation = ExecuteMutationCore(request);
+                }
+
+                if (!mutation.ok)
+                {
+                    return JsonUtility.ToJson(mutation);
+                }
+
+                var afterJson = DaemonDryRunDiffService.SnapshotObject(target);
+                mutation.message = "dry-run preview (deferred revert)";
+                mutation.content = DaemonDryRunDiffService.BuildJsonDiffPayload("inspector mutation preview", beforeJson, afterJson);
+                return JsonUtility.ToJson(mutation);
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"inspector deferred dry-run failed: {ex.Message}"
                 });
             }
         }
@@ -727,6 +894,17 @@ namespace UniFocl.EditorBridge
             {
                 error = "Transform cannot be added manually";
                 return false;
+            }
+
+            // Allow Transform→RectTransform upgrade (e.g. plain GO inside a Canvas).
+            // Block if the target already has a RectTransform.
+            if (componentType == typeof(RectTransform))
+            {
+                if (target.GetComponent<RectTransform>() is not null)
+                {
+                    error = "GameObject already has a RectTransform";
+                    return false;
+                }
             }
 
             var disallowMultiple = Attribute.IsDefined(componentType, typeof(DisallowMultipleComponent), inherit: true);
@@ -1352,9 +1530,227 @@ namespace UniFocl.EditorBridge
 
                     return false;
 
+                case SerializedPropertyType.Generic:
+                    if (property.isArray)
+                    {
+                        return TryAssignArrayPropertyValue(property, rawValue, out changed);
+                    }
+
+                    return false;
+
                 default:
                     return false;
             }
+        }
+
+        private static bool TryAssignArrayPropertyValue(SerializedProperty property, string rawValue, out bool changed)
+        {
+            changed = false;
+            var elements = ParseJsonArrayElements(rawValue);
+            if (elements is null)
+            {
+                return false;
+            }
+
+            var previousSize = property.arraySize;
+            property.arraySize = elements.Count;
+            changed = previousSize != elements.Count;
+
+            for (var i = 0; i < elements.Count; i++)
+            {
+                var element = property.GetArrayElementAtIndex(i);
+                if (!TryAssignPropertyValue(element, elements[i], out var elementChanged))
+                {
+                    return false;
+                }
+
+                changed = changed || elementChanged;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Parses a JSON array string into its top-level element strings.
+        /// Handles nested arrays/objects, quoted strings with escapes, and primitives.
+        /// Returns null if the input is not a valid JSON array.
+        /// </summary>
+        private static List<string>? ParseJsonArrayElements(string json)
+        {
+            var trimmed = json.Trim();
+            if (trimmed.Length < 2 || trimmed[0] != '[' || trimmed[^1] != ']')
+            {
+                return null;
+            }
+
+            var inner = trimmed[1..^1];
+            var results = new List<string>();
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            var start = -1;
+
+            for (var i = 0; i < inner.Length; i++)
+            {
+                var ch = inner[i];
+
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if (ch == '\\' && inString)
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    if (!inString && start < 0)
+                    {
+                        start = i;
+                    }
+
+                    inString = !inString;
+                    continue;
+                }
+
+                if (inString)
+                {
+                    continue;
+                }
+
+                if (ch == '[' || ch == '{')
+                {
+                    if (depth == 0 && start < 0)
+                    {
+                        start = i;
+                    }
+
+                    depth++;
+                    continue;
+                }
+
+                if (ch == ']' || ch == '}')
+                {
+                    if (--depth < 0)
+                    {
+                        return null;
+                    }
+
+                    continue;
+                }
+
+                if (ch == ',' && depth == 0)
+                {
+                    if (start < 0)
+                    {
+                        // leading comma or double comma — malformed
+                        return null;
+                    }
+
+                    results.Add(UnquoteJsonElement(inner[start..i]));
+                    start = -1;
+                    continue;
+                }
+
+                if (!char.IsWhiteSpace(ch) && start < 0)
+                {
+                    start = i;
+                }
+            }
+
+            if (depth != 0 || inString || escaped)
+            {
+                return null;
+            }
+
+            if (start >= 0)
+            {
+                results.Add(UnquoteJsonElement(inner[start..]));
+            }
+
+            return results;
+        }
+
+        private static string UnquoteJsonElement(string element)
+        {
+            var trimmed = element.Trim();
+            if (trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"')
+            {
+                var inner = trimmed[1..^1];
+                var result = new System.Text.StringBuilder(inner.Length);
+
+                for (var i = 0; i < inner.Length; i++)
+                {
+                    var ch = inner[i];
+                    if (ch != '\\')
+                    {
+                        result.Append(ch);
+                        continue;
+                    }
+
+                    if (i + 1 >= inner.Length)
+                    {
+                        result.Append('\\');
+                        break;
+                    }
+
+                    var escape = inner[++i];
+                    switch (escape)
+                    {
+                        case '"':
+                            result.Append('"');
+                            break;
+                        case '\\':
+                            result.Append('\\');
+                            break;
+                        case '/':
+                            result.Append('/');
+                            break;
+                        case 'b':
+                            result.Append('\b');
+                            break;
+                        case 'f':
+                            result.Append('\f');
+                            break;
+                        case 'n':
+                            result.Append('\n');
+                            break;
+                        case 'r':
+                            result.Append('\r');
+                            break;
+                        case 't':
+                            result.Append('\t');
+                            break;
+                        case 'u':
+                            if (i + 4 < inner.Length)
+                            {
+                                var hex = inner.Substring(i + 1, 4);
+                                if (ushort.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var codeUnit))
+                                {
+                                    result.Append((char)codeUnit);
+                                    i += 4;
+                                    break;
+                                }
+                            }
+
+                            result.Append('\\');
+                            result.Append('u');
+                            break;
+                        default:
+                            result.Append('\\');
+                            result.Append(escape);
+                            break;
+                    }
+                }
+
+                return result.ToString();
+            }
+
+            return trimmed;
         }
 
         private static bool TryResolveObjectReferenceValue(SerializedProperty property, string rawValue, out UnityEngine.Object? resolved)
@@ -1569,10 +1965,109 @@ namespace UniFocl.EditorBridge
 
                     return property.enumValueIndex.ToString(CultureInfo.InvariantCulture);
                 case SerializedPropertyType.ObjectReference:
-                    return property.objectReferenceValue is null ? "null" : property.objectReferenceValue.name;
+                    return FormatObjectReferenceValue(property);
+                case SerializedPropertyType.Generic:
+                    if (property.isArray)
+                    {
+                        return FormatArrayPropertyValue(property);
+                    }
+
+                    return property.displayName;
                 default:
                     return property.displayName;
             }
+        }
+
+        private static string FormatObjectReferenceValue(SerializedProperty property)
+        {
+            var obj = property.objectReferenceValue;
+            if (obj is null)
+            {
+                return "null";
+            }
+
+            if (obj is GameObject go)
+            {
+                var path = GetGameObjectHierarchyPath(go);
+                return path ?? obj.name;
+            }
+
+            if (obj is Component comp && comp.gameObject is not null)
+            {
+                var path = GetGameObjectHierarchyPath(comp.gameObject);
+                if (path is not null)
+                {
+                    return $"{path}#{comp.GetType().Name}";
+                }
+            }
+
+            return obj.name;
+        }
+
+        private static string? GetGameObjectHierarchyPath(GameObject go)
+        {
+            if (go.scene.IsValid() && go.scene.isLoaded)
+            {
+                var parts = new List<string>();
+                var current = go.transform;
+                while (current is not null)
+                {
+                    parts.Add(current.name);
+                    current = current.parent;
+                }
+
+                parts.Reverse();
+                return "/" + string.Join("/", parts);
+            }
+
+            return null;
+        }
+
+        private static string FormatArrayPropertyValue(SerializedProperty property)
+        {
+            var size = property.arraySize;
+            if (size == 0)
+            {
+                return "[]";
+            }
+
+            var elements = new List<string>(size);
+            for (var i = 0; i < size; i++)
+            {
+                var element = property.GetArrayElementAtIndex(i);
+                var formatted = FormatPropertyValue(element);
+                elements.Add(EscapeJsonStringElement(formatted, element.propertyType));
+            }
+
+            return "[" + string.Join(", ", elements) + "]";
+        }
+
+        private static string EscapeJsonStringElement(string value, SerializedPropertyType type)
+        {
+            switch (type)
+            {
+                case SerializedPropertyType.Boolean:
+                case SerializedPropertyType.Integer:
+                case SerializedPropertyType.Float:
+                    return value;
+                case SerializedPropertyType.ObjectReference:
+                    if (value == "null")
+                    {
+                        return "null";
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+
+            var escaped = value
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r")
+                .Replace("\t", "\\t");
+            return "\"" + escaped + "\"";
         }
 
         private static bool GetComponentEnabled(Component component)

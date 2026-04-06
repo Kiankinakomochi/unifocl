@@ -63,6 +63,11 @@ namespace UniFocl.EditorBridge
         public string type = string.Empty;
         public int count;
         public MutationIntentEnvelope intent = new();
+        /// <summary>
+        /// When true, the daemon executes the mutation and captures a diff but does NOT
+        /// revert the undo group. Used for batch dry-run mode.
+        /// </summary>
+        public bool deferRevert;
     }
 
     [Serializable]
@@ -123,6 +128,12 @@ namespace UniFocl.EditorBridge
         public bool includeSceneReferences = true;
         public bool includeProjectReferences = true;
         public MutationIntentEnvelope intent = new();
+        /// <summary>
+        /// When true, the daemon executes the mutation and captures a diff but does NOT
+        /// revert the undo group. The caller is responsible for sending a batch-revert
+        /// request after all ops complete. Used for batch dry-run mode.
+        /// </summary>
+        public bool deferRevert;
     }
 
     [Serializable]
@@ -189,6 +200,14 @@ namespace UniFocl.EditorBridge
         /// when the same component type appears more than once.
         /// </summary>
         public int assignedIndex = -1;
+    }
+
+    [Serializable]
+    internal sealed class ReadFieldResult
+    {
+        public string field = string.Empty;
+        public string type = string.Empty;
+        public string value = string.Empty;
     }
 
     [Serializable]
