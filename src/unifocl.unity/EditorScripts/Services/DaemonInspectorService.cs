@@ -1519,9 +1519,227 @@ namespace UniFocl.EditorBridge
 
                     return false;
 
+                case SerializedPropertyType.Generic:
+                    if (property.isArray)
+                    {
+                        return TryAssignArrayPropertyValue(property, rawValue, out changed);
+                    }
+
+                    return false;
+
                 default:
                     return false;
             }
+        }
+
+        private static bool TryAssignArrayPropertyValue(SerializedProperty property, string rawValue, out bool changed)
+        {
+            changed = false;
+            var elements = ParseJsonArrayElements(rawValue);
+            if (elements is null)
+            {
+                return false;
+            }
+
+            var previousSize = property.arraySize;
+            property.arraySize = elements.Count;
+            changed = previousSize != elements.Count;
+
+            for (var i = 0; i < elements.Count; i++)
+            {
+                var element = property.GetArrayElementAtIndex(i);
+                if (!TryAssignPropertyValue(element, elements[i], out var elementChanged))
+                {
+                    return false;
+                }
+
+                changed = changed || elementChanged;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Parses a JSON array string into its top-level element strings.
+        /// Handles nested arrays/objects, quoted strings with escapes, and primitives.
+        /// Returns null if the input is not a valid JSON array.
+        /// </summary>
+        private static List<string>? ParseJsonArrayElements(string json)
+        {
+            var trimmed = json.Trim();
+            if (trimmed.Length < 2 || trimmed[0] != '[' || trimmed[^1] != ']')
+            {
+                return null;
+            }
+
+            var inner = trimmed[1..^1];
+            var results = new List<string>();
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            var start = -1;
+
+            for (var i = 0; i < inner.Length; i++)
+            {
+                var ch = inner[i];
+
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if (ch == '\\' && inString)
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    if (!inString && start < 0)
+                    {
+                        start = i;
+                    }
+
+                    inString = !inString;
+                    continue;
+                }
+
+                if (inString)
+                {
+                    continue;
+                }
+
+                if (ch == '[' || ch == '{')
+                {
+                    if (depth == 0 && start < 0)
+                    {
+                        start = i;
+                    }
+
+                    depth++;
+                    continue;
+                }
+
+                if (ch == ']' || ch == '}')
+                {
+                    if (--depth < 0)
+                    {
+                        return null;
+                    }
+
+                    continue;
+                }
+
+                if (ch == ',' && depth == 0)
+                {
+                    if (start < 0)
+                    {
+                        // leading comma or double comma — malformed
+                        return null;
+                    }
+
+                    results.Add(UnquoteJsonElement(inner[start..i]));
+                    start = -1;
+                    continue;
+                }
+
+                if (!char.IsWhiteSpace(ch) && start < 0)
+                {
+                    start = i;
+                }
+            }
+
+            if (depth != 0 || inString || escaped)
+            {
+                return null;
+            }
+
+            if (start >= 0)
+            {
+                results.Add(UnquoteJsonElement(inner[start..]));
+            }
+
+            return results;
+        }
+
+        private static string UnquoteJsonElement(string element)
+        {
+            var trimmed = element.Trim();
+            if (trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"')
+            {
+                var inner = trimmed[1..^1];
+                var result = new System.Text.StringBuilder(inner.Length);
+
+                for (var i = 0; i < inner.Length; i++)
+                {
+                    var ch = inner[i];
+                    if (ch != '\\')
+                    {
+                        result.Append(ch);
+                        continue;
+                    }
+
+                    if (i + 1 >= inner.Length)
+                    {
+                        result.Append('\\');
+                        break;
+                    }
+
+                    var escape = inner[++i];
+                    switch (escape)
+                    {
+                        case '"':
+                            result.Append('"');
+                            break;
+                        case '\\':
+                            result.Append('\\');
+                            break;
+                        case '/':
+                            result.Append('/');
+                            break;
+                        case 'b':
+                            result.Append('\b');
+                            break;
+                        case 'f':
+                            result.Append('\f');
+                            break;
+                        case 'n':
+                            result.Append('\n');
+                            break;
+                        case 'r':
+                            result.Append('\r');
+                            break;
+                        case 't':
+                            result.Append('\t');
+                            break;
+                        case 'u':
+                            if (i + 4 < inner.Length)
+                            {
+                                var hex = inner.Substring(i + 1, 4);
+                                if (ushort.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var codeUnit))
+                                {
+                                    result.Append((char)codeUnit);
+                                    i += 4;
+                                    break;
+                                }
+                            }
+
+                            result.Append('\\');
+                            result.Append('u');
+                            break;
+                        default:
+                            result.Append('\\');
+                            result.Append(escape);
+                            break;
+                    }
+                }
+
+                return result.ToString();
+            }
+
+            return trimmed;
         }
 
         private static bool TryResolveObjectReferenceValue(SerializedProperty property, string rawValue, out UnityEngine.Object? resolved)
@@ -1736,10 +1954,109 @@ namespace UniFocl.EditorBridge
 
                     return property.enumValueIndex.ToString(CultureInfo.InvariantCulture);
                 case SerializedPropertyType.ObjectReference:
-                    return property.objectReferenceValue is null ? "null" : property.objectReferenceValue.name;
+                    return FormatObjectReferenceValue(property);
+                case SerializedPropertyType.Generic:
+                    if (property.isArray)
+                    {
+                        return FormatArrayPropertyValue(property);
+                    }
+
+                    return property.displayName;
                 default:
                     return property.displayName;
             }
+        }
+
+        private static string FormatObjectReferenceValue(SerializedProperty property)
+        {
+            var obj = property.objectReferenceValue;
+            if (obj is null)
+            {
+                return "null";
+            }
+
+            if (obj is GameObject go)
+            {
+                var path = GetGameObjectHierarchyPath(go);
+                return path ?? obj.name;
+            }
+
+            if (obj is Component comp && comp.gameObject is not null)
+            {
+                var path = GetGameObjectHierarchyPath(comp.gameObject);
+                if (path is not null)
+                {
+                    return $"{path}#{comp.GetType().Name}";
+                }
+            }
+
+            return obj.name;
+        }
+
+        private static string? GetGameObjectHierarchyPath(GameObject go)
+        {
+            if (go.scene.IsValid() && go.scene.isLoaded)
+            {
+                var parts = new List<string>();
+                var current = go.transform;
+                while (current is not null)
+                {
+                    parts.Add(current.name);
+                    current = current.parent;
+                }
+
+                parts.Reverse();
+                return "/" + string.Join("/", parts);
+            }
+
+            return null;
+        }
+
+        private static string FormatArrayPropertyValue(SerializedProperty property)
+        {
+            var size = property.arraySize;
+            if (size == 0)
+            {
+                return "[]";
+            }
+
+            var elements = new List<string>(size);
+            for (var i = 0; i < size; i++)
+            {
+                var element = property.GetArrayElementAtIndex(i);
+                var formatted = FormatPropertyValue(element);
+                elements.Add(EscapeJsonStringElement(formatted, element.propertyType));
+            }
+
+            return "[" + string.Join(", ", elements) + "]";
+        }
+
+        private static string EscapeJsonStringElement(string value, SerializedPropertyType type)
+        {
+            switch (type)
+            {
+                case SerializedPropertyType.Boolean:
+                case SerializedPropertyType.Integer:
+                case SerializedPropertyType.Float:
+                    return value;
+                case SerializedPropertyType.ObjectReference:
+                    if (value == "null")
+                    {
+                        return "null";
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+
+            var escaped = value
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r")
+                .Replace("\t", "\\t");
+            return "\"" + escaped + "\"";
         }
 
         private static bool GetComponentEnabled(Component component)

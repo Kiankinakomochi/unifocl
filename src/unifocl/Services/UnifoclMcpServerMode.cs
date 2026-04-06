@@ -342,8 +342,14 @@ public static class UnifoclMutateTools
               "example": {"op":"remove_component","target":"/HUD_Canvas","component":"GraphicRaycaster"}
             },
             "set_field": {
-              "fields": { "target": "required", "component": "required", "field": "required", "value": "required (serialized string)" },
-              "example": {"op":"set_field","target":"/HUD_Canvas","component":"Canvas","field":"renderMode","value":"ScreenSpaceOverlay"}
+              "fields": { "target": "required", "component": "required", "field": "required", "value": "required (serialized string; for arrays/lists pass a JSON array string)" },
+              "examples": [
+                {"op":"set_field","target":"/HUD_Canvas","component":"Canvas","field":"renderMode","value":"ScreenSpaceOverlay"},
+                {"op":"set_field","target":"/Player","component":"Inventory","field":"items","value":"[\"Sword\", \"Shield\", \"Potion\"]"},
+                {"op":"set_field","target":"/SceneContext","component":"SceneContext","field":"_monoInstallers","value":"[\"/SceneContext\"]"},
+                {"op":"set_field","target":"/Enemy","component":"Stats","field":"levels","value":"[1, 5, 10]"}
+              ],
+              "array_notes": "Array/List<T> fields accept a JSON array string. Elements are assigned recursively: strings, ints, floats, bools, enums, vectors, and ObjectReference (scene paths like \"/Player\" or asset paths like \"Assets/Prefabs/X.prefab\") are all supported as array elements."
             },
             "toggle_field": {
               "fields": { "target": "required", "component": "required", "field": "required (must be bool)" },

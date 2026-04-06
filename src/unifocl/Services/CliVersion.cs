@@ -2,7 +2,7 @@ internal static class CliVersion
 {
     public const int Major = 3;
     public const int Minor = 8;
-    public const int Patch = 8;
+    public const int Patch = 9;
     public const string DevCycle = "";
     public const string Protocol = "v20";
 
