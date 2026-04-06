@@ -1121,7 +1121,7 @@ internal sealed partial class ProjectLifecycleService
             : ResolveAbsolutePath(configRootRaw, currentDirectory);
 
         var claudeDir = Path.Combine(workspacePath, ".claude");
-        var settingsJsonPath = Path.Combine(claudeDir, "settings.json");
+        var mcpJsonPath = Path.Combine(workspacePath, ".mcp.json");
         var settingsLocalJsonPath = Path.Combine(claudeDir, "settings.local.json");
         var claudeMdPath = Path.Combine(workspacePath, "CLAUDE.md");
         var gitignorePath = Path.Combine(workspacePath, ".gitignore");
@@ -1131,7 +1131,7 @@ internal sealed partial class ProjectLifecycleService
             log("[grey]agent[/]: dry-run (no changes applied)");
             log($"[grey]agent[/]: workspace [white]{Markup.Escape(workspacePath)}[/]");
             log($"[grey]agent[/]: config-root [white]{Markup.Escape(configRoot)}[/]");
-            log($"[grey]agent[/]: would merge [white]{Markup.Escape(settingsJsonPath)}[/] — mcpServers.{Markup.Escape(serverName)}");
+            log($"[grey]agent[/]: would merge [white]{Markup.Escape(mcpJsonPath)}[/] — mcpServers.{Markup.Escape(serverName)}");
             log($"[grey]agent[/]: would merge [white]{Markup.Escape(claudeMdPath)}[/] — unifocl fenced section");
             log($"[grey]agent[/]: would merge [white]{Markup.Escape(settingsLocalJsonPath)}[/] — permissions.allow");
             log($"[grey]agent[/]: would check [white]{Markup.Escape(gitignorePath)}[/] — .claude/settings.local.json entry");
@@ -1140,17 +1140,16 @@ internal sealed partial class ProjectLifecycleService
 
         var errorCount = 0;
 
-        // 1. Merge .claude/settings.json — project-scoped MCP registration (commit this)
+        // 1. Merge .mcp.json — project-scoped MCP registration (commit this)
         try
         {
-            Directory.CreateDirectory(claudeDir);
-            MergeClaudeSettings(settingsJsonPath, serverName, configRoot);
-            log($"[grey]agent[/]: merged [white]settings.json[/] — mcpServers.{Markup.Escape(serverName)}");
+            MergeMcpJson(mcpJsonPath, serverName, configRoot);
+            log($"[grey]agent[/]: merged [white].mcp.json[/] — mcpServers.{Markup.Escape(serverName)}");
         }
         catch (Exception ex)
         {
             errorCount++;
-            log($"[red]agent[/]: failed to merge settings.json: {Markup.Escape(ex.Message)}");
+            log($"[red]agent[/]: failed to merge .mcp.json: {Markup.Escape(ex.Message)}");
         }
 
         // 2. Merge CLAUDE.md — project instructions for Claude Code (commit this)
@@ -1168,6 +1167,7 @@ internal sealed partial class ProjectLifecycleService
         // 3. Merge .claude/settings.local.json — machine-local permission allows (do not commit)
         try
         {
+            Directory.CreateDirectory(claudeDir);
             MergeClaudeSettingsLocal(settingsLocalJsonPath, serverName);
             log("[grey]agent[/]: merged [white]settings.local.json[/] — permissions.allow");
         }
@@ -1192,7 +1192,7 @@ internal sealed partial class ProjectLifecycleService
         if (errorCount == 0)
         {
             log("[green]agent[/]: claude integration installed");
-            log("[grey]agent[/]: commit [white].claude/settings.json[/] and [white]CLAUDE.md[/] to share with all users");
+            log("[grey]agent[/]: commit [white].mcp.json[/] and [white]CLAUDE.md[/] to share with all users");
             log("[grey]agent[/]: [white]settings.local.json[/] is machine-local — do not commit");
             log("[grey]agent[/]: restart Claude Code to load the MCP tools");
         }
@@ -1217,6 +1217,13 @@ internal sealed partial class ProjectLifecycleService
                 return dir.FullName;
             }
 
+            var mcpJsonPath = Path.Combine(dir.FullName, ".mcp.json");
+            if (File.Exists(mcpJsonPath) && HasUnifoclMcpEntry(mcpJsonPath))
+            {
+                return dir.FullName;
+            }
+
+            // Legacy: also recognise older installs that used .claude/settings.json
             var settingsPath = Path.Combine(dir.FullName, ".claude", "settings.json");
             if (File.Exists(settingsPath) && HasUnifoclMcpEntry(settingsPath))
             {
@@ -1358,14 +1365,14 @@ internal sealed partial class ProjectLifecycleService
         CommentHandling = JsonCommentHandling.Skip,
     };
 
-    private static void MergeClaudeSettings(string settingsJsonPath, string serverName, string configRoot)
+    private static void MergeMcpJson(string mcpJsonPath, string serverName, string configRoot)
     {
         JsonObject root;
-        if (File.Exists(settingsJsonPath))
+        if (File.Exists(mcpJsonPath))
         {
-            var raw = File.ReadAllText(settingsJsonPath, Encoding.UTF8);
+            var raw = File.ReadAllText(mcpJsonPath, Encoding.UTF8);
             root = JsonNode.Parse(raw, nodeOptions: null, documentOptions: LenientJsonDocumentOptions) as JsonObject
-                ?? throw new InvalidOperationException("settings.json root is not a JSON object");
+                ?? throw new InvalidOperationException(".mcp.json root is not a JSON object");
         }
         else
         {
@@ -1388,7 +1395,7 @@ internal sealed partial class ProjectLifecycleService
             },
         };
 
-        File.WriteAllText(settingsJsonPath, root.ToJsonString(IndentedJsonOptions), Encoding.UTF8);
+        File.WriteAllText(mcpJsonPath, root.ToJsonString(IndentedJsonOptions), Encoding.UTF8);
     }
 
     private static void MergeClaudeSettingsLocal(string settingsLocalJsonPath, string serverName)

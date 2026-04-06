@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.8.8 - 2026-04-06
+
+### Fixed
+- **`agent install claude` now writes `.mcp.json` instead of `mcpServers` in `.claude/settings.json`**: Claude Code reads project-level MCP servers from `.mcp.json` at the project root, not from `mcpServers` inside `.claude/settings.json`. The previous approach caused `claude mcp list` to show no servers and the agent to not see any MCP tools. `.mcp.json` should be committed; `.claude/settings.json` is now reserved for `permissions` only.
+- **`FindAgentSetupRoot` detects `.mcp.json`-based installs**: The boot-prompt suppression logic (reverse traversal) now checks `.mcp.json` first when walking ancestor directories, with a legacy fallback to `.claude/settings.json` for older installs.
+
+### Officialized
+- Officialized `3.8.8` by closing the development cycle suffix.
+
 ## 3.8.7 - 2026-04-06
 
 ### Added
