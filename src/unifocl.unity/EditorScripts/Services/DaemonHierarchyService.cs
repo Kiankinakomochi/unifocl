@@ -344,7 +344,12 @@ namespace UniFocl.EditorBridge
 
                 try
                 {
-                    var responsePayload = ExecuteCommandCore(request);
+                    string responsePayload;
+                    using (DaemonDryRunContext.Enter())
+                    {
+                        responsePayload = ExecuteCommandCore(request);
+                    }
+
                     var parsed = JsonUtility.FromJson<HierarchyCommandResponse>(responsePayload);
                     if (parsed is null || !parsed.ok)
                     {

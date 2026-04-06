@@ -15,6 +15,9 @@ namespace UniFocl.EditorBridge
 {
     internal static class DaemonInspectorService
     {
+        // Stores scene dirty-state captured at batch-dry-run begin, used at end to restore correctly.
+        private static (Scene[] Scenes, bool[] IsDirty)? _batchDryRunPreDirtyState;
+
         private readonly struct NumericClampConstraint
         {
             public NumericClampConstraint(bool hasMin, float min, bool hasMax, float max)
@@ -322,10 +325,11 @@ namespace UniFocl.EditorBridge
 
         /// <summary>
         /// Returns the current undo group index so the CLI can pass it back to end-batch-dry-run.
-        /// Also enters the DaemonDryRunContext and captures scene dirty state.
+        /// Captures scene dirty state before any ops run so it can be restored at end.
         /// </summary>
         private static string ExecuteBeginBatchDryRun()
         {
+            _batchDryRunPreDirtyState = DaemonDryRunSceneRestoreService.CaptureDirtyState();
             var undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("unifocl batch dry-run");
 
@@ -340,10 +344,12 @@ namespace UniFocl.EditorBridge
         /// <summary>
         /// Reverts all undo operations down to the specified undo group, cleaning up a
         /// batch dry-run. The undoGroup is passed via the componentIndex field of the request.
+        /// Uses the pre-batch dirty-state snapshot to correctly restore scenes that were clean before.
         /// </summary>
         private static string ExecuteEndBatchDryRun(int undoGroup)
         {
-            var (scenes, wasDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();
+            var (scenes, wasDirty) = _batchDryRunPreDirtyState ?? DaemonDryRunSceneRestoreService.CaptureDirtyState();
+            _batchDryRunPreDirtyState = null;
 
             try
             {
@@ -392,7 +398,12 @@ namespace UniFocl.EditorBridge
 
             try
             {
-                var mutation = ExecuteMutationCore(request);
+                InspectorMutationResponse mutation;
+                using (DaemonDryRunContext.Enter())
+                {
+                    mutation = ExecuteMutationCore(request);
+                }
+
                 if (!mutation.ok)
                 {
                     return JsonUtility.ToJson(mutation);
