@@ -896,6 +896,17 @@ namespace UniFocl.EditorBridge
                 return false;
             }
 
+            // Allow Transform→RectTransform upgrade (e.g. plain GO inside a Canvas).
+            // Block if the target already has a RectTransform.
+            if (componentType == typeof(RectTransform))
+            {
+                if (target.GetComponent<RectTransform>() is not null)
+                {
+                    error = "GameObject already has a RectTransform";
+                    return false;
+                }
+            }
+
             var disallowMultiple = Attribute.IsDefined(componentType, typeof(DisallowMultipleComponent), inherit: true);
             if (disallowMultiple && target.GetComponent(componentType) is not null)
             {
