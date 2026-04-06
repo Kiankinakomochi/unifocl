@@ -234,6 +234,13 @@ namespace UniFocl.EditorBridge
 
         private static string ExecuteDryRunCommand(HierarchyCommandRequest request)
         {
+            // When deferRevert is true (batch dry-run mode), execute the mutation and capture
+            // the diff but do NOT revert — the CLI will send an end-batch-dry-run later.
+            if (request.deferRevert)
+            {
+                return ExecuteDeferredDryRunCommand(request);
+            }
+
             lock (Sync)
             {
                 var beforeSnapshotVersion = _snapshotVersion;
@@ -312,6 +319,57 @@ namespace UniFocl.EditorBridge
                     {
                         ok = false,
                         message = $"hierarchy dry-run failed: {ex.Message}"
+                    });
+                }
+            }
+        }
+
+        /// <summary>
+        /// Executes a hierarchy mutation as part of a batch dry-run. The mutation is applied
+        /// within a new undo group but NOT reverted. The CLI sends an end-batch-dry-run
+        /// after all ops complete to revert everything at once.
+        /// </summary>
+        private static string ExecuteDeferredDryRunCommand(HierarchyCommandRequest request)
+        {
+            lock (Sync)
+            {
+                var snapshotTarget = ResolveDryRunSnapshotTarget(request);
+                var beforeJson = snapshotTarget is null
+                    ? BuildSnapshotPayload()
+                    : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+
+                // Start a new undo group for this op so the batch-revert can undo everything.
+                Undo.IncrementCurrentGroup();
+                Undo.SetCurrentGroupName("unifocl batch dry-run op");
+
+                try
+                {
+                    string responsePayload;
+                    using (DaemonDryRunContext.Enter())
+                    {
+                        responsePayload = ExecuteCommandCore(request);
+                    }
+
+                    var parsed = JsonUtility.FromJson<HierarchyCommandResponse>(responsePayload);
+                    if (parsed is null || !parsed.ok)
+                    {
+                        return responsePayload;
+                    }
+
+                    var afterJson = snapshotTarget is null
+                        ? BuildSnapshotPayload()
+                        : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+
+                    parsed.message = "dry-run preview (deferred revert)";
+                    parsed.content = DaemonDryRunDiffService.BuildJsonDiffPayload("hierarchy mutation preview", beforeJson, afterJson);
+                    return JsonUtility.ToJson(parsed);
+                }
+                catch (Exception ex)
+                {
+                    return JsonUtility.ToJson(new HierarchyCommandResponse
+                    {
+                        ok = false,
+                        message = $"hierarchy deferred dry-run failed: {ex.Message}"
                     });
                 }
             }

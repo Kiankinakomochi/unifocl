@@ -64,6 +64,14 @@ internal sealed class MutateBatchService
         var results = new List<MutateOpResult>(ops.Count);
         HierarchySnapshotDto? snapshot = null;
 
+        // For batch dry-run: ask the daemon to begin a batch scope so individual ops
+        // are NOT reverted per-op. They stay applied until we send end-batch-dry-run.
+        int? batchUndoGroup = null;
+        if (dryRun && port is not null)
+        {
+            batchUndoGroup = await BeginBatchDryRunAsync(port.Value);
+        }
+
         for (var i = 0; i < ops.Count; i++)
         {
             var op = ops[i];
@@ -81,7 +89,8 @@ internal sealed class MutateBatchService
                 snapshot = await _hierarchyClient.GetSnapshotAsync(port.Value);
             }
 
-            var opResult = await ExecuteOpAsync(port, projectPath, op, i, snapshot);
+            var opResult = await ExecuteOpAsync(port, projectPath, op, i, snapshot,
+                deferRevert: batchUndoGroup.HasValue);
             results.Add(opResult);
 
             // Invalidate snapshot after structural changes so next path-lookup is fresh.
@@ -94,6 +103,12 @@ internal sealed class MutateBatchService
             {
                 break;
             }
+        }
+
+        // Revert all deferred dry-run ops at once.
+        if (batchUndoGroup.HasValue && port is not null)
+        {
+            await EndBatchDryRunAsync(port.Value, batchUndoGroup.Value);
         }
 
         return new MutateBatchResult(
@@ -112,7 +127,8 @@ internal sealed class MutateBatchService
         string? projectPath,
         MutateOp op,
         int index,
-        HierarchySnapshotDto? snapshot)
+        HierarchySnapshotDto? snapshot,
+        bool deferRevert = false)
     {
         var opLower = op.Op.ToLowerInvariant();
 
@@ -132,19 +148,20 @@ internal sealed class MutateBatchService
 
         return opLower switch
         {
-            "create"           => await ExecuteCreateAsync(port.Value, op, index, snapshot),
-            "rename"           => await ExecuteRenameAsync(port.Value, op, index, snapshot),
-            "remove"           => await ExecuteRemoveAsync(port.Value, op, index, snapshot),
-            "move"             => await ExecuteMoveAsync(port.Value, op, index, snapshot),
-            "toggle_active"    => await ExecuteToggleActiveAsync(port.Value, op, index, snapshot),
-            "add_component"    => await ExecuteInspectorAsync(port.Value, op, index, "add-component"),
-            "remove_component" => await ExecuteInspectorAsync(port.Value, op, index, "remove-component"),
-            "set_field"        => await ExecuteInspectorAsync(port.Value, op, index, "set-field"),
-            "toggle_field"     => await ExecuteInspectorAsync(port.Value, op, index, "toggle-field"),
-            "toggle_component" => await ExecuteInspectorAsync(port.Value, op, index, "toggle-component"),
+            "create"           => await ExecuteCreateAsync(port.Value, op, index, snapshot, deferRevert),
+            "rename"           => await ExecuteRenameAsync(port.Value, op, index, snapshot, deferRevert),
+            "remove"           => await ExecuteRemoveAsync(port.Value, op, index, snapshot, deferRevert),
+            "move"             => await ExecuteMoveAsync(port.Value, op, index, snapshot, deferRevert),
+            "toggle_active"    => await ExecuteToggleActiveAsync(port.Value, op, index, snapshot, deferRevert),
+            "add_component"    => await ExecuteInspectorAsync(port.Value, op, index, "add-component", deferRevert),
+            "remove_component" => await ExecuteInspectorAsync(port.Value, op, index, "remove-component", deferRevert),
+            "set_field"        => await ExecuteInspectorAsync(port.Value, op, index, "set-field", deferRevert),
+            "toggle_field"     => await ExecuteInspectorAsync(port.Value, op, index, "toggle-field", deferRevert),
+            "toggle_component" => await ExecuteInspectorAsync(port.Value, op, index, "toggle-component", deferRevert),
+            "read_field"       => await ExecuteReadFieldAsync(port.Value, op, index),
             _ => new MutateOpResult(index, op.Op, op.Target, false,
                      $"unknown op '{op.Op}'. Valid: create, rename, remove, move, toggle_active, " +
-                     "add_component, remove_component, set_field, toggle_field, toggle_component")
+                     "add_component, remove_component, set_field, toggle_field, toggle_component, read_field")
         };
     }
 
@@ -184,7 +201,7 @@ internal sealed class MutateBatchService
     // ── Hierarchy ops ────────────────────────────────────────────────────────
 
     private async Task<MutateOpResult> ExecuteCreateAsync(
-        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot)
+        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot, bool deferRevert = false)
     {
         if (string.IsNullOrWhiteSpace(op.Type))
         {
@@ -198,7 +215,7 @@ internal sealed class MutateBatchService
         }
 
         var response = await _hierarchyClient.ExecuteAsync(port,
-            new HierarchyCommandRequestDto("mk", parentId, null, op.Name, false, op.Type, op.Count ?? 1));
+            new HierarchyCommandRequestDto("mk", parentId, null, op.Name, false, op.Type, op.Count ?? 1, DeferRevert: deferRevert));
 
         return response.Ok
             ? new MutateOpResult(index, op.Op, op.Parent ?? "/", true, null, response.NodeId, response.AssignedName)
@@ -206,7 +223,7 @@ internal sealed class MutateBatchService
     }
 
     private async Task<MutateOpResult> ExecuteRenameAsync(
-        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot)
+        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot, bool deferRevert = false)
     {
         if (string.IsNullOrWhiteSpace(op.Target))
         {
@@ -225,7 +242,7 @@ internal sealed class MutateBatchService
         }
 
         var response = await _hierarchyClient.ExecuteAsync(port,
-            new HierarchyCommandRequestDto("rename", null, node.Id, op.Name, false));
+            new HierarchyCommandRequestDto("rename", null, node.Id, op.Name, false, DeferRevert: deferRevert));
 
         return response.Ok
             ? new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, AssignedName: response.AssignedName)
@@ -233,7 +250,7 @@ internal sealed class MutateBatchService
     }
 
     private async Task<MutateOpResult> ExecuteRemoveAsync(
-        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot)
+        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot, bool deferRevert = false)
     {
         if (string.IsNullOrWhiteSpace(op.Target))
         {
@@ -247,13 +264,13 @@ internal sealed class MutateBatchService
         }
 
         var response = await _hierarchyClient.ExecuteAsync(port,
-            new HierarchyCommandRequestDto("rm", null, node.Id, null, false));
+            new HierarchyCommandRequestDto("rm", null, node.Id, null, false, DeferRevert: deferRevert));
 
         return response.Ok ? Ok(index, op) : Fail(index, op, response.Message);
     }
 
     private async Task<MutateOpResult> ExecuteMoveAsync(
-        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot)
+        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot, bool deferRevert = false)
     {
         if (string.IsNullOrWhiteSpace(op.Target))
         {
@@ -273,7 +290,7 @@ internal sealed class MutateBatchService
         }
 
         var response = await _hierarchyClient.ExecuteAsync(port,
-            new HierarchyCommandRequestDto("mv", parentId, targetNode.Id, null, false));
+            new HierarchyCommandRequestDto("mv", parentId, targetNode.Id, null, false, DeferRevert: deferRevert));
 
         return response.Ok
             ? new MutateOpResult(index, op.Op, op.Target ?? op.Parent, true, AssignedName: response.AssignedName)
@@ -281,7 +298,7 @@ internal sealed class MutateBatchService
     }
 
     private async Task<MutateOpResult> ExecuteToggleActiveAsync(
-        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot)
+        int port, MutateOp op, int index, HierarchySnapshotDto? snapshot, bool deferRevert = false)
     {
         if (string.IsNullOrWhiteSpace(op.Target))
         {
@@ -297,7 +314,7 @@ internal sealed class MutateBatchService
         var response = await _hierarchyClient.ExecuteAsync(port,
             new HierarchyCommandRequestDto("toggle", null, node.Id,
                 op.Active.HasValue ? op.Active.Value.ToString().ToLowerInvariant() : null,
-                false));
+                false, DeferRevert: deferRevert));
 
         return response.Ok ? Ok(index, op) : Fail(index, op, response.Message);
     }
@@ -305,7 +322,7 @@ internal sealed class MutateBatchService
     // ── Inspector ops ────────────────────────────────────────────────────────
 
     private async Task<MutateOpResult> ExecuteInspectorAsync(
-        int port, MutateOp op, int index, string bridgeAction)
+        int port, MutateOp op, int index, string bridgeAction, bool deferRevert = false)
     {
         if (string.IsNullOrWhiteSpace(op.Target))
         {
@@ -341,7 +358,8 @@ internal sealed class MutateBatchService
             op.Field,
             op.Value,
             null,
-            op.Enabled.HasValue ? op.Enabled.Value.ToString().ToLowerInvariant() : null);
+            op.Enabled.HasValue ? op.Enabled.Value.ToString().ToLowerInvariant() : null,
+            DeferRevert: deferRevert);
 
         var responseJson = await SendInspectorRequestAsync(port, request);
         if (string.IsNullOrWhiteSpace(responseJson))
@@ -366,6 +384,66 @@ internal sealed class MutateBatchService
         catch
         {
             return Fail(index, op, "failed to parse inspector response");
+        }
+    }
+
+    private async Task<MutateOpResult> ExecuteReadFieldAsync(int port, MutateOp op, int index)
+    {
+        if (string.IsNullOrWhiteSpace(op.Target))
+        {
+            return Fail(index, op, "'target' is required for read_field");
+        }
+
+        if (string.IsNullOrWhiteSpace(op.Field))
+        {
+            return Fail(index, op, "'field' is required for read_field");
+        }
+
+        string? componentName = null;
+        int? componentIndex = null;
+
+        if (!string.IsNullOrWhiteSpace(op.Component))
+        {
+            if (int.TryParse(op.Component, out var idx))
+            {
+                componentIndex = idx;
+            }
+            else
+            {
+                componentName = op.Component;
+            }
+        }
+
+        var request = new InspectorBatchBridgeRequest(
+            "read-field",
+            op.Target,
+            componentIndex,
+            componentName,
+            op.Field,
+            null,
+            null);
+
+        var responseJson = await SendInspectorRequestAsync(port, request);
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            return Fail(index, op,
+                "read_field failed — daemon did not respond. " +
+                "Requires Bridge mode (Unity Editor open with Bridge package installed).");
+        }
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<InspectorBatchMutationResponse>(responseJson, JsonOptions);
+            if (response?.Ok != true)
+            {
+                return Fail(index, op, response?.Message ?? "read_field failed");
+            }
+
+            return new MutateOpResult(index, op.Op, op.Target, true, ReadValue: response.Content);
+        }
+        catch
+        {
+            return Fail(index, op, "failed to parse read_field response");
         }
     }
 
@@ -419,6 +497,43 @@ internal sealed class MutateBatchService
         }
 
         return null;
+    }
+
+    // ── Batch dry-run lifecycle ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Asks the daemon to begin a batch dry-run scope. Returns the undo group index
+    /// that must be passed to <see cref="EndBatchDryRunAsync"/> to revert everything.
+    /// </summary>
+    private async Task<int?> BeginBatchDryRunAsync(int port)
+    {
+        var request = new InspectorBatchBridgeRequest("begin-batch-dry-run", string.Empty, null, null, null, null, null);
+        var responseJson = await SendInspectorRequestAsync(port, request);
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<InspectorBatchMutationResponse>(responseJson, JsonOptions);
+            return response?.Ok == true ? response.AssignedIndex : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Asks the daemon to revert all undo groups down to <paramref name="undoGroup"/>,
+    /// cleaning up a batch dry-run.
+    /// </summary>
+    private async Task EndBatchDryRunAsync(int port, int undoGroup)
+    {
+        // Reuse componentIndex to pass the undo group number to the daemon.
+        var request = new InspectorBatchBridgeRequest("end-batch-dry-run", string.Empty, undoGroup, null, null, null, null);
+        await SendInspectorRequestAsync(port, request);
     }
 
     // ── Path resolution ──────────────────────────────────────────────────────
@@ -520,6 +635,10 @@ internal sealed class MutateBatchService
                 {
                     extra += $" index={r.ComponentIndex.Value}";
                 }
+                if (r.ReadValue is not null)
+                {
+                    extra += $" {r.ReadValue}";
+                }
                 log($"  [green]+[/]  {r.Op} {r.Target}{extra}");
             }
             else
@@ -609,7 +728,8 @@ internal sealed class MutateBatchService
         string? Value,
         string? Query,
         string? EnabledValue = null,
-        MutationIntentDto? Intent = null);
+        MutationIntentDto? Intent = null,
+        bool DeferRevert = false);
 
     private sealed record InspectorBatchMutationResponse(
         bool Ok,
