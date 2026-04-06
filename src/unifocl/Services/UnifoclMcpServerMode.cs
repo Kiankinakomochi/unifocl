@@ -315,7 +315,8 @@ public static class UnifoclMutateTools
             "create": {
               "fields": { "type": "required", "parent": "optional (default '/')", "name": "optional", "count": "optional (default 1)" },
               "types": ["canvas","empty","image","text","button","scrollview","panel","inputfield","rawimage","toggle","slider","dropdown","scrollbar","eventSystem"],
-              "example": {"op":"create","parent":"/","type":"canvas","name":"HUD_Canvas"}
+              "example": {"op":"create","parent":"/","type":"canvas","name":"HUD_Canvas"},
+              "notes": "type 'empty' inside a Canvas creates a plain-Transform GameObject that cannot serve as a UI layout parent. Use type 'panel' instead, or add RectTransform via add_component after creation."
             },
             "rename": {
               "fields": { "target": "required (hierarchy path)", "name": "required (new name)" },
@@ -335,7 +336,8 @@ public static class UnifoclMutateTools
             },
             "add_component": {
               "fields": { "target": "required", "type": "required (component type name)" },
-              "example": {"op":"add_component","target":"/HUD_Canvas","type":"CanvasScaler"}
+              "example": {"op":"add_component","target":"/HUD_Canvas","type":"CanvasScaler"},
+              "notes": "RectTransform is supported: upgrades a plain Transform to RectTransform. Fails if the target already has a RectTransform."
             },
             "remove_component": {
               "fields": { "target": "required", "component": "required (name or 0-based index)" },
