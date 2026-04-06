@@ -1140,10 +1140,15 @@ internal sealed partial class ProjectLifecycleService
 
         var errorCount = 0;
 
+        // .mcp.json is committed, so write UNIFOCL_CONFIG_ROOT as a workspace-relative path
+        // when possible to avoid leaking absolute paths that break on other machines.
+        var relConfigRoot = Path.GetRelativePath(workspacePath, configRoot);
+        var configRootForJson = relConfigRoot.StartsWith("..") ? configRoot : relConfigRoot;
+
         // 1. Merge .mcp.json — project-scoped MCP registration (commit this)
         try
         {
-            MergeMcpJson(mcpJsonPath, serverName, configRoot);
+            MergeMcpJson(mcpJsonPath, serverName, configRootForJson);
             log($"[grey]agent[/]: merged [white].mcp.json[/] — mcpServers.{Markup.Escape(serverName)}");
         }
         catch (Exception ex)
