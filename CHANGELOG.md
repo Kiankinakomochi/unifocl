@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.8.9 - 2026-04-06
+
+### Added
+- **`/mutate set_field` now supports list/array fields**: Pass a JSON array string (e.g. `"[\"a\",\"b\"]"`) as the value for `SerializedPropertyType.Generic` (isArray) properties. Elements are assigned recursively, so `List<string>`, `List<int>`, and `List<ObjectReference>` all work.
+- **`/dump inspector` emits array fields as JSON arrays**: Array/list properties are now rendered as JSON arrays rather than opaque strings. ObjectReference elements show full hierarchy paths (with optional `#ComponentType` suffix).
+
+### Fixed
+- **JSON array parsing rejects malformed input**: `ParseJsonArrayElements` now returns null on negative bracket depth, leading/double commas (`[,1]`, `[1,,2]`), and unclosed strings or unmatched brackets — preventing silent partial mutations.
+- **JSON string unescaping is single-pass and correct**: `UnquoteJsonElement` was using a multi-pass `Replace()` chain that incorrectly turned `\\n` (JSON literal backslash + n) into a newline. Replaced with a single-pass loop that correctly handles `\b`, `\f`, `\uXXXX`, and all standard JSON escape sequences.
+- **Null ObjectReference elements emit JSON `null`**: Array elements for null object references are now the literal `null` token rather than the quoted string `"null"`.
+
 ## 3.8.7 - 2026-04-06
 
 ### Added
