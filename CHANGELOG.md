@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.8.9 - 2026-04-06
+## 3.8.10 - 2026-04-06
 
 ### Added
 - **`/mutate add_component RectTransform` now upgrades plain Transform to RectTransform**: On a GameObject that has only a `Transform`, `add_component RectTransform` replaces it with a `RectTransform` — enabling UI layout work under a Canvas without needing to recreate the object. Attempting to add `RectTransform` to a GameObject that already has one returns a clear error instead of silently failing.
