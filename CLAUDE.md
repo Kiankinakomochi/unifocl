@@ -19,6 +19,18 @@ Every PR branch must pass these steps before pushing or creating a pull request:
 
 3. **Commit any changes** produced by step 2 (updated `full-documentation.md`) into the PR branch.
 
+4. **Changelog fragment** — Write a fragment to `changelog.d/<branch-slug>.md` describing what changed.
+   Do **not** edit `CHANGELOG.md` or `CliVersion.cs` directly — CI handles version bumping after merge.
+   ```sh
+   # Example: changelog.d/feat-my-feature.md
+   ---
+   bump: patch   # patch | minor | major
+   ---
+
+   ### Added
+   - Brief description of the change.
+   ```
+
 ## Quick Reference
 
 - **Build CLI:** `dotnet build src/unifocl/unifocl.csproj --disable-build-servers -v minimal`
@@ -48,4 +60,5 @@ Agent edits are restricted to:
 - `src/unifocl/`
 - `src/unifocl.unity/`
 - `docs/`, `README.md`, `full-documentation.md`
-- Repository meta files (`AGENT.md`, `CLAUDE.md`, `CHANGELOG.md`, `.github/`)
+- Repository meta files (`AGENT.md`, `CLAUDE.md`, `.github/`)
+- `changelog.d/` — write fragment files here; **never edit `CHANGELOG.md` or `CliVersion.cs` directly**
