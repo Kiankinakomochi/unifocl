@@ -1457,17 +1457,23 @@ namespace UniFocl.EditorBridge
 
                 if (ch == ']' || ch == '}')
                 {
-                    depth--;
+                    if (--depth < 0)
+                    {
+                        return null;
+                    }
+
                     continue;
                 }
 
                 if (ch == ',' && depth == 0)
                 {
-                    if (start >= 0)
+                    if (start < 0)
                     {
-                        results.Add(UnquoteJsonElement(inner[start..i]));
+                        // leading comma or double comma — malformed
+                        return null;
                     }
 
+                    results.Add(UnquoteJsonElement(inner[start..i]));
                     start = -1;
                     continue;
                 }
@@ -1476,6 +1482,11 @@ namespace UniFocl.EditorBridge
                 {
                     start = i;
                 }
+            }
+
+            if (depth != 0 || inString || escaped)
+            {
+                return null;
             }
 
             if (start >= 0)
@@ -1491,13 +1502,74 @@ namespace UniFocl.EditorBridge
             var trimmed = element.Trim();
             if (trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"')
             {
-                return trimmed[1..^1]
-                    .Replace("\\\"", "\"")
-                    .Replace("\\\\", "\\")
-                    .Replace("\\/", "/")
-                    .Replace("\\n", "\n")
-                    .Replace("\\r", "\r")
-                    .Replace("\\t", "\t");
+                var inner = trimmed[1..^1];
+                var result = new System.Text.StringBuilder(inner.Length);
+
+                for (var i = 0; i < inner.Length; i++)
+                {
+                    var ch = inner[i];
+                    if (ch != '\\')
+                    {
+                        result.Append(ch);
+                        continue;
+                    }
+
+                    if (i + 1 >= inner.Length)
+                    {
+                        result.Append('\\');
+                        break;
+                    }
+
+                    var escape = inner[++i];
+                    switch (escape)
+                    {
+                        case '"':
+                            result.Append('"');
+                            break;
+                        case '\\':
+                            result.Append('\\');
+                            break;
+                        case '/':
+                            result.Append('/');
+                            break;
+                        case 'b':
+                            result.Append('\b');
+                            break;
+                        case 'f':
+                            result.Append('\f');
+                            break;
+                        case 'n':
+                            result.Append('\n');
+                            break;
+                        case 'r':
+                            result.Append('\r');
+                            break;
+                        case 't':
+                            result.Append('\t');
+                            break;
+                        case 'u':
+                            if (i + 4 < inner.Length)
+                            {
+                                var hex = inner.Substring(i + 1, 4);
+                                if (ushort.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var codeUnit))
+                                {
+                                    result.Append((char)codeUnit);
+                                    i += 4;
+                                    break;
+                                }
+                            }
+
+                            result.Append('\\');
+                            result.Append('u');
+                            break;
+                        default:
+                            result.Append('\\');
+                            result.Append(escape);
+                            break;
+                    }
+                }
+
+                return result.ToString();
             }
 
             return trimmed;
@@ -1800,15 +1872,24 @@ namespace UniFocl.EditorBridge
                 case SerializedPropertyType.Integer:
                 case SerializedPropertyType.Float:
                     return value;
+                case SerializedPropertyType.ObjectReference:
+                    if (value == "null")
+                    {
+                        return "null";
+                    }
+
+                    break;
                 default:
-                    var escaped = value
-                        .Replace("\\", "\\\\")
-                        .Replace("\"", "\\\"")
-                        .Replace("\n", "\\n")
-                        .Replace("\r", "\\r")
-                        .Replace("\t", "\\t");
-                    return "\"" + escaped + "\"";
+                    break;
             }
+
+            var escaped = value
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r")
+                .Replace("\t", "\\t");
+            return "\"" + escaped + "\"";
         }
 
         private static bool GetComponentEnabled(Component component)
