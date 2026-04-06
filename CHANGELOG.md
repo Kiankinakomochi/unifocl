@@ -10,6 +10,26 @@
 - The reverse (downgrade `RectTransform` → `Transform`) is not supported. Recreate the object outside the Canvas if needed.
 - To create a new UI element inside a Canvas, use `/mutate create` with `type:"empty"` parented to the Canvas, then call `add_component RectTransform`.
 
+## 3.8.9 - 2026-04-06
+
+### Added
+- **`/mutate set_field` now supports list/array fields**: Pass a JSON array string (e.g. `"[\"a\",\"b\"]"`) as the value for `SerializedPropertyType.Generic` (isArray) properties. Elements are assigned recursively, so `List<string>`, `List<int>`, and `List<ObjectReference>` all work.
+- **`/dump inspector` emits array fields as JSON arrays**: Array/list properties are now rendered as JSON arrays rather than opaque strings. ObjectReference elements show full hierarchy paths (with optional `#ComponentType` suffix).
+
+### Fixed
+- **JSON array parsing rejects malformed input**: `ParseJsonArrayElements` now returns null on negative bracket depth, leading/double commas (`[,1]`, `[1,,2]`), and unclosed strings or unmatched brackets — preventing silent partial mutations.
+- **JSON string unescaping is single-pass and correct**: `UnquoteJsonElement` was using a multi-pass `Replace()` chain that incorrectly turned `\\n` (JSON literal backslash + n) into a newline. Replaced with a single-pass loop that correctly handles `\b`, `\f`, `\uXXXX`, and all standard JSON escape sequences.
+- **Null ObjectReference elements emit JSON `null`**: Array elements for null object references are now the literal `null` token rather than the quoted string `"null"`.
+
+## 3.8.8 - 2026-04-06
+
+### Fixed
+- **`agent install claude` now writes `.mcp.json` instead of `mcpServers` in `.claude/settings.json`**: Claude Code reads project-level MCP servers from `.mcp.json` at the project root, not from `mcpServers` inside `.claude/settings.json`. The previous approach caused `claude mcp list` to show no servers and the agent to not see any MCP tools. `.mcp.json` should be committed; `.claude/settings.json` is now reserved for `permissions` only.
+- **`FindAgentSetupRoot` detects `.mcp.json`-based installs**: The boot-prompt suppression logic (reverse traversal) now checks `.mcp.json` first when walking ancestor directories, with a legacy fallback to `.claude/settings.json` for older installs.
+
+### Officialized
+- Officialized `3.8.8` by closing the development cycle suffix.
+
 ## 3.8.7 - 2026-04-06
 
 ### Added
