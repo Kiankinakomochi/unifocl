@@ -82,7 +82,12 @@ internal sealed record MutateOpResult(
     /// toggle_component ops (e.g. "component": "3") instead of the type name to
     /// avoid ambiguity when the same component type appears more than once.
     /// </summary>
-    [property: JsonPropertyOrder(8)] int? ComponentIndex = null);
+    [property: JsonPropertyOrder(8)] int? ComponentIndex = null,
+    /// <summary>
+    /// For read_field: JSON object with field name, type, and current value.
+    /// Null for all other ops.
+    /// </summary>
+    [property: JsonPropertyOrder(9)] string? ReadValue = null);
 
 internal sealed record MutateBatchResult(
     [property: JsonPropertyOrder(1)] bool AllOk,
