@@ -12,7 +12,7 @@ Before any edits or worktree actions, run this one-shot bootstrap command from t
 2. This command automatically:
    - Creates/switches to the requested branch from `origin/main`
    - Syncs and initializes submodules recursively
-   - Bumps `src/unifocl/Services/CliVersion.cs` minor and resets `DevCycle` to `a1`
+   - Resets `DevCycle` to `a1` in `CliVersion.cs` (local dev marker only — do **not** stage or commit `CliVersion.cs`)
    - Scaffolds `.local/compatcheck-benchmark/`
    - Writes `local.config.json`
    - Runs compatcheck with resolved Unity paths
@@ -46,8 +46,18 @@ The agent must treat the following as **non-negotiable principles**:
   - Keep those artifacts uncommitted.
 - **Unity Type Reference Strategy (Primary):** For types defined in Unity-side assemblies, use mirrored POCO contracts for compile-safe boundaries and HTTP communication. Avoid reflection-based type access as a default approach.
 - **Contract Strategy (Primary):** Shared transport contracts between CLI and Unity are plain C# records serialized as JSON. No protobuf dependency in the CLI build. Hierarchy `mk` types are defined as a CLI-local string catalog; the Unity side uses a normalized switch for built-in types with `TypeCache.GetTypesDerivedFrom<MonoBehaviour>()` as the open-ended fallback for custom types.
-- **Build Versioning Rule:** Development builds must use `aX` incremental suffixes in `CliVersion.SemVer` (for example: `0.3.2a1` -> `0.3.2a2`)
-- **PR Finalization Version Rule:** When finalizing changes for PR (push/PR creation), harden the version by closing the active dev-cycle suffix (set `CliVersion.DevCycle` to empty) and add an `Officialized` release entry in `CHANGELOG.md`.
+- **Build Versioning Rule:** Development builds must use `aX` incremental suffixes in `CliVersion.SemVer` (for example: `0.3.2a1` -> `0.3.2a2`). Auto-increment on Debug build is expected and must remain enabled. These suffixes are local-only — do **not** commit them.
+- **Version Ownership Rule (Critical):** `CliVersion.cs` (`Major`/`Minor`/`Patch`) and `CHANGELOG.md` are **owned by CI**. Do not edit either file directly in PRs. Version bumping and changelog aggregation happen automatically after merge via `scripts/aggregate-changelog.sh`. Violating this causes conflicts across parallel branches.
+- **PR Finalization Version Rule:** Instead of editing `CHANGELOG.md` or bumping `CliVersion.cs`, write a changelog fragment to `changelog.d/<branch-slug>.md`:
+  ```markdown
+  ---
+  bump: patch   # patch | minor | major
+  ---
+
+  ### Added
+  - Description of your change.
+  ```
+  Use `bump: minor` for new user-facing commands/features, `bump: major` for breaking changes, `bump: patch` for fixes.
 - **PR Finalization Build & Docs Rule:** Before pushing/creating a PR, always run these two steps in order:
   1. **Compatcheck build:** `dotnet build src/unifocl.unity.compatcheck/unifocl.unity.compatcheck.csproj --disable-build-servers -v minimal`
   2. **Full documentation regeneration:** `scripts/build-full-docs.sh`
