@@ -308,7 +308,7 @@ public static class UnifoclMutateTools
           "command": "/mutate [--dry-run] [--continue-on-error] <json-array>",
           "description": "Batch scene mutations. Context (hierarchy vs inspector) is inferred per op — no mode switching needed. Safe to call from any --mode. Requires an open project (/open) and a running daemon.",
           "flags": {
-            "--dry-run": "Preview changes without applying. Diff is returned in the response.",
+            "--dry-run": "Preview changes without applying. Diff is returned per-op. Batch-scoped: cross-op dependencies (e.g. op 0 creates, op 1 sets field on it) work correctly.",
             "--continue-on-error": "Do not stop on first failure; run all ops and collect errors."
           },
           "ops": {
@@ -352,6 +352,11 @@ public static class UnifoclMutateTools
             "toggle_component": {
               "fields": { "target": "required", "component": "required", "enabled": "optional bool — omit to flip" },
               "example": {"op":"toggle_component","target":"/HUD_Canvas","component":"CanvasScaler","enabled":true}
+            },
+            "read_field": {
+              "fields": { "target": "required", "component": "required", "field": "required" },
+              "description": "Reads the current value of a serialized field. Returns field name, type, and value in the result without modifying anything.",
+              "example": {"op":"read_field","target":"/Player","component":"PlayerController","field":"speed"}
             }
           },
           "response": {
@@ -359,7 +364,7 @@ public static class UnifoclMutateTools
             "data.total": "int",
             "data.succeeded": "int",
             "data.failed": "int",
-            "data.results": "array of {index, op, target, ok, message?, createdId?}",
+            "data.results": "array of {index, op, target, ok, message?, createdId?, readValue?}",
             "data.dryRun": "bool"
           },
           "path_format": "Use '/' for scene root. '/Name' for a top-level object. '/Parent/Child' for nested. Names are case-sensitive and matched by exact name in the loaded scene.",
@@ -402,7 +407,8 @@ public static class UnifoclMutateTools
         var validOps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "create", "rename", "remove", "move", "toggle_active",
-            "add_component", "remove_component", "set_field", "toggle_field", "toggle_component"
+            "add_component", "remove_component", "set_field", "toggle_field", "toggle_component",
+            "read_field"
         };
 
         for (var i = 0; i < ops.Count; i++)
@@ -456,6 +462,11 @@ public static class UnifoclMutateTools
                         {
                             opErrors.Add("'value' required for set_field");
                         }
+                        break;
+                    case "read_field":
+                        if (string.IsNullOrWhiteSpace(op.Target)) opErrors.Add("'target' required");
+                        if (string.IsNullOrWhiteSpace(op.Component)) opErrors.Add("'component' required");
+                        if (string.IsNullOrWhiteSpace(op.Field)) opErrors.Add("'field' required");
                         break;
                 }
             }

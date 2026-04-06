@@ -166,6 +166,15 @@ namespace UniFocl.EditorBridge
                             SetField(request.targetPath, request.componentIndex, request.componentName, request.fieldName, request.value, out var setFieldError),
                             setFieldError));
 
+                    case "read-field":
+                        return ExecuteReadField(request.targetPath, request.componentIndex, request.componentName, request.fieldName);
+
+                    case "begin-batch-dry-run":
+                        return ExecuteBeginBatchDryRun();
+
+                    case "end-batch-dry-run":
+                        return ExecuteEndBatchDryRun(request.componentIndex);
+
                     default:
                         return JsonUtility.ToJson(new InspectorMutationResponse
                         {
@@ -193,8 +202,62 @@ namespace UniFocl.EditorBridge
             };
         }
 
+        private static string ExecuteReadField(string? targetPath, int componentIndex, string? componentName, string? fieldName)
+        {
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "field name is required for read-field"
+                });
+            }
+
+            var component = ResolveComponent(targetPath, componentIndex, componentName);
+            if (component is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "component was not found on target object"
+                });
+            }
+
+            var serializedObject = new SerializedObject(component);
+            var property = FindPropertyByNameOrPath(serializedObject, fieldName!);
+            if (property is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"serialized field was not found: {fieldName}"
+                });
+            }
+
+            var result = new ReadFieldResult
+            {
+                field = property.propertyPath,
+                type = property.propertyType.ToString(),
+                value = FormatPropertyValue(property)
+            };
+
+            return JsonUtility.ToJson(new InspectorMutationResponse
+            {
+                ok = true,
+                content = JsonUtility.ToJson(result)
+            });
+        }
+
         private static string ExecuteDryRunMutation(InspectorBridgeRequest request)
         {
+            // When deferRevert is true (batch dry-run mode), execute the mutation and capture
+            // the diff but do NOT revert — the caller will send a batch-revert request later.
+            // This allows subsequent ops in the batch to see the effects of prior ops.
+            if (request.deferRevert)
+            {
+                return ExecuteDeferredDryRunMutation(request);
+            }
+
             var target = ResolveTarget(request.targetPath);
             if (target is null)
             {
@@ -253,6 +316,99 @@ namespace UniFocl.EditorBridge
                 {
                     ok = false,
                     message = $"inspector dry-run failed: {ex.Message}"
+                });
+            }
+        }
+
+        /// <summary>
+        /// Returns the current undo group index so the CLI can pass it back to end-batch-dry-run.
+        /// Also enters the DaemonDryRunContext and captures scene dirty state.
+        /// </summary>
+        private static string ExecuteBeginBatchDryRun()
+        {
+            var undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl batch dry-run");
+
+            return JsonUtility.ToJson(new InspectorMutationResponse
+            {
+                ok = true,
+                message = "batch dry-run started",
+                assignedIndex = undoGroup
+            });
+        }
+
+        /// <summary>
+        /// Reverts all undo operations down to the specified undo group, cleaning up a
+        /// batch dry-run. The undoGroup is passed via the componentIndex field of the request.
+        /// </summary>
+        private static string ExecuteEndBatchDryRun(int undoGroup)
+        {
+            var (scenes, wasDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();
+
+            try
+            {
+                Undo.RevertAllDownToGroup(undoGroup);
+                DaemonDryRunSceneRestoreService.RestorePreviouslyCleanScenes(scenes, wasDirty);
+
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = true,
+                    message = "batch dry-run reverted"
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"batch dry-run revert failed: {ex.Message}"
+                });
+            }
+        }
+
+        /// <summary>
+        /// Executes a single mutation as part of a batch dry-run. The mutation is applied
+        /// within a new undo group but NOT reverted — the CLI will send a batch-revert
+        /// request after all ops complete. This allows sequential ops within a batch
+        /// to see each other's effects (e.g., op 0 creates an object, op 1 sets a field on it).
+        /// </summary>
+        private static string ExecuteDeferredDryRunMutation(InspectorBridgeRequest request)
+        {
+            var target = ResolveTarget(request.targetPath);
+            if (target is null)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = "inspector target was not found"
+                });
+            }
+
+            var beforeJson = DaemonDryRunDiffService.SnapshotObject(target);
+
+            // Start a new undo group for this op so the batch-revert can undo everything.
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("unifocl batch dry-run op");
+
+            try
+            {
+                var mutation = ExecuteMutationCore(request);
+                if (!mutation.ok)
+                {
+                    return JsonUtility.ToJson(mutation);
+                }
+
+                var afterJson = DaemonDryRunDiffService.SnapshotObject(target);
+                mutation.message = "dry-run preview (deferred revert)";
+                mutation.content = DaemonDryRunDiffService.BuildJsonDiffPayload("inspector mutation preview", beforeJson, afterJson);
+                return JsonUtility.ToJson(mutation);
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new InspectorMutationResponse
+                {
+                    ok = false,
+                    message = $"inspector deferred dry-run failed: {ex.Message}"
                 });
             }
         }
