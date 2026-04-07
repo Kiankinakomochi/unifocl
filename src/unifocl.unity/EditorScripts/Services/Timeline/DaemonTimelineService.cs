@@ -27,6 +27,9 @@ namespace UniFocl.EditorBridge.Timeline
         private const string ActivationTrackTypeName       = "UnityEngine.Timeline.ActivationTrack, Unity.Timeline";
         private const string ControlTrackTypeName          = "UnityEngine.Timeline.ControlTrack, Unity.Timeline";
         private const string GroupTrackTypeName            = "UnityEngine.Timeline.GroupTrack, Unity.Timeline";
+        private const string MarkerTrackTypeName           = "UnityEngine.Timeline.MarkerTrack, Unity.Timeline";
+        private const string SignalEmitterTypeName         = "UnityEngine.Timeline.SignalEmitter, Unity.Timeline";
+        private const string SignalAssetTypeName           = "UnityEngine.Timeline.SignalAsset, Unity.Timeline";
 
         // ── timeline.track.add ───────────────────────────────────────────────
 
@@ -399,6 +402,103 @@ namespace UniFocl.EditorBridge.Timeline
             }
         }
 
+        // ── timeline.marker.add ─────────────────────────────────────────────
+
+        [UnifoclCommand(
+            "timeline.marker.add",
+            "Add a SignalEmitter marker to a TimelineAsset's marker track. " +
+            "Required: {\"assetPath\":\"Assets/T.playable\",\"time\":0.5}. " +
+            "Optional: \"signal\" — asset path to a SignalAsset (e.g. \"Assets/Signals/Cue.signal\"). " +
+            "Returns the marker time and assigned signal.",
+            "timeline")]
+        public static string AddMarker(string json)
+        {
+            try
+            {
+                var payload = SafeFromJson<AddMarkerPayload>(json);
+                if (string.IsNullOrWhiteSpace(payload.assetPath))
+                    return ErrorResponse("assetPath is required");
+
+                var timelineType = ResolveTimelineType(TimelineAssetTypeName);
+                if (timelineType is null)
+                    return PackageNotInstalledResponse();
+
+                var signalEmitterType = ResolveTimelineType(SignalEmitterTypeName);
+                if (signalEmitterType is null)
+                    return ErrorResponse("SignalEmitter type not found — is com.unity.timeline installed?");
+
+                var timeline = AssetDatabase.LoadAssetAtPath(payload.assetPath, timelineType);
+                if (timeline is null)
+                    return ErrorResponse($"TimelineAsset not found at '{payload.assetPath}'");
+
+                // Access the markerTrack property (creates one if absent).
+                var markerTrackProp = timelineType.GetProperty("markerTrack");
+                if (markerTrackProp is null)
+                    return ErrorResponse("markerTrack property not found on TimelineAsset");
+
+                var markerTrack = markerTrackProp.GetValue(timeline) as UnityEngine.Object;
+                if (markerTrack is null)
+                    return ErrorResponse("failed to get or create marker track");
+
+                // Find IMarker CreateMarker(Type, double) on the track.
+                var createMarkerMethod = markerTrack.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                    .FirstOrDefault(m =>
+                        m.Name == "CreateMarker"
+                        && !m.IsGenericMethod
+                        && m.GetParameters().Length == 2
+                        && m.GetParameters()[0].ParameterType == typeof(Type)
+                        && m.GetParameters()[1].ParameterType == typeof(double));
+
+                if (createMarkerMethod is null)
+                    return ErrorResponse("CreateMarker(Type, double) not found on marker track");
+
+                Undo.RecordObject(timeline, "unifocl timeline.marker.add");
+                Undo.RecordObject(markerTrack, "unifocl timeline.marker.add");
+
+                var marker = createMarkerMethod.Invoke(markerTrack, new object[] { signalEmitterType, payload.time });
+                if (marker is null)
+                    return ErrorResponse("CreateMarker returned null");
+
+                // If a SignalAsset path is provided, assign it to the emitter's asset property.
+                string? assignedSignal = null;
+                if (!string.IsNullOrWhiteSpace(payload.signal))
+                {
+                    var signalAssetType = ResolveTimelineType(SignalAssetTypeName);
+                    if (signalAssetType is null)
+                        return ErrorResponse("SignalAsset type not found");
+
+                    var signalAsset = AssetDatabase.LoadAssetAtPath(payload.signal, signalAssetType);
+                    if (signalAsset is null)
+                        return ErrorResponse($"SignalAsset not found at '{payload.signal}'");
+
+                    var assetProp = marker.GetType().GetProperty("asset");
+                    if (assetProp is not null && assetProp.CanWrite)
+                    {
+                        if (marker is UnityEngine.Object markerObj)
+                            Undo.RecordObject(markerObj, "unifocl timeline.marker.add");
+                        assetProp.SetValue(marker, signalAsset);
+                        assignedSignal = payload.signal;
+                    }
+                }
+
+                EditorUtility.SetDirty(timeline);
+                EditorUtility.SetDirty(markerTrack);
+                AssetDatabase.SaveAssets();
+
+                var signalJson = assignedSignal is not null
+                    ? $",\"signal\":\"{EscapeJson(assignedSignal)}\""
+                    : "";
+                return OkResponse(
+                    $"added SignalEmitter marker at {payload.time:0.###}s" +
+                    (assignedSignal is not null ? $" with signal '{assignedSignal}'" : ""),
+                    $"{{\"time\":{payload.time}{signalJson}}}");
+            }
+            catch (Exception ex)
+            {
+                return ErrorResponse($"timeline.marker.add failed: {ex.Message}");
+            }
+        }
+
         // ── reflection helpers ───────────────────────────────────────────────
 
         private static readonly Dictionary<string, Type?> _typeCache = new();
@@ -723,6 +823,14 @@ namespace UniFocl.EditorBridge.Timeline
             public string trackName = string.Empty;
             public string clipName  = string.Empty;
             public string preset    = string.Empty;
+        }
+
+        [Serializable]
+        private sealed class AddMarkerPayload
+        {
+            public string assetPath = string.Empty;
+            public double time;
+            public string signal    = string.Empty;
         }
 
         [Serializable]

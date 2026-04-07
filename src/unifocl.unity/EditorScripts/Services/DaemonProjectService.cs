@@ -420,8 +420,43 @@ namespace UniFocl.EditorBridge
                 "layer-rename" => Task.FromResult(ExecuteLayerRename(request)),
                 "layer-remove" => Task.FromResult(ExecuteLayerRemove(request)),
                 "time-scale" => Task.FromResult(ExecuteTimeScale(request)),
+                "asset-refresh" => Task.FromResult(ExecuteAssetRefresh(request)),
                 _ => Task.FromResult(JsonUtility.ToJson(new ProjectCommandResponse { ok = false, message = $"unsupported action: {request.action}" }))
             };
+        }
+
+        private static string ExecuteAssetRefresh(ProjectCommandRequest request)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(request.assetPath) && request.assetPath.StartsWith("Assets/"))
+                {
+                    AssetDatabase.ImportAsset(request.assetPath, ImportAssetOptions.ForceUpdate);
+                    return JsonUtility.ToJson(new ProjectCommandResponse
+                    {
+                        ok = true,
+                        message = $"imported '{request.assetPath}'",
+                        kind = "asset-refresh"
+                    });
+                }
+
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = true,
+                    message = "AssetDatabase.Refresh completed",
+                    kind = "asset-refresh"
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = $"asset-refresh failed: {ex.Message}",
+                    kind = "asset-refresh"
+                });
+            }
         }
 
         public static string GetBuildStatusPayload()

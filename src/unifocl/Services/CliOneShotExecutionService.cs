@@ -806,7 +806,8 @@ internal static class CliOneShotExecutionService
         }
 
         if (matched.Trigger.StartsWith("/asset get", StringComparison.Ordinal)
-            || matched.Trigger.StartsWith("/asset set", StringComparison.Ordinal))
+            || matched.Trigger.StartsWith("/asset set", StringComparison.Ordinal)
+            || matched.Trigger.StartsWith("/asset refresh", StringComparison.Ordinal))
         {
             if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
             {

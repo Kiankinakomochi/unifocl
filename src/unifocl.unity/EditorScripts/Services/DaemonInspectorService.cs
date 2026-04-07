@@ -1536,7 +1536,7 @@ namespace UniFocl.EditorBridge
                         return TryAssignArrayPropertyValue(property, rawValue, out changed);
                     }
 
-                    return false;
+                    return TryAssignGenericObjectPropertyValue(property, rawValue, out changed);
 
                 default:
                     return false;
@@ -1568,6 +1568,156 @@ namespace UniFocl.EditorBridge
             }
 
             return true;
+        }
+
+        private static bool TryAssignGenericObjectPropertyValue(SerializedProperty property, string rawValue, out bool changed)
+        {
+            changed = false;
+            var entries = ParseJsonObjectEntries(rawValue);
+            if (entries is null)
+            {
+                return false;
+            }
+
+            foreach (var (key, value) in entries)
+            {
+                var child = property.FindPropertyRelative(key);
+                if (child is null)
+                {
+                    return false;
+                }
+
+                if (!TryAssignPropertyValue(child, value, out var childChanged))
+                {
+                    return false;
+                }
+
+                changed = changed || childChanged;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Parses a JSON object string into its top-level key-value pairs.
+        /// Values are preserved as raw JSON strings (may be objects, arrays, or primitives).
+        /// Returns null if the input is not a valid JSON object.
+        /// </summary>
+        private static List<(string key, string value)>? ParseJsonObjectEntries(string json)
+        {
+            var trimmed = json.Trim();
+            if (trimmed.Length < 2 || trimmed[0] != '{' || trimmed[^1] != '}')
+            {
+                return null;
+            }
+
+            var inner = trimmed[1..^1].Trim();
+            if (inner.Length == 0)
+            {
+                return new List<(string, string)>();
+            }
+
+            var results = new List<(string, string)>();
+            var pos = 0;
+
+            while (pos < inner.Length)
+            {
+                // Skip whitespace
+                while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+                if (pos >= inner.Length) break;
+
+                // Expect a quoted key
+                if (inner[pos] != '"') return null;
+                var keyEnd = FindClosingQuote(inner, pos);
+                if (keyEnd < 0) return null;
+                var key = UnquoteJsonElement(inner[pos..(keyEnd + 1)]);
+                pos = keyEnd + 1;
+
+                // Skip whitespace, expect colon
+                while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+                if (pos >= inner.Length || inner[pos] != ':') return null;
+                pos++;
+
+                // Skip whitespace, then parse the value
+                while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+                if (pos >= inner.Length) return null;
+
+                var valueStart = pos;
+                pos = SkipJsonValue(inner, pos);
+                if (pos < 0) return null;
+
+                var rawVal = UnquoteJsonElement(inner[valueStart..pos].Trim());
+                results.Add((key, rawVal));
+
+                // Skip whitespace, expect comma or end
+                while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+                if (pos < inner.Length)
+                {
+                    if (inner[pos] == ',')
+                    {
+                        pos++;
+                    }
+                    else
+                    {
+                        // Not a comma and not at end — malformed
+                        return null;
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        private static int FindClosingQuote(string s, int openPos)
+        {
+            for (var i = openPos + 1; i < s.Length; i++)
+            {
+                if (s[i] == '\\') { i++; continue; }
+                if (s[i] == '"') return i;
+            }
+            return -1;
+        }
+
+        private static int SkipJsonValue(string s, int pos)
+        {
+            if (pos >= s.Length) return -1;
+            var ch = s[pos];
+
+            // String
+            if (ch == '"')
+            {
+                var end = FindClosingQuote(s, pos);
+                return end < 0 ? -1 : end + 1;
+            }
+
+            // Object or array
+            if (ch == '{' || ch == '[')
+            {
+                var close = ch == '{' ? '}' : ']';
+                var depth = 1;
+                var inStr = false;
+                for (var i = pos + 1; i < s.Length; i++)
+                {
+                    var c = s[i];
+                    if (inStr)
+                    {
+                        if (c == '\\') { i++; continue; }
+                        if (c == '"') inStr = false;
+                        continue;
+                    }
+                    if (c == '"') { inStr = true; continue; }
+                    if (c == ch) depth++;
+                    else if (c == close) { if (--depth == 0) return i + 1; }
+                }
+                return -1;
+            }
+
+            // Primitive (number, bool, null)
+            while (pos < s.Length && !char.IsWhiteSpace(s[pos]) && s[pos] != ',' && s[pos] != '}' && s[pos] != ']')
+            {
+                pos++;
+            }
+            return pos;
         }
 
         /// <summary>
@@ -1752,6 +1902,19 @@ namespace UniFocl.EditorBridge
 
             return trimmed;
         }
+
+        // ── shared helpers for cross-service reuse (AssetFields) ──────────
+
+        internal static bool TryResolveObjectReferenceValueShared(SerializedProperty property, string rawValue, out UnityEngine.Object? resolved)
+            => TryResolveObjectReferenceValue(property, rawValue, out resolved);
+
+        internal static List<string>? ParseJsonArrayElementsShared(string json)
+            => ParseJsonArrayElements(json);
+
+        internal static List<(string key, string value)>? ParseJsonObjectEntriesShared(string json)
+            => ParseJsonObjectEntries(json);
+
+        // ── end shared helpers ──────────────────────────────────────────
 
         private static bool TryResolveObjectReferenceValue(SerializedProperty property, string rawValue, out UnityEngine.Object? resolved)
         {

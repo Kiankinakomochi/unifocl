@@ -319,6 +319,8 @@ namespace UniFocl.EditorBridge
                     return TryCreateScriptableObjectAsset(typeof(AnimationClip), parentPath, displayName, ".anim", out createdPath, out error);
                 case "timeline":
                     return TryCreateReflectionScriptableObjectAsset("UnityEngine.Timeline.TimelineAsset", parentPath, displayName, ".playable", out createdPath, out error);
+                case "signalasset":
+                    return TryCreateReflectionScriptableObjectAsset("UnityEngine.Timeline.SignalAsset", parentPath, displayName, ".signal", out createdPath, out error);
                 case "audiomixer":
                     return TryCreateReflectionScriptableObjectAsset("UnityEditor.Audio.AudioMixerController", parentPath, displayName, ".mixer", out createdPath, out error);
                 case "physicsmaterial":
