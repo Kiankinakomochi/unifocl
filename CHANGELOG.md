@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.9.0 - 2026-04-06
+### Added
+- **Changelog fragment system**: Agents and PRs now write `changelog.d/<name>.md` fragments instead of editing `CHANGELOG.md` or `CliVersion.cs` directly. After merge to `main`, the `changelog-aggregate` CI workflow collects all fragments, computes the highest bump level, updates `CliVersion.cs` and `CHANGELOG.md`, and pushes a release-ready commit — eliminating version conflicts across parallel branches.
+- **`scripts/aggregate-changelog.sh`**: Standalone script to collect fragments, bump version, prepend changelog section, and optionally commit. Supports `--dry-run` and `--commit` flags. Works on macOS and Linux.
+- **`.github/workflows/changelog-aggregate.yml`**: Post-merge automation triggered when `changelog.d/*.md` files land on `main`. Requires `RELEASE_PAT` secret (`contents: write` scope) to push the version bump commit that triggers the existing `ci-release.yml`.
+
+## 3.8.10 - 2026-04-06
+
+### Added
+- **`/mutate add_component RectTransform` now upgrades plain Transform to RectTransform**: On a GameObject that has only a `Transform`, `add_component RectTransform` replaces it with a `RectTransform` — enabling UI layout work under a Canvas without needing to recreate the object. Attempting to add `RectTransform` to a GameObject that already has one returns a clear error instead of silently failing.
+
+### Notes
+- Adding `RectTransform` to an object that already has a `RectTransform` (e.g. a Canvas child) returns an error — use `/dump inspector` to check the component list first.
+- The reverse (downgrade `RectTransform` → `Transform`) is not supported. Recreate the object outside the Canvas if needed.
+- To create a new UI element inside a Canvas, use `/mutate create` with `type:"empty"` parented to the Canvas, then call `add_component RectTransform`.
+
+## 3.8.9 - 2026-04-06
+
+### Added
+- **`/mutate set_field` now supports list/array fields**: Pass a JSON array string (e.g. `"[\"a\",\"b\"]"`) as the value for `SerializedPropertyType.Generic` (isArray) properties. Elements are assigned recursively, so `List<string>`, `List<int>`, and `List<ObjectReference>` all work.
+- **`/dump inspector` emits array fields as JSON arrays**: Array/list properties are now rendered as JSON arrays rather than opaque strings. ObjectReference elements show full hierarchy paths (with optional `#ComponentType` suffix).
+
+### Fixed
+- **JSON array parsing rejects malformed input**: `ParseJsonArrayElements` now returns null on negative bracket depth, leading/double commas (`[,1]`, `[1,,2]`), and unclosed strings or unmatched brackets — preventing silent partial mutations.
+- **JSON string unescaping is single-pass and correct**: `UnquoteJsonElement` was using a multi-pass `Replace()` chain that incorrectly turned `\\n` (JSON literal backslash + n) into a newline. Replaced with a single-pass loop that correctly handles `\b`, `\f`, `\uXXXX`, and all standard JSON escape sequences.
+- **Null ObjectReference elements emit JSON `null`**: Array elements for null object references are now the literal `null` token rather than the quoted string `"null"`.
+
 ## 3.8.8 - 2026-04-06
 
 ### Fixed

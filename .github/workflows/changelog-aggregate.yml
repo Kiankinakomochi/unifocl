@@ -1,0 +1,66 @@
+name: Aggregate Changelog
+
+# Runs when a PR merges into main and changelog fragments are present.
+# Collects all changelog.d/*.md fragments, bumps the version in CliVersion.cs,
+# prepends the aggregated section to CHANGELOG.md, and pushes the result so
+# the existing ci-release.yml can cut a proper release.
+#
+# Required secret (for the push to trigger downstream workflows):
+#   RELEASE_PAT  — a Personal Access Token with `contents: write` scope.
+#                  Without it, the workflow exits with a warning and no commit
+#                  is made. You can still trigger a release manually via
+#                  workflow_dispatch on ci-release.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'changelog.d/*.md'
+
+concurrency:
+  group: changelog-aggregate
+  cancel-in-progress: false   # never cancel mid-aggregate
+
+permissions:
+  contents: read
+
+jobs:
+  aggregate:
+    name: Aggregate & Bump Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for RELEASE_PAT
+        id: pat_check
+        run: |
+          if [[ -n "${{ secrets.RELEASE_PAT }}" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::RELEASE_PAT is not set. Aggregation will be skipped."
+            echo "::warning::Set a PAT with 'contents: write' scope as RELEASE_PAT to enable automatic version bumping."
+          fi
+
+      - name: Checkout
+        if: steps.pat_check.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0
+
+      - name: Check for fragments
+        if: steps.pat_check.outputs.available == 'true'
+        id: fragments
+        run: |
+          count="$(find changelog.d -maxdepth 1 -name '*.md' ! -name '.gitkeep' 2>/dev/null | wc -l | tr -d ' ')"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Fragment count: $count"
+
+      - name: Aggregate fragments and bump version
+        if: steps.pat_check.outputs.available == 'true' && steps.fragments.outputs.count != '0'
+        run: bash scripts/aggregate-changelog.sh --commit
+
+      - name: Push version bump commit
+        if: steps.pat_check.outputs.available == 'true' && steps.fragments.outputs.count != '0'
+        run: |
+          git push origin HEAD:main
+          echo "Pushed version bump — ci-release.yml will pick it up."

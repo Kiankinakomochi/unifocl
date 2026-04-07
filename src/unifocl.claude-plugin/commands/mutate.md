@@ -8,7 +8,7 @@ Step 1 — Plan
   Based on "$ARGUMENTS", determine the /mutate op array.
   Call `GetMutateSchema` via the unifocl MCP server to review all supported ops and required fields.
   Supported ops: create, rename, remove, move, toggle_active, add_component, remove_component,
-                 set_field, toggle_field, toggle_component.
+                 set_field, toggle_field, toggle_component, read_field.
 
 Step 2 — Validate (static schema check, no Unity needed)
   Call `ValidateMutateBatch` via MCP with your planned JSON array.
