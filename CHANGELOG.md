@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.11.0 - 2026-04-07
+### Added
+- `set_field` and `asset set` now support nested/complex serialized types (Generic non-array) via JSON object values — enables setting `UnityEvent`, struct fields, and other composite properties recursively.
+- `asset.refresh` command — triggers `AssetDatabase.Refresh()` or targeted `ImportAsset()` to force reimport after external file writes.
+- `timeline.marker.add` command — adds `SignalEmitter` markers to a TimelineAsset's marker track with optional `SignalAsset` assignment.
+- `signalasset` type support in `asset.create` — creates `SignalAsset` files (`.signal`) via the Timeline package.
+
 ## 3.10.0 - 2026-04-07
 ### Added
 - **Timeline command suite (lazy-loaded `timeline` category)**: 5 new commands for semantic Unity Timeline authoring — `timeline.track.add`, `timeline.clip.add`, `timeline.clip.ease`, `timeline.clip.preset`, `timeline.bind`. All Unity Timeline API access uses reflection so `com.unity.timeline` is not a hard compile dependency; commands return a descriptive error when the package is absent.
