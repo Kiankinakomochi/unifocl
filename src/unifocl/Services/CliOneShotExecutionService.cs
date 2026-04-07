@@ -22,7 +22,14 @@ internal static class CliOneShotExecutionService
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
         var sessionSeed = AgenticStatePersistenceService.NormalizeSessionSeed(options.SessionSeed);
-        session.SessionSeed = sessionSeed;
+        // Only propagate the seed into the session when the caller explicitly requested agentic
+        // ownership enforcement. Without this guard, every one-shot run (even plain CLI calls
+        // without --session-seed) would get a synthetic GUID seed and trigger the daemon-ownership
+        // check, blocking legitimate non-agentic reconnects.
+        if (!string.IsNullOrWhiteSpace(options.SessionSeed) || options.Agentic)
+        {
+            session.SessionSeed = sessionSeed;
+        }
         var extraMeta = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["command"] = options.CommandText,
@@ -1010,18 +1017,37 @@ internal static class CliOneShotExecutionService
 
         if (matched.Trigger.StartsWith("/project clone", StringComparison.Ordinal))
         {
-            // Strip leading /project and rewrite as "project clone <args>" for ProjectViewService
-            var projectPayload = input.Length > "/project".Length
-                ? $"project {input["/project".Length..].Trim()}"
-                : "project";
-            await AwaitWithCancellationAsync(
-                () => projectCommandRouterService.TryHandleProjectCommandAsync(
-                    projectPayload,
-                    session,
-                    daemonControlService,
-                    daemonRuntime,
-                    line => CliLogService.AppendLog(streamLog, line)),
-                cancellationToken);
+            // Route directly to ProjectCloneService — this is a pure filesystem operation that
+            // must work in boot mode (no open project / no daemon). The project router is gated
+            // on session.Mode == Project && CurrentProjectPath set, so we bypass it here.
+            var tokens = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length < 4)
+            {
+                CliLogService.AppendLog(streamLog, "[x] usage: /project clone <source-path> <dest-path> [--no-library]");
+            }
+            else
+            {
+                var sourcePath  = tokens[2];
+                var destPath    = tokens[3];
+                var seedLibrary = !tokens.Any(t => t.Equals("--no-library", StringComparison.OrdinalIgnoreCase));
+
+                CliLogService.AppendLog(streamLog, $"[i] cloning project: {Markup.Escape(sourcePath)} -> {Markup.Escape(destPath)}");
+                var result = ProjectCloneService.Clone(
+                    sourcePath,
+                    destPath,
+                    seedLibrary,
+                    log: msg => CliLogService.AppendLog(streamLog, msg));
+
+                if (result.Ok)
+                {
+                    CliLogService.AppendLog(streamLog, $"[+] {Markup.Escape(result.Message)}");
+                    CliLogService.AppendLog(streamLog, $"[i] open with: /open {Markup.Escape(result.ClonedPath!)}");
+                }
+                else
+                {
+                    CliLogService.AppendLog(streamLog, $"[x] clone failed: {Markup.Escape(result.Message)}");
+                }
+            }
 
             return;
         }

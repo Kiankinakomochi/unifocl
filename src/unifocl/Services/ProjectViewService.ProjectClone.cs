@@ -1,3 +1,5 @@
+using Spectre.Console;
+
 internal sealed partial class ProjectViewService
 {
     private static bool HandleProjectCloneCommand(IReadOnlyList<string> tokens, List<string> outputs)
@@ -13,7 +15,7 @@ internal sealed partial class ProjectViewService
         var destPath    = tokens[3];
         var seedLibrary = !tokens.Any(t => t.Equals("--no-library", StringComparison.OrdinalIgnoreCase));
 
-        outputs.Add($"[i] cloning project: {sourcePath} -> {destPath}");
+        outputs.Add($"[i] cloning project: {Markup.Escape(sourcePath)} -> {Markup.Escape(destPath)}");
 
         var result = ProjectCloneService.Clone(
             sourcePath,
@@ -23,12 +25,12 @@ internal sealed partial class ProjectViewService
 
         if (result.Ok)
         {
-            outputs.Add($"[+] {result.Message}");
-            outputs.Add($"[i] open with: /open {result.ClonedPath}");
+            outputs.Add($"[+] {Markup.Escape(result.Message)}");
+            outputs.Add($"[i] open with: /open {Markup.Escape(result.ClonedPath!)}");
         }
         else
         {
-            outputs.Add($"[x] clone failed: {result.Message}");
+            outputs.Add($"[x] clone failed: {Markup.Escape(result.Message)}");
         }
 
         return true;

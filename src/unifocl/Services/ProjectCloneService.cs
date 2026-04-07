@@ -1,3 +1,5 @@
+using Spectre.Console;
+
 /// <summary>
 /// Clones a Unity project directory to an isolated path for use by a separate agent session.
 /// Copies Assets/, Packages/, ProjectSettings/, UserSettings/ (always) and optionally Library/
@@ -7,12 +9,6 @@ internal static class ProjectCloneService
 {
     private static readonly string[] RequiredFolders = ["Assets", "Packages", "ProjectSettings"];
     private static readonly string[] OptionalFolders = ["UserSettings"];
-
-    // Folders that must never be carried across — they are stale/volatile by definition.
-    private static readonly HashSet<string> SkipFolders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Temp", "Logs", "obj", ".unifocl", "Library"
-    };
 
     internal sealed record CloneResult(
         bool Ok,
@@ -50,6 +46,14 @@ internal static class ProjectCloneService
             return Fail("source and destination paths are the same");
         }
 
+        // Reject destPath that falls inside the source tree to prevent recursive copy loops.
+        var sourceWithSep = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            + Path.DirectorySeparatorChar;
+        if (destPath.StartsWith(sourceWithSep, StringComparison.OrdinalIgnoreCase))
+        {
+            return Fail("destination path is inside the source project tree");
+        }
+
         if (Directory.Exists(destPath) && Directory.EnumerateFileSystemEntries(destPath).Any())
         {
             return Fail($"destination already exists and is not empty: {destPath}");
@@ -76,7 +80,13 @@ internal static class ProjectCloneService
             }
 
             log?.Invoke($"[grey]clone[/]: copying {folder}/");
-            totalBytes += CopyDirectory(src, Path.Combine(destPath, folder));
+            var copyResult = TryCopyDirectory(src, Path.Combine(destPath, folder));
+            if (copyResult.Error is not null)
+            {
+                return Fail($"failed while copying {folder}/: {copyResult.Error}");
+            }
+
+            totalBytes += copyResult.Bytes;
         }
 
         // Library seeding: copies pre-compiled cache so Unity doesn't re-import on first open
@@ -87,7 +97,13 @@ internal static class ProjectCloneService
             if (Directory.Exists(srcLib))
             {
                 log?.Invoke("[grey]clone[/]: seeding Library/ cache");
-                totalBytes += CopyDirectory(srcLib, Path.Combine(destPath, "Library"));
+                var copyResult = TryCopyDirectory(srcLib, Path.Combine(destPath, "Library"));
+                if (copyResult.Error is not null)
+                {
+                    return Fail($"failed while seeding Library/: {copyResult.Error}");
+                }
+
+                totalBytes += copyResult.Bytes;
                 libraryCopied = true;
             }
             else
@@ -96,32 +112,41 @@ internal static class ProjectCloneService
             }
         }
 
-        var sizeMb = totalBytes / 1_048_576.0;
+        var sizeMb  = totalBytes / 1_048_576.0;
         var summary = $"cloned to {destPath} ({sizeMb:F1} MB){(libraryCopied ? ", Library seeded" : "")}";
-        log?.Invoke($"[green]clone[/]: {summary}");
+        log?.Invoke($"[green]clone[/]: {Markup.Escape(summary)}");
         return new CloneResult(true, destPath, libraryCopied, totalBytes, summary);
     }
 
-    private static long CopyDirectory(string source, string dest)
-    {
-        Directory.CreateDirectory(dest);
-        long bytes = 0;
+    private sealed record CopyDirectoryResult(long Bytes, string? Error);
 
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+    private static CopyDirectoryResult TryCopyDirectory(string source, string dest)
+    {
+        try
         {
-            var relative = Path.GetRelativePath(source, file);
-            var target   = Path.Combine(dest, relative);
-            var dir      = Path.GetDirectoryName(target);
-            if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dest);
+            long bytes = 0;
+
+            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
             {
-                Directory.CreateDirectory(dir);
+                var relative = Path.GetRelativePath(source, file);
+                var target   = Path.Combine(dest, relative);
+                var dir      = Path.GetDirectoryName(target);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                File.Copy(file, target, overwrite: false);
+                bytes += new FileInfo(target).Length;
             }
 
-            File.Copy(file, target, overwrite: false);
-            bytes += new FileInfo(target).Length;
+            return new CopyDirectoryResult(bytes, null);
         }
-
-        return bytes;
+        catch (Exception ex)
+        {
+            return new CopyDirectoryResult(0, ex.Message);
+        }
     }
 
     private static CloneResult Fail(string message)
