@@ -614,11 +614,16 @@ internal sealed class RuntimeCommandService
                     case "add":
                     {
                         var assetPath = ParseStringArg(tokens, "--asset");
-                        var time      = ParseDoubleArg(tokens, "--time", 0.0);
+                        var timeRaw   = ParseStringArg(tokens, "--time");
                         var signal    = ParseStringArg(tokens, "--signal") ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(assetPath))
+                        if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(timeRaw))
                         {
                             log("[x] usage: /timeline marker add --asset <path> --time <t> [--signal <path>]");
+                            return;
+                        }
+                        if (!double.TryParse(timeRaw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var time) || !double.IsFinite(time) || time < 0.0)
+                        {
+                            log("[x] --time must be a finite number >= 0");
                             return;
                         }
                         toolName = "timeline.marker.add";

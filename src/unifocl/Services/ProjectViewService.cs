@@ -133,7 +133,7 @@ internal sealed partial class ProjectViewService
         {
             if (tokens.Count < 2)
             {
-                outputs.Add("[x] usage: asset <find|duplicate|get|set> <...>");
+                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh> <...>");
                 handled = true;
             }
             else if (tokens[1].Equals("find", StringComparison.OrdinalIgnoreCase))

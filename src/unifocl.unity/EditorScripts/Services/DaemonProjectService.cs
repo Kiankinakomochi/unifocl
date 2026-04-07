@@ -429,7 +429,7 @@ namespace UniFocl.EditorBridge
         {
             try
             {
-                if (!string.IsNullOrWhiteSpace(request.assetPath) && request.assetPath.StartsWith("Assets/"))
+                if (!string.IsNullOrWhiteSpace(request.assetPath) && request.assetPath.StartsWith("Assets/", StringComparison.Ordinal))
                 {
                     AssetDatabase.ImportAsset(request.assetPath, ImportAssetOptions.ForceUpdate);
                     return JsonUtility.ToJson(new ProjectCommandResponse

@@ -27,7 +27,6 @@ namespace UniFocl.EditorBridge.Timeline
         private const string ActivationTrackTypeName       = "UnityEngine.Timeline.ActivationTrack, Unity.Timeline";
         private const string ControlTrackTypeName          = "UnityEngine.Timeline.ControlTrack, Unity.Timeline";
         private const string GroupTrackTypeName            = "UnityEngine.Timeline.GroupTrack, Unity.Timeline";
-        private const string MarkerTrackTypeName           = "UnityEngine.Timeline.MarkerTrack, Unity.Timeline";
         private const string SignalEmitterTypeName         = "UnityEngine.Timeline.SignalEmitter, Unity.Timeline";
         private const string SignalAssetTypeName           = "UnityEngine.Timeline.SignalAsset, Unity.Timeline";
 
@@ -418,6 +417,8 @@ namespace UniFocl.EditorBridge.Timeline
                 var payload = SafeFromJson<AddMarkerPayload>(json);
                 if (string.IsNullOrWhiteSpace(payload.assetPath))
                     return ErrorResponse("assetPath is required");
+                if (!double.IsFinite(payload.time) || payload.time < 0.0)
+                    return ErrorResponse("time must be a finite number >= 0");
 
                 var timelineType = ResolveTimelineType(TimelineAssetTypeName);
                 if (timelineType is null)
