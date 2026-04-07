@@ -683,9 +683,24 @@ internal sealed partial class ProjectLifecycleService
 
         // Fast path: if a Bridge mode daemon is already responsive, attach without acquiring
         // the project open lock. No Unity launch is needed so concurrent attaches are safe.
+        // However, if a different agentic session owns this daemon, enforce isolation:
+        // each agent must have its own Unity instance to prevent mutation cross-contamination.
         var candidatePort = DaemonControlService.ResolveProjectDaemonPort(projectPath);
         if (await IsDaemonEndpointAliveAsync(candidatePort))
         {
+            if (session.SessionSeed is not null)
+            {
+                var ownerSeed = AgenticStatePersistenceService.FindSessionSeedByPort(candidatePort);
+                if (ownerSeed is not null
+                    && !string.Equals(ownerSeed, session.SessionSeed, StringComparison.Ordinal))
+                {
+                    log($"[red]error[/]: project is already open in another agent session ({Markup.Escape(ownerSeed)})");
+                    log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated worktree before opening");
+                    log($"[yellow]hint[/]: use [white]agent-worktree.sh provision --seed-library[/] to clone with pre-compiled Library cache");
+                    return false;
+                }
+            }
+
             return await TryOpenProjectLockedAsync(
                 projectPath, session, daemonControlService, daemonRuntime,
                 editorDependencyInitializerService, promptForInitialization,

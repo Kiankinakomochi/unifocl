@@ -71,6 +71,41 @@ internal static class AgenticStatePersistenceService
         }
     }
 
+    /// <summary>
+    /// Scans persisted session snapshots to find which session seed currently owns a daemon
+    /// port. Returns the owner's session seed, or null if no live session claims the port.
+    /// </summary>
+    public static string? FindSessionSeedByPort(int port)
+    {
+        var sessionsDir = Path.Combine(ResolveRuntimeRoot(), "sessions");
+        if (!Directory.Exists(sessionsDir))
+        {
+            return null;
+        }
+
+        lock (IoSync)
+        {
+            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.json"))
+            {
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    var snapshot = JsonSerializer.Deserialize<AgenticSessionSnapshot>(json, JsonOptions);
+                    if (snapshot?.AttachedPort == port)
+                    {
+                        return snapshot.SessionSeed;
+                    }
+                }
+                catch
+                {
+                    // Ignore malformed snapshot files.
+                }
+            }
+        }
+
+        return null;
+    }
+
     public static AgenticRequestStatusSnapshot? TryReadRequestStatus(string requestId)
     {
         var path = ResolveRequestPath(requestId);

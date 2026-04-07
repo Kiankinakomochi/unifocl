@@ -22,6 +22,7 @@ internal static class CliOneShotExecutionService
     {
         var requestId = string.IsNullOrWhiteSpace(options.RequestId) ? Guid.NewGuid().ToString("N") : options.RequestId!;
         var sessionSeed = AgenticStatePersistenceService.NormalizeSessionSeed(options.SessionSeed);
+        session.SessionSeed = sessionSeed;
         var extraMeta = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["command"] = options.CommandText,
