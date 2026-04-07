@@ -492,7 +492,7 @@ internal sealed class RuntimeCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /timeline <track|clip|bind> [subcommand] [options]");
+            log("[x] usage: /timeline <track|clip|bind|marker> [subcommand] [options]");
             return;
         }
 
@@ -607,8 +607,37 @@ internal sealed class RuntimeCommandService
                 argsJson = JsonSerializer.Serialize(new { directorPath, trackName, targetScenePath });
                 break;
             }
+            case "marker":
+            {
+                switch (sub2)
+                {
+                    case "add":
+                    {
+                        var assetPath = ParseStringArg(tokens, "--asset");
+                        var timeRaw   = ParseStringArg(tokens, "--time");
+                        var signal    = ParseStringArg(tokens, "--signal") ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(timeRaw))
+                        {
+                            log("[x] usage: /timeline marker add --asset <path> --time <t> [--signal <path>]");
+                            return;
+                        }
+                        if (!double.TryParse(timeRaw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var time) || !double.IsFinite(time) || time < 0.0)
+                        {
+                            log("[x] --time must be a finite number >= 0");
+                            return;
+                        }
+                        toolName = "timeline.marker.add";
+                        argsJson = JsonSerializer.Serialize(new { assetPath, time, signal });
+                        break;
+                    }
+                    default:
+                        log($"[x] unknown timeline marker subcommand: {Markup.Escape(sub2)} — expected: add");
+                        return;
+                }
+                break;
+            }
             default:
-                log($"[x] unknown timeline subcommand: {Markup.Escape(sub1)} — expected: track, clip, bind");
+                log($"[x] unknown timeline subcommand: {Markup.Escape(sub1)} — expected: track, clip, bind, marker");
                 return;
         }
 

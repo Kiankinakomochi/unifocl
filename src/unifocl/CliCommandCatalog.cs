@@ -160,6 +160,7 @@ internal static class CliCommandCatalog
             new("/asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model (SafeRead)", "/asset describe", "asset"),
             new("/asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer (SafeRead)", "/asset get", "asset"),
             new("/asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer (SafeWrite)", "/asset set", "asset"),
+            new("/asset refresh [<path>]", "Trigger AssetDatabase.Refresh or targeted reimport of a single asset (SafeWrite)", "/asset refresh", "asset"),
 
             // ── animator ──────────────────────────────────────────────────
             new("/animator param add <asset-path> <name> <type>", "Add a parameter to an AnimatorController (type: float|int|bool|trigger)", "/animator param add", "animation"),
@@ -212,6 +213,7 @@ internal static class CliCommandCatalog
             new("/timeline clip ease --asset <path> --track <n> --clip <n> [--mix-in <easing>] [--mix-out <easing>]", "Apply CSS-style easing to clip blend curves (SafeWrite)", "/timeline clip ease", "timeline"),
             new("/timeline clip preset --asset <path> --track <n> --clip <n> --preset <name>", "Assign a procedural motion preset AnimationClip (SafeWrite)", "/timeline clip preset", "timeline"),
             new("/timeline bind --director <path> --track <n> --target <path>", "Bind a track on a PlayableDirector to a scene object (SafeWrite)", "/timeline bind", "timeline"),
+            new("/timeline marker add --asset <path> --time <t> [--signal <path>]", "Add a SignalEmitter marker to a TimelineAsset's marker track (SafeWrite)", "/timeline marker add", "timeline"),
 
             // ── recorder ─────────────────────────────────────────────
             new("/recorder <start|stop|status|config|switch|snapshot>", "Unity Recorder capture commands (requires com.unity.recorder package, except snapshot)", "/recorder", "recorder"),
@@ -383,6 +385,7 @@ internal static class CliCommandCatalog
             new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
             new("asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer", "asset get", "asset"),
             new("asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer", "asset set", "asset"),
+            new("asset refresh [<path>]", "Trigger AssetDatabase.Refresh or targeted reimport of a single asset", "asset refresh", "asset"),
 
             // ── time ─────────────────────────────────────────────────────
             new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),
@@ -393,6 +396,7 @@ internal static class CliCommandCatalog
             new("timeline clip ease --asset <path> --track <n> --clip <n> [--mix-in <easing>] [--mix-out <easing>]", "Apply CSS-style easing to clip blend curves (SafeWrite)", "timeline clip ease", "timeline"),
             new("timeline clip preset --asset <path> --track <n> --clip <n> --preset <name>", "Assign a procedural motion preset AnimationClip (SafeWrite)", "timeline clip preset", "timeline"),
             new("timeline bind --director <path> --track <n> --target <path>", "Bind a track on a PlayableDirector to a scene object (SafeWrite)", "timeline bind", "timeline"),
+            new("timeline marker add --asset <path> --time <t> [--signal <path>]", "Add a SignalEmitter marker to a TimelineAsset's marker track (SafeWrite)", "timeline marker add", "timeline"),
 
             // ── recorder ─────────────────────────────────────────────────
             new("recorder start [--profile <name>]", "Start a Recorder capture session (default: current profile)", "recorder start", "recorder"),

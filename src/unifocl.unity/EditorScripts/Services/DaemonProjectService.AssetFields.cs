@@ -407,9 +407,78 @@ namespace UniFocl.EditorBridge
                     }
                     return false;
 
+                case SerializedPropertyType.ObjectReference:
+                    if (DaemonInspectorService.TryResolveObjectReferenceValueShared(property, rawValue, out var objectRef))
+                    {
+                        changed = property.objectReferenceValue != objectRef;
+                        property.objectReferenceValue = objectRef;
+                        return true;
+                    }
+                    return false;
+
+                case SerializedPropertyType.Generic:
+                    if (property.isArray)
+                    {
+                        return AssetTryAssignArrayPropertyValue(property, rawValue, out changed);
+                    }
+                    return AssetTryAssignGenericObjectPropertyValue(property, rawValue, out changed);
+
                 default:
                     return false;
             }
+        }
+
+        private static bool AssetTryAssignArrayPropertyValue(SerializedProperty property, string rawValue, out bool changed)
+        {
+            changed = false;
+            var elements = DaemonInspectorService.ParseJsonArrayElementsShared(rawValue);
+            if (elements is null)
+            {
+                return false;
+            }
+
+            var previousSize = property.arraySize;
+            property.arraySize = elements.Count;
+            changed = previousSize != elements.Count;
+
+            for (var i = 0; i < elements.Count; i++)
+            {
+                var element = property.GetArrayElementAtIndex(i);
+                if (!AssetTryAssignPropertyValue(element, elements[i], out var elementChanged))
+                {
+                    return false;
+                }
+                changed = changed || elementChanged;
+            }
+
+            return true;
+        }
+
+        private static bool AssetTryAssignGenericObjectPropertyValue(SerializedProperty property, string rawValue, out bool changed)
+        {
+            changed = false;
+            var entries = DaemonInspectorService.ParseJsonObjectEntriesShared(rawValue);
+            if (entries is null)
+            {
+                return false;
+            }
+
+            foreach (var (key, value) in entries)
+            {
+                var child = property.FindPropertyRelative(key);
+                if (child is null)
+                {
+                    return false;
+                }
+
+                if (!AssetTryAssignPropertyValue(child, value, out var childChanged))
+                {
+                    return false;
+                }
+                changed = changed || childChanged;
+            }
+
+            return true;
         }
 
         private static bool AssetTryParseVector(string raw, int count, out float[] components)

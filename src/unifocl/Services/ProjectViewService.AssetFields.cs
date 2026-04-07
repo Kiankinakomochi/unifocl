@@ -103,6 +103,34 @@ internal sealed partial class ProjectViewService
         return true;
     }
 
+    // ── asset refresh ───────────────────────────────────────────────────────
+
+    private async Task<bool> HandleAssetRefreshAsync(
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        List<string> outputs)
+    {
+        // tokens: asset refresh [<path>]
+        var assetPath = tokens.Count >= 3 ? tokens[2] : null;
+
+        var response = await RunTrackableProgressAsync(
+            session,
+            assetPath is not null ? $"reimporting '{assetPath}'" : "refreshing asset database",
+            TimeSpan.FromSeconds(30),
+            () => ExecuteProjectCommandAsync(
+                session,
+                new ProjectCommandRequestDto("asset-refresh", assetPath, null, null)));
+
+        if (!response.Ok)
+        {
+            outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("asset refresh", response.Message));
+            return true;
+        }
+
+        outputs.Add($"[+] {response.Message}");
+        return true;
+    }
+
     // ── DTOs ───────────────────────────────────────────────────────────────
 
     private sealed class AssetGetResult

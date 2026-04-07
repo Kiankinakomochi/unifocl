@@ -133,7 +133,7 @@ internal sealed partial class ProjectViewService
         {
             if (tokens.Count < 2)
             {
-                outputs.Add("[x] usage: asset <find|duplicate|get|set> <...>");
+                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh> <...>");
                 handled = true;
             }
             else if (tokens[1].Equals("find", StringComparison.OrdinalIgnoreCase))
@@ -166,9 +166,14 @@ internal sealed partial class ProjectViewService
                 await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
                 handled = await HandleAssetSetAsync(tokens, session, outputs);
             }
+            else if (tokens[1].Equals("refresh", StringComparison.OrdinalIgnoreCase))
+            {
+                await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+                handled = await HandleAssetRefreshAsync(tokens, session, outputs);
+            }
             else
             {
-                outputs.Add("[x] usage: asset <find|duplicate|get|set> <...>");
+                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh> <...>");
                 handled = true;
             }
         }

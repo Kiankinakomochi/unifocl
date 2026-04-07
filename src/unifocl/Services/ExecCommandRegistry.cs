@@ -22,6 +22,7 @@ internal sealed class ExecCommandRegistry
         ["asset.describe"]      = ExecRiskLevel.SafeRead,
         ["asset.get"]           = ExecRiskLevel.SafeRead,
         ["asset.set"]           = ExecRiskLevel.SafeWrite,
+        ["asset.refresh"]       = ExecRiskLevel.SafeWrite,
         // build operations
         ["build.run"]           = ExecRiskLevel.PrivilegedExec,
         ["build.exec"]          = ExecRiskLevel.PrivilegedExec,
@@ -159,6 +160,7 @@ internal sealed class ExecCommandRegistry
         ["timeline.clip.ease"]   = ExecRiskLevel.SafeWrite,
         ["timeline.clip.preset"] = ExecRiskLevel.SafeWrite,
         ["timeline.bind"]        = ExecRiskLevel.SafeWrite,
+        ["timeline.marker.add"]  = ExecRiskLevel.SafeWrite,
         // profiling operations (lazy-loaded category)
         ["profiling.capabilities"]    = ExecRiskLevel.SafeRead,
         ["profiling.inspect"]         = ExecRiskLevel.SafeRead,
@@ -305,6 +307,13 @@ internal sealed class ExecCommandRegistry
 
                 var content = JsonSerializer.Serialize(new { field, value });
                 dto = new ProjectCommandRequestDto("asset-set", assetPath, null, content, req.RequestId);
+                return true;
+            }
+
+            case "asset.refresh":
+            {
+                var assetPath = GetString(req.Args, "assetPath");
+                dto = new ProjectCommandRequestDto("asset-refresh", assetPath, null, null, req.RequestId);
                 return true;
             }
 
