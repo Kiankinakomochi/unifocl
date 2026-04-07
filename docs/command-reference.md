@@ -350,7 +350,43 @@ The `recorder` category provides capture control for the Unity Recorder package 
 
 **Important:** Requires the `com.unity.recorder` package to be installed in the Unity project. If the package is not present, operations return an error message.
 
-## 7. Asset Describe (Local Vision)
+## 7. Timeline (Lazy-Loaded Category)
+
+The `timeline` category provides semantic Timeline authoring for `TimelineAsset` files and `PlayableDirector` scene bindings. It is **lazy-loaded** — call `load_category('timeline')` (or `use_category('timeline')`) to register the tools as live MCP tools. Requires the `com.unity.timeline` package.
+
+**CLI commands:**
+
+```
+/timeline track add --asset <path> --type <animation|audio|activation|control|group> [--name <name>]
+/timeline clip add --asset <path> --track <name> --name <clip> [--placement <directive>] [--ref <clip>] [--at <time>] [--duration <s>]
+/timeline clip ease --asset <path> --track <name> --clip <name> [--mix-in <easing>] [--mix-out <easing>]
+/timeline clip preset --asset <path> --track <name> --clip <name> --preset <name>
+/timeline bind --director <path> --track <name> --target <path>
+```
+
+**Agent / MCP operations (after `use_category('timeline')`):**
+
+| Operation | Risk | Description |
+| --- | --- | --- |
+| `timeline.track.add` | SafeWrite | Add a track to a `.playable` asset. Pass `{"assetPath":"...","type":"animation","name":"My Track"}`. Types: `animation\|audio\|activation\|control\|group`. |
+| `timeline.clip.add` | SafeWrite | Add a clip with semantic placement. Pass `{"assetPath":"...","trackName":"...","clipName":"...","duration":1.0,"placement":{"directive":"end"}}`. Directives: `start\|end\|after\|with\|at`. For `after`/`with` add `"ref":"OtherClip"`; for `at` add `"time":1.5`. |
+| `timeline.clip.ease` | SafeWrite | Apply CSS-style easing to mix-in/mix-out blend curves. Pass `{"assetPath":"...","trackName":"...","clipName":"...","mixIn":"ease-out","mixOut":"ease-in"}`. Values: `linear\|ease-in\|ease-out\|ease-in-out\|step`. |
+| `timeline.clip.preset` | SafeWrite | Generate and assign a procedural `AnimationClip` preset. Pass `{"assetPath":"...","trackName":"...","clipName":"...","preset":"scale-in"}`. Presets: `scale-in\|scale-out\|fade-in\|fade-out\|bounce-in`. Clips cached at `Assets/.unifocl/Presets/`. |
+| `timeline.bind` | SafeWrite | Bind a track to a scene object via `PlayableDirector.SetGenericBinding`. Pass `{"directorPath":"Director","trackName":"My Track","targetScenePath":"Player"}`. AnimationTracks auto-resolve to the `Animator` component when present. |
+
+**Placement directives for `timeline.clip.add`:**
+
+| Directive | Meaning |
+| --- | --- |
+| `start` | Position clip at time 0 on the track |
+| `end` | Append after the last existing clip (default) |
+| `after` | Start immediately after the clip named in `"ref"` |
+| `with` | Start at the same time as the clip named in `"ref"` |
+| `at` | Use the absolute time (seconds) given in `"time"` |
+
+**Important:** Requires `com.unity.timeline` to be installed. Operations return a descriptive error if the package is absent.
+
+## 8. Asset Describe (Local Vision)
 
 The `asset.describe` command lets agents "see" Unity assets without burning tokens on multimodal vision. It exports a thumbnail from the Unity Editor and runs a local BLIP or CLIP model to produce a compact text description.
 
@@ -417,7 +453,7 @@ The `asset.describe` command lets agents "see" Unity assets without burning toke
 
 **Dry-run:** Returns a pre-flight check (asset existence, `uv`/`python3` availability, model cache status, estimated download size) without exporting a thumbnail or running inference.
 
-## 8. Safe Mutation: Dry-Run Previews
+## 9. Safe Mutation: Dry-Run Previews
 
 Both human operators and AI agents can validate mutations safely before execution. `--dry-run` is supported for mutation commands in all interactive and agentic modes:
 
@@ -450,7 +486,7 @@ rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
 
-## 9. Dynamic C# Eval
+## 10. Dynamic C# Eval
 
 The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities — all without creating script files.
 
@@ -537,7 +573,7 @@ The reflection serializer is depth-limited (max 8 levels) to safely handle cycli
 - `--dry-run` wraps execution in the same Undo-group sandbox used by custom `[UnifoclCommand]` tools. All Unity Undo-tracked changes (component edits, hierarchy modifications, scene state) are captured in an Undo group and reverted immediately after execution. `System.IO` writes are **not** reverted — this is a documented and intentional limitation shared with all dry-run paths in unifocl.
 - The `--timeout` flag provides a hard cancellation boundary. If eval code exceeds the timeout, the `CancellationToken` is triggered and execution is interrupted.
 
-## 10. Human Interface: TUI & Keybindings
+## 11. Human Interface: TUI & Keybindings
 
 For developers using the interactive CLI, unifocl features a composer with Intellisense and keyboard-driven navigation.
 
@@ -563,7 +599,7 @@ Once focused (`F7`), the arrow keys and tab behave contextually:
 | **`Shift+Tab`** | Collapse selected node | Move to parent folder | Back to component list |
 | **Exit Focus** | `Esc` or `F7` | `Esc` or `F7` | `Esc` or `F7` |
 
-## 11. Project Validation
+## 12. Project Validation
 
 The `/validate` command family runs project health checks and produces structured diagnostics. Each validator returns a uniform `ValidateResult` envelope with severity-tagged findings (`Error`, `Warning`, `Info`), error codes, and fixability hints.
 
@@ -598,7 +634,7 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
-## 12. Build Workflow
+## 13. Build Workflow
 
 The build workflow commands extend `/build` with pre-build validation, post-build introspection, and a unified report surface. Build reports are automatically captured after every build via a `IPostprocessBuildWithReport` hook and stored at `Library/unifocl-last-build-report.json`.
 
@@ -627,7 +663,7 @@ ExecV2 operations (all `SafeRead` — no approval required):
 
 Full reference: [`validate-build-workflow.md`](validate-build-workflow.md)
 
-## 13. Test Orchestration
+## 14. Test Orchestration
 
 The `test` commands run Unity's built-in test runner as a **direct subprocess** — no daemon, no running editor required. This makes them safe to call from CI, parallel agent sessions, or any headless environment.
 
@@ -679,7 +715,7 @@ ExecV2 operations: `test.list` (`SafeRead`), `test.run` (`PrivilegedExec` — re
 
 Full reference: [`test-orchestration.md`](test-orchestration.md)
 
-## 14. Project Diagnostics
+## 15. Project Diagnostics
 
 The `diag` command family provides read-only structural introspection of the project — assembly topology, define symbols, and asset dependency trees. Unlike `/validate`, `diag` commands are data dumps rather than pass/fail checks.
 
@@ -731,7 +767,7 @@ What this command does:
 
 Local artifacts are intentionally uncommitted (`local.config.json`, `.local/`).
 
-## 15. Runtime Operations
+## 16. Runtime Operations
 
 Runtime operations allow you to control, query, and observe running Unity player instances (Editor PlayMode, standalone builds, device builds) through the same CLI/MCP interface used for editor operations.
 

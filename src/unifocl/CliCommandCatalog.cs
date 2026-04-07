@@ -205,6 +205,14 @@ internal static class CliCommandCatalog
             new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
 
+            // ── timeline ─────────────────────────────────────────────
+            new("/timeline <track|clip|bind> ...", "Unity Timeline authoring commands (requires com.unity.timeline package)", "/timeline", "timeline"),
+            new("/timeline track add --asset <path> --type <animation|audio|activation|control|group> [--name <n>]", "Add a track to a TimelineAsset (SafeWrite)", "/timeline track add", "timeline"),
+            new("/timeline clip add --asset <path> --track <n> --name <n> [--placement <directive>] [--ref <n>] [--at <t>] [--duration <s>]", "Add a clip with semantic placement — no raw time needed (SafeWrite)", "/timeline clip add", "timeline"),
+            new("/timeline clip ease --asset <path> --track <n> --clip <n> [--mix-in <easing>] [--mix-out <easing>]", "Apply CSS-style easing to clip blend curves (SafeWrite)", "/timeline clip ease", "timeline"),
+            new("/timeline clip preset --asset <path> --track <n> --clip <n> --preset <name>", "Assign a procedural motion preset AnimationClip (SafeWrite)", "/timeline clip preset", "timeline"),
+            new("/timeline bind --director <path> --track <n> --target <path>", "Bind a track on a PlayableDirector to a scene object (SafeWrite)", "/timeline bind", "timeline"),
+
             // ── recorder ─────────────────────────────────────────────
             new("/recorder <start|stop|status|config|switch|snapshot>", "Unity Recorder capture commands (requires com.unity.recorder package, except snapshot)", "/recorder", "recorder"),
             new("/recorder start [--profile <name>]", "Start a Recorder capture session under the named profile (default: current). Errors if none configured (PrivilegedExec)", "/recorder start", "recorder"),
@@ -378,6 +386,13 @@ internal static class CliCommandCatalog
 
             // ── time ─────────────────────────────────────────────────────
             new("time scale <float>", "Set Time.timeScale (e.g., 0.1 for slow motion)", "time scale", "time"),
+
+            // ── timeline ─────────────────────────────────────────────────
+            new("timeline track add --asset <path> --type <animation|audio|activation|control|group> [--name <n>]", "Add a track to a TimelineAsset (SafeWrite)", "timeline track add", "timeline"),
+            new("timeline clip add --asset <path> --track <n> --name <n> [--placement <directive>] [--ref <n>] [--at <t>] [--duration <s>]", "Add a clip with semantic placement (SafeWrite)", "timeline clip add", "timeline"),
+            new("timeline clip ease --asset <path> --track <n> --clip <n> [--mix-in <easing>] [--mix-out <easing>]", "Apply CSS-style easing to clip blend curves (SafeWrite)", "timeline clip ease", "timeline"),
+            new("timeline clip preset --asset <path> --track <n> --clip <n> --preset <name>", "Assign a procedural motion preset AnimationClip (SafeWrite)", "timeline clip preset", "timeline"),
+            new("timeline bind --director <path> --track <n> --target <path>", "Bind a track on a PlayableDirector to a scene object (SafeWrite)", "timeline bind", "timeline"),
 
             // ── recorder ─────────────────────────────────────────────────
             new("recorder start [--profile <name>]", "Start a Recorder capture session (default: current profile)", "recorder start", "recorder"),

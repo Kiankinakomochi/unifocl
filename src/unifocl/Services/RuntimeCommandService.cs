@@ -482,6 +482,139 @@ internal sealed class RuntimeCommandService
         await DispatchCustomToolAsync(session, toolName, argsJson, "recorder", log);
     }
 
+    // ── Timeline ─────────────────────────────────────────────────────────
+
+    public async Task HandleTimelineCommandAsync(
+        string input, CliSessionState session, Action<string> log)
+    {
+        if (!RequireProject(session, log, "timeline")) return;
+
+        var tokens = Tokenize(input);
+        if (tokens.Count < 2)
+        {
+            log("[x] usage: /timeline <track|clip|bind> [subcommand] [options]");
+            return;
+        }
+
+        var sub1 = tokens[1].ToLowerInvariant();
+        var sub2 = tokens.Count > 2 ? tokens[2].ToLowerInvariant() : string.Empty;
+        string toolName;
+        string argsJson;
+
+        switch (sub1)
+        {
+            case "track":
+            {
+                switch (sub2)
+                {
+                    case "add":
+                    {
+                        var assetPath = ParseStringArg(tokens, "--asset");
+                        var type      = ParseStringArg(tokens, "--type");
+                        var name      = ParseStringArg(tokens, "--name") ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(type))
+                        {
+                            log("[x] usage: /timeline track add --asset <path> --type <animation|audio|activation|control|group> [--name <name>]");
+                            return;
+                        }
+                        toolName = "timeline.track.add";
+                        argsJson = JsonSerializer.Serialize(new { assetPath, type, name });
+                        break;
+                    }
+                    default:
+                        log($"[x] unknown timeline track subcommand: {Markup.Escape(sub2)} — expected: add");
+                        return;
+                }
+                break;
+            }
+            case "clip":
+            {
+                switch (sub2)
+                {
+                    case "add":
+                    {
+                        var assetPath = ParseStringArg(tokens, "--asset");
+                        var trackName = ParseStringArg(tokens, "--track");
+                        var clipName  = ParseStringArg(tokens, "--name");
+                        var placementDirective = ParseStringArg(tokens, "--placement") ?? "end";
+                        var placementRef       = ParseStringArg(tokens, "--ref") ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(trackName) || string.IsNullOrWhiteSpace(clipName))
+                        {
+                            log("[x] usage: /timeline clip add --asset <path> --track <name> --name <clip> [--placement <start|end|after|with|at>] [--ref <clip>] [--at <time>] [--duration <s>]");
+                            return;
+                        }
+                        var placementTime = ParseDoubleArg(tokens, "--at",       0.0);
+                        var duration      = ParseDoubleArg(tokens, "--duration", 1.0);
+                        toolName = "timeline.clip.add";
+                        argsJson = JsonSerializer.Serialize(new
+                        {
+                            assetPath,
+                            trackName,
+                            clipName,
+                            duration,
+                            placement = new { directive = placementDirective, reference = placementRef, time = placementTime }
+                        });
+                        break;
+                    }
+                    case "ease":
+                    {
+                        var assetPath = ParseStringArg(tokens, "--asset");
+                        var trackName = ParseStringArg(tokens, "--track");
+                        var clipName  = ParseStringArg(tokens, "--clip");
+                        var mixIn     = ParseStringArg(tokens, "--mix-in")  ?? string.Empty;
+                        var mixOut    = ParseStringArg(tokens, "--mix-out") ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(trackName) || string.IsNullOrWhiteSpace(clipName))
+                        {
+                            log("[x] usage: /timeline clip ease --asset <path> --track <name> --clip <name> [--mix-in <easing>] [--mix-out <easing>]");
+                            return;
+                        }
+                        toolName = "timeline.clip.ease";
+                        argsJson = JsonSerializer.Serialize(new { assetPath, trackName, clipName, mixIn, mixOut });
+                        break;
+                    }
+                    case "preset":
+                    {
+                        var assetPath = ParseStringArg(tokens, "--asset");
+                        var trackName = ParseStringArg(tokens, "--track");
+                        var clipName  = ParseStringArg(tokens, "--clip");
+                        var preset    = ParseStringArg(tokens, "--preset");
+                        if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(trackName) || string.IsNullOrWhiteSpace(clipName) || string.IsNullOrWhiteSpace(preset))
+                        {
+                            log("[x] usage: /timeline clip preset --asset <path> --track <name> --clip <name> --preset <scale-in|scale-out|fade-in|fade-out|bounce-in>");
+                            return;
+                        }
+                        toolName = "timeline.clip.preset";
+                        argsJson = JsonSerializer.Serialize(new { assetPath, trackName, clipName, preset });
+                        break;
+                    }
+                    default:
+                        log($"[x] unknown timeline clip subcommand: {Markup.Escape(sub2)} — expected: add, ease, preset");
+                        return;
+                }
+                break;
+            }
+            case "bind":
+            {
+                var directorPath    = ParseStringArg(tokens, "--director");
+                var trackName       = ParseStringArg(tokens, "--track");
+                var targetScenePath = ParseStringArg(tokens, "--target");
+                if (string.IsNullOrWhiteSpace(directorPath) || string.IsNullOrWhiteSpace(trackName) || string.IsNullOrWhiteSpace(targetScenePath))
+                {
+                    log("[x] usage: /timeline bind --director <path> --track <name> --target <path>");
+                    return;
+                }
+                toolName = "timeline.bind";
+                argsJson = JsonSerializer.Serialize(new { directorPath, trackName, targetScenePath });
+                break;
+            }
+            default:
+                log($"[x] unknown timeline subcommand: {Markup.Escape(sub1)} — expected: track, clip, bind");
+                return;
+        }
+
+        await DispatchCustomToolAsync(session, toolName, argsJson, "timeline", log);
+    }
+
     // ── Dispatch: project command (console, playmode, time, compile) ────
 
     private async Task DispatchProjectCommandAsync(
@@ -702,5 +835,15 @@ internal sealed class RuntimeCommandService
                 return tokens[i + 1];
         }
         return null;
+    }
+
+    private static double ParseDoubleArg(List<string> tokens, string flag, double defaultValue)
+    {
+        var raw = ParseStringArg(tokens, flag);
+        return raw is not null
+            && double.TryParse(raw, System.Globalization.NumberStyles.Any,
+                               System.Globalization.CultureInfo.InvariantCulture, out var v)
+            ? v
+            : defaultValue;
     }
 }

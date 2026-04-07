@@ -782,6 +782,15 @@ try
             continue;
         }
 
+        if (matched.Trigger.StartsWith("/timeline", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleTimelineCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
         if (matched.Trigger is "/keybinds" or "/shortcuts")
         {
             CliLogService.WriteKeybindsHelp(streamLog, session);
