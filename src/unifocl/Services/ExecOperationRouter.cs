@@ -124,6 +124,12 @@ internal sealed class ExecOperationRouter
                 .ConfigureAwait(false);
         }
 
+        // project.clone provisions an isolated copy of a Unity project — no daemon required.
+        if (request.Operation.Equals("project.clone", StringComparison.OrdinalIgnoreCase))
+        {
+            return DispatchProjectClone(request);
+        }
+
         return Dispatch(request, intent.DryRun, projectBridge);
     }
 
@@ -440,6 +446,42 @@ internal sealed class ExecOperationRouter
     private static ExecV2Response Rejected(string requestId, string message)
         => new(ExecV2Status.Rejected, requestId, Message: message);
 
+    private static ExecV2Response DispatchProjectClone(ExecV2Request request)
+    {
+        var sourcePath  = GetString(request.Args, "sourcePath");
+        var destPath    = GetString(request.Args, "destPath");
+        var seedLibrary = GetBool(request.Args, "seedLibrary", defaultValue: true);
+
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return Rejected(request.RequestId, "project.clone: args.sourcePath is required");
+        }
+
+        if (string.IsNullOrWhiteSpace(destPath))
+        {
+            return Rejected(request.RequestId, "project.clone: args.destPath is required");
+        }
+
+        var result = ProjectCloneService.Clone(sourcePath, destPath, seedLibrary);
+
+        if (!result.Ok)
+        {
+            return new ExecV2Response(ExecV2Status.Failed, request.RequestId, Message: result.Message);
+        }
+
+        return new ExecV2Response(
+            ExecV2Status.Completed,
+            request.RequestId,
+            Message: result.Message,
+            Result: new
+            {
+                clonedPath       = result.ClonedPath,
+                libraryCopied    = result.LibraryCopied,
+                totalBytesCopied = result.TotalBytesCopied,
+                hint             = $"open the isolated project with: /open {result.ClonedPath}"
+            });
+    }
+
     private static string? GetString(JsonElement? element, string key)
     {
         if (element is null || element.Value.ValueKind != JsonValueKind.Object)
@@ -450,5 +492,25 @@ internal sealed class ExecOperationRouter
         return element.Value.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String
             ? prop.GetString()
             : null;
+    }
+
+    private static bool GetBool(JsonElement? element, string key, bool defaultValue = false)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return defaultValue;
+        }
+
+        if (!element.Value.TryGetProperty(key, out var prop))
+        {
+            return defaultValue;
+        }
+
+        return prop.ValueKind switch
+        {
+            JsonValueKind.True  => true,
+            JsonValueKind.False => false,
+            _                   => defaultValue
+        };
     }
 }

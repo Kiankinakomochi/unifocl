@@ -71,6 +71,51 @@ internal static class AgenticStatePersistenceService
         }
     }
 
+    /// <summary>
+    /// Scans persisted session snapshots to find which session seed currently owns a daemon
+    /// port. Returns the owner's session seed, or null if no live session claims the port.
+    /// </summary>
+    public static string? FindSessionSeedByPort(int port)
+    {
+        var sessionsDir = Path.Combine(ResolveRuntimeRoot(), "sessions");
+        if (!Directory.Exists(sessionsDir))
+        {
+            return null;
+        }
+
+        string? bestSeed  = null;
+        var     bestMtime = DateTime.MinValue;
+
+        lock (IoSync)
+        {
+            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.json"))
+            {
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    var snapshot = JsonSerializer.Deserialize<AgenticSessionSnapshot>(json, JsonOptions);
+                    if (snapshot?.AttachedPort == port)
+                    {
+                        // When multiple snapshots share the same port (possible after historical
+                        // daemon-stealing), prefer the most recently written one.
+                        var mtime = File.GetLastWriteTimeUtc(file);
+                        if (mtime > bestMtime)
+                        {
+                            bestMtime = mtime;
+                            bestSeed  = snapshot.SessionSeed;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore malformed snapshot files.
+                }
+            }
+        }
+
+        return bestSeed;
+    }
+
     public static AgenticRequestStatusSnapshot? TryReadRequestStatus(string requestId)
     {
         var path = ResolveRequestPath(requestId);
@@ -250,7 +295,12 @@ internal static class AgenticStatePersistenceService
 
     private static string ResolveRuntimeRoot()
     {
-        return Path.Combine(Environment.CurrentDirectory, ".unifocl-runtime", "agentic");
+        // Use a stable per-user location so that all CLI invocations — regardless of
+        // working directory — share the same session-snapshot store. Using CWD caused
+        // agents invoked from different directories to miss each other's snapshots and
+        // silently bypass the per-agent daemon-ownership check.
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Path.Combine(home, ".unifocl-runtime", "agentic");
     }
 
     private static string ResolveSessionPath(string sessionSeed)

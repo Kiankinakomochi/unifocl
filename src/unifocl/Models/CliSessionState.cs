@@ -21,6 +21,12 @@ internal sealed class CliSessionState
     /// the daemon port for this session.
     /// </summary>
     public string? SessionId { get; set; }
+    /// <summary>
+    /// Agentic session seed (from --session-seed). Non-null only in one-shot agentic mode.
+    /// Used to enforce per-agent daemon ownership: a running daemon bound to a different seed
+    /// cannot be stolen by a new agent opening the same project path.
+    /// </summary>
+    public string? SessionSeed { get; set; }
     public string? CurrentProjectPath { get; set; }
     public DateTimeOffset? LastOpenedUtc { get; set; }
     public string FocusPath { get; set; } = "/Player";
@@ -40,6 +46,7 @@ internal sealed class CliSessionState
         Mode = CliMode.Boot;
         ContextMode = CliContextMode.None;
         SessionId = null;
+        SessionSeed = null;
         CurrentProjectPath = null;
         LastOpenedUtc = null;
         FocusPath = "/Player";

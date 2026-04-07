@@ -23,6 +23,8 @@ internal sealed class ExecCommandRegistry
         ["asset.get"]           = ExecRiskLevel.SafeRead,
         ["asset.set"]           = ExecRiskLevel.SafeWrite,
         ["asset.refresh"]       = ExecRiskLevel.SafeWrite,
+        // project operations
+        ["project.clone"]       = ExecRiskLevel.PrivilegedExec,
         // build operations
         ["build.run"]           = ExecRiskLevel.PrivilegedExec,
         ["build.exec"]          = ExecRiskLevel.PrivilegedExec,
