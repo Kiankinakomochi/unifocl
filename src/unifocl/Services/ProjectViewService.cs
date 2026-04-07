@@ -238,6 +238,13 @@ internal sealed partial class ProjectViewService
             await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
             handled = await HandleRuntimeCommandAsync(tokens, session, outputs);
         }
+        else if (tokens.Count >= 2
+                 && tokens[0].Equals("project", StringComparison.OrdinalIgnoreCase)
+                 && tokens[1].Equals("clone", StringComparison.OrdinalIgnoreCase))
+        {
+            // project clone does not need a running daemon — pure filesystem operation
+            handled = HandleProjectCloneCommand(tokens, outputs);
+        }
 
         if (!handled)
         {

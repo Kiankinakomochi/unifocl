@@ -38,6 +38,7 @@ internal static class CliCommandCatalog
             // ── setup ─────────────────────────────────────────────────────
             new("/new <project-name> [unity-version] [--allow-unsafe]", "Bootstrap a new Unity project", "/new", "setup"),
             new("/clone <git-url> [--allow-unsafe]", "Clone repo and set local CLI bridge config", "/clone", "setup"),
+            new("/project clone <source-path> <dest-path> [--no-library]", "Clone a Unity project to an isolated path for parallel agent use (PrivilegedExec — requires approval)", "/project clone", "setup"),
             new("/recent [idx|prune] [--allow-unsafe] [--prune]", "List recent projects, open by index, or prune missing/stale entries", "/recent", "setup"),
             new("/init [path-to-project]", "Generate local bridge config and install editor-side CLI bridge dependencies", "/init", "setup"),
             new("/doctor", "Run diagnostics for environment and tooling", "/doctor", "setup"),
@@ -311,6 +312,7 @@ internal static class CliCommandCatalog
             new("asset duplicate <idx|name> [new-path]", "Duplicate an asset in project mode", "asset duplicate"),
 
             // ── build ─────────────────────────────────────────────────────
+            new("project clone <source-path> <dest-path> [--no-library]", "Clone a Unity project to an isolated path for parallel agent use (PrivilegedExec — requires approval)", "project clone", "setup"),
             new("build run [target] [--dev] [--debug] [--clean] [--path <output-path>]", "Run Unity build for target", "build run", "build"),
             new("build exec <Method>", "Execute static build method", "build exec", "build"),
             new("build scenes", "Open interactive scene build-settings TUI", "build scenes", "build"),

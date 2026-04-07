@@ -695,8 +695,9 @@ internal sealed partial class ProjectLifecycleService
                     && !string.Equals(ownerSeed, session.SessionSeed, StringComparison.Ordinal))
                 {
                     log($"[red]error[/]: project is already open in another agent session ({Markup.Escape(ownerSeed)})");
-                    log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated worktree before opening");
-                    log($"[yellow]hint[/]: use [white]agent-worktree.sh provision --seed-library[/] to clone with pre-compiled Library cache");
+                    log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated path before opening");
+                    log($"[yellow]hint[/]: use the [white]project.clone[/] ExecV2 operation to create an isolated copy with a seeded Library cache, then open the cloned path");
+                    log($"[yellow]example[/]: {{\"operation\":\"project.clone\",\"args\":{{\"sourcePath\":\"{Markup.Escape(projectPath)}\",\"destPath\":\"<new-path>\"}}}}");
                     return false;
                 }
             }
@@ -720,8 +721,9 @@ internal sealed partial class ProjectLifecycleService
         catch (IOException)
         {
             log($"[red]error[/]: another process is already opening this project");
-            log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated worktree before opening");
-            log($"[yellow]hint[/]: use [white]agent-worktree.sh provision --seed-library[/] to clone with pre-compiled Library cache");
+            log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated path before opening");
+            log($"[yellow]hint[/]: use the [white]project.clone[/] ExecV2 operation to create an isolated copy with a seeded Library cache, then open the cloned path");
+            log($"[yellow]example[/]: {{\"operation\":\"project.clone\",\"args\":{{\"sourcePath\":\"{Markup.Escape(projectPath)}\",\"destPath\":\"<new-path>\"}}}}");
             return false;
         }
 

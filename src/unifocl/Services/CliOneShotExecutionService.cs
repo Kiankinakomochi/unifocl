@@ -1008,6 +1008,24 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger.StartsWith("/project clone", StringComparison.Ordinal))
+        {
+            // Strip leading /project and rewrite as "project clone <args>" for ProjectViewService
+            var projectPayload = input.Length > "/project".Length
+                ? $"project {input["/project".Length..].Trim()}"
+                : "project";
+            await AwaitWithCancellationAsync(
+                () => projectCommandRouterService.TryHandleProjectCommandAsync(
+                    projectPayload,
+                    session,
+                    daemonControlService,
+                    daemonRuntime,
+                    line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+
+            return;
+        }
+
         if (matched.Trigger.StartsWith("/test", StringComparison.Ordinal))
         {
             // Strip leading /test and rewrite as "test <sub>" for the service
