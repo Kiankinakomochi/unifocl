@@ -4,6 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Kiankinakomochi/unifocl/main/scripts/install.sh | sh
 #   # or with a specific version:
 #   VERSION=2.3.0 curl -fsSL ... | sh
+#   # strict attestation verification (requires gh CLI):
+#   UNIFOCL_REQUIRE_ATTESTATION=1 curl -fsSL ... | sh
 
 set -e
 
@@ -39,12 +41,58 @@ if [ -z "${VERSION:-}" ]; then
 fi
 
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/unifocl-${VERSION}-${PLATFORM}.tar.gz"
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/unifocl-${VERSION}-checksums.txt"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 # ── Download ─────────────────────────────────────────────────────────────────
 echo "Downloading unifocl ${VERSION} (${PLATFORM})..."
 curl -fsSL --progress-bar "$URL" -o "$TMP/unifocl.tar.gz"
+curl -fsSL --progress-bar "$CHECKSUM_URL" -o "$TMP/checksums.txt"
+
+# ── Verify checksum (required) ──────────────────────────────────────────────
+EXPECTED_SHA=$(awk '/unifocl-'"${VERSION}"'-'"${PLATFORM}"'\.tar\.gz$/ {print $1}' "$TMP/checksums.txt" | head -n1)
+if [ -z "$EXPECTED_SHA" ]; then
+  echo "Failed to find checksum entry for unifocl-${VERSION}-${PLATFORM}.tar.gz"
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_SHA=$(sha256sum "$TMP/unifocl.tar.gz" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL_SHA=$(shasum -a 256 "$TMP/unifocl.tar.gz" | awk '{print $1}')
+else
+  echo "No SHA256 tool found (need sha256sum or shasum)."
+  exit 1
+fi
+
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  echo "Checksum verification failed."
+  echo "Expected: $EXPECTED_SHA"
+  echo "Actual:   $ACTUAL_SHA"
+  exit 1
+fi
+echo "Checksum verified."
+
+# ── Verify attestation (optional, strict via env) ──────────────────────────
+STRICT_ATTEST="${UNIFOCL_REQUIRE_ATTESTATION:-0}"
+if command -v gh >/dev/null 2>&1; then
+  if gh attestation verify "$TMP/unifocl.tar.gz" --repo "$REPO" >/dev/null 2>&1; then
+    echo "Attestation verified."
+  else
+    if [ "$STRICT_ATTEST" = "1" ]; then
+      echo "Attestation verification failed (strict mode)."
+      exit 1
+    fi
+    echo "Warning: attestation verification failed; continuing (non-strict mode)."
+  fi
+else
+  if [ "$STRICT_ATTEST" = "1" ]; then
+    echo "gh CLI is required when UNIFOCL_REQUIRE_ATTESTATION=1."
+    exit 1
+  fi
+  echo "Warning: gh CLI not found; skipping attestation verification."
+fi
 
 # ── Extract ──────────────────────────────────────────────────────────────────
 tar -xzf "$TMP/unifocl.tar.gz" -C "$TMP"

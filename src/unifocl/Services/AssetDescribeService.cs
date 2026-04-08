@@ -18,6 +18,7 @@ internal sealed class AssetDescribeService
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".unifocl", "scripts");
 
     private static readonly string ScriptPath = Path.Combine(ScriptDir, "describe_asset.py");
+    private static readonly string RequirementsPath = Path.Combine(ScriptDir, "describe_asset.requirements.txt");
 
     private static readonly string BlipModelCacheDir =
         Path.Combine(
@@ -193,7 +194,7 @@ internal sealed class AssetDescribeService
 
     private static void EnsureScriptExtracted()
     {
-        if (File.Exists(ScriptPath))
+        if (File.Exists(ScriptPath) && File.Exists(RequirementsPath))
         {
             // Check embedded resource version stamp.
             var stamp = ScriptPath + ".version";
@@ -207,15 +208,29 @@ internal sealed class AssetDescribeService
 
         Directory.CreateDirectory(ScriptDir);
 
-        using var stream = typeof(AssetDescribeService).Assembly
+        using var scriptStream = typeof(AssetDescribeService).Assembly
             .GetManifestResourceStream("Scripts/describe_asset.py");
-        if (stream is null)
+        if (scriptStream is null)
         {
             throw new InvalidOperationException("embedded describe_asset.py resource not found");
         }
 
-        using var fs = File.Create(ScriptPath);
-        stream.CopyTo(fs);
+        using (var fs = File.Create(ScriptPath))
+        {
+            scriptStream.CopyTo(fs);
+        }
+
+        using var requirementsStream = typeof(AssetDescribeService).Assembly
+            .GetManifestResourceStream("Scripts/describe_asset.requirements.txt");
+        if (requirementsStream is null)
+        {
+            throw new InvalidOperationException("embedded describe_asset.requirements.txt resource not found");
+        }
+
+        using (var fs = File.Create(RequirementsPath))
+        {
+            requirementsStream.CopyTo(fs);
+        }
 
         // Write version stamp.
         var version = typeof(AssetDescribeService).Assembly
@@ -229,7 +244,7 @@ internal sealed class AssetDescribeService
         var startInfo = new ProcessStartInfo
         {
             FileName = "uv",
-            Arguments = $"run --script \"{ScriptPath}\" --image \"{imagePath}\" --engine {engine} --output json",
+            Arguments = $"run --with-requirements \"{RequirementsPath}\" --script \"{ScriptPath}\" --image \"{imagePath}\" --engine {engine} --output json",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

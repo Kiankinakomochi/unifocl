@@ -186,6 +186,34 @@ try
         return;
     }
 
+    if (CliCommandParsingService.TryParseQuickLifecycleCommandText(launchArgs, out var quickLifecycleCommandText, out var quickLifecycleError))
+    {
+        if (!string.IsNullOrWhiteSpace(quickLifecycleError))
+        {
+            CliTheme.MarkupLine($"[red]{Markup.Escape(quickLifecycleError)}[/]");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        var matched = CliCommandParsingService.MatchCommand(quickLifecycleCommandText!, commands);
+        if (matched is null)
+        {
+            CliTheme.MarkupLine("[red]error[/]: internal command routing failed for quick lifecycle command");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        var handled = await projectLifecycleService.TryHandleLifecycleCommandAsync(
+            quickLifecycleCommandText!,
+            matched,
+            session,
+            daemonControlService,
+            daemonRuntime,
+            line => CliTheme.MarkupLine(line));
+        Environment.ExitCode = handled ? 0 : 2;
+        return;
+    }
+
     var validateCommandService = new ValidateCommandService();
     var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();

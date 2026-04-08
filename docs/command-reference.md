@@ -441,6 +441,7 @@ The `asset.describe` command lets agents "see" Unity assets without burning toke
 **Prerequisites:**
 
 - `python3` (>= 3.10) and `uv` — run `unifocl init` to install if missing
+- Script dependencies are hash-locked via requirements (`uv run --with-requirements`): `transformers==5.5.0`, `torch==2.11.0`, `Pillow==12.2.0`
 - First invocation downloads the model (~990 MB for BLIP, ~600 MB for CLIP); subsequent runs use the HuggingFace cache at `~/.cache/huggingface/`
 - Non-image assets (meshes, materials, prefabs) work if Unity can generate an `AssetPreview`; falls back to mini-thumbnail icon, then metadata-only
 
