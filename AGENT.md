@@ -64,6 +64,7 @@ The agent must treat the following as **non-negotiable principles**:
   Commit any resulting changes to `full-documentation.md` alongside the PR.
 - **Bridge Protocol Rule:** If a change requires users to re-run `/init` (for example editor payload/package content changes), bump `CliVersion.Protocol` and include `/init` re-run guidance in the task summary/PR description.
 - **Repository Rules:** Always branch from `main` before any actions and create PRs using `.github/pull_request_template.md` in English
+- **Commit Co-authorship Rule:** Every commit created with AI assistance must include a `Co-authored-by: OpenAI Codex <codex@openai.com>` trailer in the commit message.
 - **Mainline Sync Rule:** Before finalizing work (push/PR), merge latest `main` (or `origin/main`) to detect upstream leading changes early and resolve any conflicts before continuing
 - **Zero-Warning Builds:** Both CLI and compatcheck builds must produce **0 warnings**. Fix warnings by adding null guards, initializing fields, updating obsolete APIs, or adjusting signatures. Use `#pragma warning disable` only as a last resort with a justifying comment. Pre-existing or unrelated warnings in the build output are still your responsibility — fix them in the same branch. Nullable type annotations (`?`) are acceptable when a method genuinely returns null, but prefer non-nullable designs (field initializers, `?? default`, guards).
 - **Deployment:** NEVER deploy or publish artifacts without permission
