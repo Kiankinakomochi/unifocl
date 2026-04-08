@@ -142,7 +142,6 @@ jobs:
           dotnet publish src/unifocl/unifocl.csproj \
             -c Release \
             -r osx-arm64 \
-            --no-restore \
             --self-contained true \
             /p:PublishSingleFile=true \
             /p:PublishTrimmed=false \
@@ -152,7 +151,6 @@ jobs:
           dotnet publish src/unifocl/unifocl.csproj \
             -c Release \
             -r win-x64 \
-            --no-restore \
             --self-contained true \
             /p:PublishSingleFile=true \
             /p:PublishTrimmed=false \
