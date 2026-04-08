@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.13.0 - 2026-04-08
+### Added
+- Release artifacts now publish SHA256 checksum manifests and GitHub build provenance attestations.
+- Installers (`install.sh`, `install.ps1`) and `/update` now enforce checksum verification before install/update.
+- Optional attestation verification via `gh attestation verify` is supported in installers and `/update`.
+
+### Changed
+- Added strict attestation mode via `UNIFOCL_REQUIRE_ATTESTATION=1` (fails if verification cannot be completed).
+- `unifocl update` now has a quick startup path (like `--version`) and does not require full TUI boot.
+- Python asset-describe runtime dependencies are now hash-locked through a requirements lock file.
+
 ## 3.12.0 - 2026-04-07
 ### Added
 - `project.clone` ExecV2 operation (`PrivilegedExec`) — clones a Unity project to an isolated path, seeding the Library cache for fast startup. Agents blocked by `E_PROJECT_LOCKED` can now provision an isolated copy entirely via the MCP interface without needing the source-repo `agent-worktree.sh` script.
