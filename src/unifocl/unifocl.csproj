@@ -80,6 +80,7 @@
       <WithCulture>false</WithCulture>
     </EmbeddedResource>
     <EmbeddedResource Include="scripts/describe_asset.py" LogicalName="Scripts/describe_asset.py" />
+    <EmbeddedResource Include="scripts/describe_asset.requirements.txt" LogicalName="Scripts/describe_asset.requirements.txt" />
   </ItemGroup>
 
 </Project>

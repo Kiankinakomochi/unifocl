@@ -2,6 +2,34 @@ using System.Text;
 
 internal static class CliCommandParsingService
 {
+    public static bool TryParseQuickLifecycleCommandText(
+        string[] args,
+        out string? commandText,
+        out string? error)
+    {
+        commandText = null;
+        error = null;
+        if (args.Length == 0)
+        {
+            return false;
+        }
+
+        if (args[0].Equals("update", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("--update", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length > 1)
+            {
+                error = "usage: unifocl update";
+                return true;
+            }
+
+            commandText = "/update";
+            return true;
+        }
+
+        return false;
+    }
+
     public static bool TryParseAgentInstallCommandText(string[] args, out string? commandText, out string? error)
     {
         commandText = null;

@@ -186,6 +186,27 @@ try
         return;
     }
 
+    if (CliCommandParsingService.TryParseQuickLifecycleCommandText(launchArgs, out var quickLifecycleCommandText, out var quickLifecycleError))
+    {
+        if (!string.IsNullOrWhiteSpace(quickLifecycleError))
+        {
+            CliTheme.MarkupLine($"[red]{Markup.Escape(quickLifecycleError)}[/]");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        if (!string.Equals(quickLifecycleCommandText, "/update", StringComparison.Ordinal))
+        {
+            CliTheme.MarkupLine("[red]error[/]: unsupported quick lifecycle command");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        var succeeded = await projectLifecycleService.RunQuickUpdateAsync(line => CliTheme.MarkupLine(line));
+        Environment.ExitCode = succeeded ? 0 : 1;
+        return;
+    }
+
     var validateCommandService = new ValidateCommandService();
     var diagCommandService = new DiagCommandService();
     var testCommandService = new TestCommandService();

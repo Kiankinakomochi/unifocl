@@ -74,6 +74,21 @@ internal sealed partial class ProjectLifecycleService
         };
     }
 
+    public async Task<bool> RunQuickUpdateAsync(Action<string> log)
+    {
+        var hadError = false;
+        await HandleUpdateAsync(line =>
+        {
+            log(line);
+            if (line.Contains("[red]error[/]", StringComparison.OrdinalIgnoreCase))
+            {
+                hadError = true;
+            }
+        });
+
+        return !hadError;
+    }
+
     public async Task<bool> TryHandleRecentSelectionToggleAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,
@@ -1663,6 +1678,36 @@ internal sealed partial class ProjectLifecycleService
     private sealed record ReleaseInfo(string TagName, List<ReleaseAsset> Assets);
 
     private sealed record ReleaseAsset(string Name, string DownloadUrl);
+
+    private sealed record TextFetchResult(bool Ok, string Error, string? Content)
+    {
+        public static TextFetchResult Success(string content)
+            => new(true, string.Empty, content);
+
+        public static TextFetchResult Fail(string error)
+            => new(false, string.IsNullOrWhiteSpace(error) ? "unknown error" : error, null);
+    }
+
+    private sealed record AssetIntegrityResult(bool Ok, string Error, string? Sha256)
+    {
+        public static AssetIntegrityResult Success(string sha256)
+            => new(true, string.Empty, sha256);
+
+        public static AssetIntegrityResult Fail(string error)
+            => new(false, string.IsNullOrWhiteSpace(error) ? "unknown error" : error, null);
+    }
+
+    private sealed record AttestationVerificationResult(bool Ok, bool Skipped, string Message)
+    {
+        public static AttestationVerificationResult Success()
+            => new(true, false, "verified");
+
+        public static AttestationVerificationResult Skip(string message)
+            => new(true, true, string.IsNullOrWhiteSpace(message) ? "skipped" : message);
+
+        public static AttestationVerificationResult Fail(string message)
+            => new(false, false, string.IsNullOrWhiteSpace(message) ? "verification failed" : message);
+    }
 
     private sealed record ReleaseFetchResult(bool Ok, string Error, ReleaseInfo? Release)
     {

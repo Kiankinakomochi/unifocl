@@ -209,6 +209,31 @@ internal sealed partial class ProjectLifecycleService
             return true;
         }
 
+        var checksumResult = await VerifyReleaseAssetChecksumAsync(release, releaseVersion, asset.Name, archivePath);
+        if (!checksumResult.Ok)
+        {
+            log($"[red]error[/]: checksum verification failed ({Markup.Escape(checksumResult.Error)})");
+            return true;
+        }
+
+        log($"[green]update[/]: checksum verified (sha256={Markup.Escape(checksumResult.Sha256 ?? "unknown")})");
+
+        var attestationResult = await VerifyReleaseAssetAttestationAsync(archivePath);
+        if (!attestationResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(attestationResult.Message)}");
+            return true;
+        }
+
+        if (attestationResult.Skipped)
+        {
+            log($"[yellow]update[/]: {Markup.Escape(attestationResult.Message)}");
+        }
+        else
+        {
+            log("[green]update[/]: artifact attestation verified");
+        }
+
         var extractResult = await ExtractReleaseArchiveAsync(archivePath, extractDirectory, platformSpec.ArchiveType);
         if (!extractResult.Ok)
         {
@@ -351,6 +376,31 @@ internal sealed partial class ProjectLifecycleService
         {
             log($"[red]error[/]: failed to download release asset ({Markup.Escape(downloadResult.Error)})");
             return true;
+        }
+
+        var checksumResult = await VerifyReleaseAssetChecksumAsync(release, releaseVersion, asset.Name, archivePath);
+        if (!checksumResult.Ok)
+        {
+            log($"[red]error[/]: checksum verification failed ({Markup.Escape(checksumResult.Error)})");
+            return true;
+        }
+
+        log($"[green]update[/]: checksum verified (sha256={Markup.Escape(checksumResult.Sha256 ?? "unknown")})");
+
+        var attestationResult = await VerifyReleaseAssetAttestationAsync(archivePath);
+        if (!attestationResult.Ok)
+        {
+            log($"[red]error[/]: {Markup.Escape(attestationResult.Message)}");
+            return true;
+        }
+
+        if (attestationResult.Skipped)
+        {
+            log($"[yellow]update[/]: {Markup.Escape(attestationResult.Message)}");
+        }
+        else
+        {
+            log("[green]update[/]: artifact attestation verified");
         }
 
         var extractResult = await ExtractReleaseArchiveAsync(archivePath, extractDirectory, platformSpec.ArchiveType);

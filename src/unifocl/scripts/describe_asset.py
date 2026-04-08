@@ -1,10 +1,5 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = [
-#     "transformers>=4.35",
-#     "torch",
-#     "Pillow",
-# ]
 # ///
 """Describe a Unity asset thumbnail using a local vision-language model.
 

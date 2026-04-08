@@ -4,6 +4,7 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -169,6 +170,142 @@ internal sealed partial class ProjectLifecycleService
         {
             return OperationResult.Fail(ex.Message);
         }
+    }
+
+    private static async Task<AssetIntegrityResult> VerifyReleaseAssetChecksumAsync(
+        ReleaseInfo release,
+        string releaseVersion,
+        string assetName,
+        string assetPath)
+    {
+        try
+        {
+            var checksumAsset = ResolveChecksumsAsset(release, releaseVersion);
+            if (checksumAsset is null)
+            {
+                return AssetIntegrityResult.Fail("release checksums asset not found");
+            }
+
+            var checksumFetchResult = await DownloadReleaseAssetTextAsync(checksumAsset.DownloadUrl);
+            if (!checksumFetchResult.Ok || string.IsNullOrWhiteSpace(checksumFetchResult.Content))
+            {
+                return AssetIntegrityResult.Fail($"failed to download checksums ({checksumFetchResult.Error})");
+            }
+
+            if (!TryFindExpectedSha256(checksumFetchResult.Content!, assetName, out var expectedHash))
+            {
+                return AssetIntegrityResult.Fail($"checksums file does not include {assetName}");
+            }
+
+            var actualHash = ComputeSha256Hex(assetPath);
+            if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return AssetIntegrityResult.Fail($"sha256 mismatch for {assetName}");
+            }
+
+            return AssetIntegrityResult.Success(actualHash);
+        }
+        catch (Exception ex)
+        {
+            return AssetIntegrityResult.Fail(ex.Message);
+        }
+    }
+
+    private static async Task<AttestationVerificationResult> VerifyReleaseAssetAttestationAsync(string assetPath)
+    {
+        var strict = string.Equals(
+            Environment.GetEnvironmentVariable("UNIFOCL_REQUIRE_ATTESTATION"),
+            "1",
+            StringComparison.Ordinal);
+
+        var ghVersion = await RunProcessAsync("gh", "--version", Directory.GetCurrentDirectory(), TimeSpan.FromSeconds(5));
+        if (ghVersion.ExitCode != 0)
+        {
+            var summary = SummarizeProcessError(ghVersion);
+            if (strict)
+            {
+                return AttestationVerificationResult.Fail(
+                    $"gh CLI is required because UNIFOCL_REQUIRE_ATTESTATION=1 is set: {summary}");
+            }
+
+            return AttestationVerificationResult.Skip(
+                $"gh CLI not found or unavailable; attestation check skipped: {summary}");
+        }
+
+        var args = $"attestation verify \"{assetPath}\" --repo {GitHubReleaseOwner}/{GitHubReleaseRepository}";
+        var verifyResult = await RunProcessAsync("gh", args, Directory.GetCurrentDirectory(), TimeSpan.FromSeconds(45));
+        if (verifyResult.ExitCode == 0)
+        {
+            return AttestationVerificationResult.Success();
+        }
+
+        var verifySummary = SummarizeProcessError(verifyResult);
+        if (strict)
+        {
+            return AttestationVerificationResult.Fail($"attestation verify failed: {verifySummary}");
+        }
+
+        return AttestationVerificationResult.Skip($"attestation verify failed (non-strict): {verifySummary}");
+    }
+
+    private static ReleaseAsset? ResolveChecksumsAsset(ReleaseInfo release, string releaseVersion)
+    {
+        var preferredName = $"unifocl-{releaseVersion}-checksums.txt";
+        return release.Assets.FirstOrDefault(a =>
+                   string.Equals(a.Name, preferredName, StringComparison.OrdinalIgnoreCase))
+               ?? release.Assets.FirstOrDefault(a =>
+                   a.Name.EndsWith("-checksums.txt", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<TextFetchResult> DownloadReleaseAssetTextAsync(string downloadUrl)
+    {
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(CliUpdateDownloadTimeout);
+            using var response = await GitHubReleasesHttpClient.GetAsync(downloadUrl, timeoutCts.Token);
+            response.EnsureSuccessStatusCode();
+            var content = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+            return TextFetchResult.Success(content);
+        }
+        catch (Exception ex)
+        {
+            return TextFetchResult.Fail(ex.Message);
+        }
+    }
+
+    private static bool TryFindExpectedSha256(string checksumsContent, string assetName, out string hash)
+    {
+        hash = string.Empty;
+        var lines = checksumsContent.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var line in lines)
+        {
+            var match = Regex.Match(
+                line,
+                @"^(?<hash>[a-fA-F0-9]{64})\s+\*?(?<name>.+)$",
+                RegexOptions.CultureInvariant);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var candidateName = match.Groups["name"].Value.Trim();
+            if (!string.Equals(candidateName, assetName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            hash = match.Groups["hash"].Value.ToLowerInvariant();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string ComputeSha256Hex(string filePath)
+    {
+        using var stream = File.OpenRead(filePath);
+        var bytes = SHA256.HashData(stream);
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
     private static async Task<OperationResult> ExtractReleaseArchiveAsync(
