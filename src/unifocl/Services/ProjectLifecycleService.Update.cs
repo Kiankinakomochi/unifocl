@@ -221,12 +221,15 @@ internal sealed partial class ProjectLifecycleService
         var ghVersion = await RunProcessAsync("gh", "--version", Directory.GetCurrentDirectory(), TimeSpan.FromSeconds(5));
         if (ghVersion.ExitCode != 0)
         {
+            var summary = SummarizeProcessError(ghVersion);
             if (strict)
             {
-                return AttestationVerificationResult.Fail("gh CLI is required (set UNIFOCL_REQUIRE_ATTESTATION=1)");
+                return AttestationVerificationResult.Fail(
+                    $"gh CLI is required because UNIFOCL_REQUIRE_ATTESTATION=1 is set: {summary}");
             }
 
-            return AttestationVerificationResult.Skip("gh CLI not found; attestation check skipped");
+            return AttestationVerificationResult.Skip(
+                $"gh CLI not found or unavailable; attestation check skipped: {summary}");
         }
 
         var args = $"attestation verify \"{assetPath}\" --repo {GitHubReleaseOwner}/{GitHubReleaseRepository}";
@@ -236,13 +239,13 @@ internal sealed partial class ProjectLifecycleService
             return AttestationVerificationResult.Success();
         }
 
-        var summary = SummarizeProcessError(verifyResult);
+        var verifySummary = SummarizeProcessError(verifyResult);
         if (strict)
         {
-            return AttestationVerificationResult.Fail($"attestation verify failed: {summary}");
+            return AttestationVerificationResult.Fail($"attestation verify failed: {verifySummary}");
         }
 
-        return AttestationVerificationResult.Skip($"attestation verify failed (non-strict): {summary}");
+        return AttestationVerificationResult.Skip($"attestation verify failed (non-strict): {verifySummary}");
     }
 
     private static ReleaseAsset? ResolveChecksumsAsset(ReleaseInfo release, string releaseVersion)

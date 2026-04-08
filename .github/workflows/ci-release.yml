@@ -66,10 +66,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore (locked)
-        if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
-        run: dotnet restore src/unifocl/unifocl.csproj --locked-mode --disable-build-servers -v minimal
-
       - name: Resolve release version
         id: version
         shell: bash
@@ -120,6 +116,10 @@ jobs:
           echo "skip_reason=none" >> "$GITHUB_OUTPUT"
           echo "version=$semver" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Restore (locked)
+        if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
+        run: dotnet restore src/unifocl/unifocl.csproj --locked-mode --disable-build-servers -v minimal
 
       - name: Skip release notice
         if: steps.version.outputs.skip == 'true'

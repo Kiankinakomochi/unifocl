@@ -74,6 +74,21 @@ internal sealed partial class ProjectLifecycleService
         };
     }
 
+    public async Task<bool> RunQuickUpdateAsync(Action<string> log)
+    {
+        var hadError = false;
+        await HandleUpdateAsync(line =>
+        {
+            log(line);
+            if (line.Contains("[red]error[/]", StringComparison.OrdinalIgnoreCase))
+            {
+                hadError = true;
+            }
+        });
+
+        return !hadError;
+    }
+
     public async Task<bool> TryHandleRecentSelectionToggleAsync(
         CliSessionState session,
         DaemonControlService daemonControlService,

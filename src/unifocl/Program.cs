@@ -195,22 +195,15 @@ try
             return;
         }
 
-        var matched = CliCommandParsingService.MatchCommand(quickLifecycleCommandText!, commands);
-        if (matched is null)
+        if (!string.Equals(quickLifecycleCommandText, "/update", StringComparison.Ordinal))
         {
-            CliTheme.MarkupLine("[red]error[/]: internal command routing failed for quick lifecycle command");
+            CliTheme.MarkupLine("[red]error[/]: unsupported quick lifecycle command");
             Environment.ExitCode = 2;
             return;
         }
 
-        var handled = await projectLifecycleService.TryHandleLifecycleCommandAsync(
-            quickLifecycleCommandText!,
-            matched,
-            session,
-            daemonControlService,
-            daemonRuntime,
-            line => CliTheme.MarkupLine(line));
-        Environment.ExitCode = handled ? 0 : 2;
+        var succeeded = await projectLifecycleService.RunQuickUpdateAsync(line => CliTheme.MarkupLine(line));
+        Environment.ExitCode = succeeded ? 0 : 1;
         return;
     }
 
