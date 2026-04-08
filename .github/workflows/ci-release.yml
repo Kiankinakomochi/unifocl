@@ -120,8 +120,7 @@ jobs:
       - name: Restore (locked)
         if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
         run: |
-          dotnet restore src/unifocl/unifocl.csproj --locked-mode -r osx-arm64 --disable-build-servers -v minimal
-          dotnet restore src/unifocl/unifocl.csproj --locked-mode -r win-x64 --disable-build-servers -v minimal
+          dotnet restore src/unifocl/unifocl.csproj --locked-mode --disable-build-servers -v minimal
 
       - name: Skip release notice
         if: steps.version.outputs.skip == 'true'
@@ -142,6 +141,7 @@ jobs:
           dotnet publish src/unifocl/unifocl.csproj \
             -c Release \
             -r osx-arm64 \
+            --no-restore \
             --self-contained true \
             /p:PublishSingleFile=true \
             /p:PublishTrimmed=false \
@@ -151,6 +151,7 @@ jobs:
           dotnet publish src/unifocl/unifocl.csproj \
             -c Release \
             -r win-x64 \
+            --no-restore \
             --self-contained true \
             /p:PublishSingleFile=true \
             /p:PublishTrimmed=false \
