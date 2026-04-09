@@ -42,9 +42,11 @@ internal sealed partial class ProjectLifecycleService
             : "env (UNIFOCL_THEME)";
         var theme = ResolveEffectiveTheme(config);
         var staleDays = ResolveRecentPruneStaleDays(config);
+        var gitignore = ResolveGitignoreDisplayValue(config);
         log("[grey]config[/]: available settings");
         log($"[grey]config[/]: [white]theme[/] = [white]{theme}[/] [dim](dark|light, source: {source})[/]");
         log($"[grey]config[/]: [white]recent.staleDays[/] = [white]{staleDays}[/] [dim](days, default: {DefaultRecentPruneStaleDays})[/]");
+        log($"[grey]config[/]: [white]setup.gitignore[/] = [white]{gitignore}[/] [dim](auto|off|prompt, default: prompt)[/]");
         return Task.FromResult(true);
     }
 
@@ -52,15 +54,16 @@ internal sealed partial class ProjectLifecycleService
     {
         if (args.Count != 1)
         {
-            log("[red]error[/]: usage /config get <theme|recent.staleDays>");
+            log("[red]error[/]: usage /config get <theme|recent.staleDays|setup.gitignore>");
             return Task.FromResult(true);
         }
 
         var isThemeKey = IsThemeKey(args[0]);
         var isRecentStaleDaysKey = IsRecentStaleDaysKey(args[0]);
-        if (!isThemeKey && !isRecentStaleDaysKey)
+        var isGitignoreKey = IsGitignoreKey(args[0]);
+        if (!isThemeKey && !isRecentStaleDaysKey && !isGitignoreKey)
         {
-            log("[red]error[/]: supported keys are 'theme' and 'recent.staleDays'");
+            log("[red]error[/]: supported keys are 'theme', 'recent.staleDays', and 'setup.gitignore'");
             return Task.FromResult(true);
         }
 
@@ -78,6 +81,13 @@ internal sealed partial class ProjectLifecycleService
             return Task.FromResult(true);
         }
 
+        if (isGitignoreKey)
+        {
+            var gitignore = ResolveGitignoreDisplayValue(config);
+            log($"[grey]config[/]: [white]setup.gitignore[/] = [white]{gitignore}[/]");
+            return Task.FromResult(true);
+        }
+
         var staleDays = ResolveRecentPruneStaleDays(config);
         log($"[grey]config[/]: [white]recent.staleDays[/] = [white]{staleDays}[/]");
         return Task.FromResult(true);
@@ -87,7 +97,7 @@ internal sealed partial class ProjectLifecycleService
     {
         if (args.Count != 2)
         {
-            log("[red]error[/]: usage /config set <theme|recent.staleDays> <value>");
+            log("[red]error[/]: usage /config set <theme|recent.staleDays|setup.gitignore> <value>");
             return Task.FromResult(true);
         }
 
@@ -138,7 +148,27 @@ internal sealed partial class ProjectLifecycleService
             return Task.FromResult(true);
         }
 
-        log("[red]error[/]: supported keys are 'theme' and 'recent.staleDays'");
+        if (IsGitignoreKey(key))
+        {
+            if (!TryParseGitignoreValue(args[1], out var gitignoreValue))
+            {
+                log("[red]error[/]: setup.gitignore must be 'auto' or 'off'");
+                return Task.FromResult(true);
+            }
+
+            config.GitignoreAutoIgnore = gitignoreValue;
+            if (!TrySaveCliConfig(config, out var saveGitignoreError))
+            {
+                log($"[red]error[/]: {Markup.Escape(saveGitignoreError ?? "failed to write config")}");
+                return Task.FromResult(true);
+            }
+
+            var displayValue = gitignoreValue ? "auto" : "off";
+            log($"[green]config[/]: setup.gitignore set to [white]{displayValue}[/]");
+            return Task.FromResult(true);
+        }
+
+        log("[red]error[/]: supported keys are 'theme', 'recent.staleDays', and 'setup.gitignore'");
         return Task.FromResult(true);
     }
 
@@ -146,15 +176,16 @@ internal sealed partial class ProjectLifecycleService
     {
         if (args.Count > 1)
         {
-            log("[red]error[/]: usage /config reset <theme|recent.staleDays?>");
+            log("[red]error[/]: usage /config reset <theme|recent.staleDays|setup.gitignore?>");
             return Task.FromResult(true);
         }
 
         var resetTheme = args.Count == 0 || IsThemeKey(args[0]);
         var resetRecentStaleDays = args.Count == 0 || IsRecentStaleDaysKey(args[0]);
-        if (!resetTheme && !resetRecentStaleDays)
+        var resetGitignore = args.Count == 0 || IsGitignoreKey(args[0]);
+        if (!resetTheme && !resetRecentStaleDays && !resetGitignore)
         {
-            log("[red]error[/]: supported keys are 'theme' and 'recent.staleDays'");
+            log("[red]error[/]: supported keys are 'theme', 'recent.staleDays', and 'setup.gitignore'");
             return Task.FromResult(true);
         }
 
@@ -174,6 +205,11 @@ internal sealed partial class ProjectLifecycleService
             config.RecentPruneStaleDays = null;
         }
 
+        if (resetGitignore)
+        {
+            config.GitignoreAutoIgnore = null;
+        }
+
         if (!TrySaveCliConfig(config, out var saveError))
         {
             log($"[red]error[/]: {Markup.Escape(saveError ?? "failed to write config")}");
@@ -183,27 +219,17 @@ internal sealed partial class ProjectLifecycleService
         var effective = ResolveEffectiveTheme(config);
         CliTheme.TrySetTheme(effective);
 
-        if (resetTheme && resetRecentStaleDays)
-        {
-            log(
-                $"[green]config[/]: reset to defaults " +
-                $"([white]theme[/]={effective}, [white]recent.staleDays[/]={DefaultRecentPruneStaleDays})");
-            return Task.FromResult(true);
-        }
-
-        if (resetTheme)
-        {
-            log($"[green]config[/]: theme reset to default [white]{effective}[/]");
-            return Task.FromResult(true);
-        }
-
-        log($"[green]config[/]: recent.staleDays reset to default [white]{DefaultRecentPruneStaleDays}[/]");
+        var resetParts = new List<string>();
+        if (resetTheme) resetParts.Add($"theme={effective}");
+        if (resetRecentStaleDays) resetParts.Add($"recent.staleDays={DefaultRecentPruneStaleDays}");
+        if (resetGitignore) resetParts.Add("setup.gitignore=prompt");
+        log($"[green]config[/]: reset to defaults ({string.Join(", ", resetParts)})");
         return Task.FromResult(true);
     }
 
     private static bool LogConfigUsage(Action<string> log)
     {
-        log("[red]error[/]: usage /config <get|set|list|reset> <theme|recent.staleDays?> <value?>");
+        log("[red]error[/]: usage /config <get|set|list|reset> <theme|recent.staleDays|setup.gitignore?> <value?>");
         return true;
     }
 
@@ -259,6 +285,12 @@ internal sealed partial class ProjectLifecycleService
                 }
             }
 
+            if (document.RootElement.TryGetProperty("gitignoreAutoIgnore", out var gitignoreProp)
+                && gitignoreProp.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                config.GitignoreAutoIgnore = gitignoreProp.GetBoolean();
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -287,7 +319,8 @@ internal sealed partial class ProjectLifecycleService
                 {
                     ["theme"] = NormalizeTheme(config.Theme),
                     ["unityProjectPath"] = NormalizeProjectPath(config.UnityProjectPath),
-                    ["recentStaleDays"] = config.RecentPruneStaleDays
+                    ["recentStaleDays"] = config.RecentPruneStaleDays,
+                    ["gitignoreAutoIgnore"] = config.GitignoreAutoIgnore
                 },
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(path, payload + Environment.NewLine);
@@ -333,6 +366,43 @@ internal sealed partial class ProjectLifecycleService
                || key.Equals("recent.stale-days", StringComparison.OrdinalIgnoreCase)
                || key.Equals("recent.prunedays", StringComparison.OrdinalIgnoreCase)
                || key.Equals("recent.prune-days", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGitignoreKey(string key)
+    {
+        return key.Equals("setup.gitignore", StringComparison.OrdinalIgnoreCase)
+               || key.Equals("gitignore", StringComparison.OrdinalIgnoreCase)
+               || key.Equals("gitignore.auto", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Parses user input for <c>setup.gitignore</c>: "auto"/"true" → <c>true</c>, "off"/"false" → <c>false</c>.
+    /// Returns <c>false</c> if the value is not recognised.
+    /// </summary>
+    private static bool TryParseGitignoreValue(string raw, out bool result)
+    {
+        switch (raw.Trim().ToLowerInvariant())
+        {
+            case "auto" or "true":
+                result = true;
+                return true;
+            case "off" or "false":
+                result = false;
+                return true;
+            default:
+                result = false;
+                return false;
+        }
+    }
+
+    private static string ResolveGitignoreDisplayValue(CliConfig config)
+    {
+        return config.GitignoreAutoIgnore switch
+        {
+            true => "auto",
+            false => "off",
+            null => "prompt"
+        };
     }
 
     private static bool TryParseRecentPruneStaleDays(string raw, out int staleDays)

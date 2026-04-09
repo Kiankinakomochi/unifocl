@@ -168,7 +168,7 @@ Choose between two engines:
 - **`blip`** (default) — open-ended natural language captions
 - **`clip`** — zero-shot classification against game-asset labels (sprite, mesh, UI, material, etc.)
 
-**Dependencies:** Requires `python3` (>= 3.10) and [`uv`](https://docs.astral.sh/uv/) — run `unifocl init` to install them automatically. The Python script pulls [`transformers`](https://pypi.org/project/transformers/), [`torch`](https://pypi.org/project/torch/) (CPU), and [`Pillow`](https://pypi.org/project/Pillow/) via `uv run --script` (auto-cached, no manual pip install needed). The first invocation also downloads the model weights (~990 MB for BLIP, ~600 MB for CLIP) from HuggingFace; subsequent runs load entirely from cache with no network access. Model revisions are pinned to exact commit SHAs for supply-chain safety.
+**Dependencies:** Requires `python3` (>= 3.10) and [`uv`](https://docs.astral.sh/uv/) — run `unifocl init` to install them automatically. Runtime installs are driven by a hash-locked requirements file (`uv run --with-requirements`) pinned to [`transformers==5.5.0`](https://pypi.org/project/transformers/5.5.0/), [`torch==2.11.0`](https://pypi.org/project/torch/2.11.0/) (CPU-compatible wheel selection by platform), and [`Pillow==12.2.0`](https://pypi.org/project/Pillow/12.2.0/). The first invocation also downloads the model weights (~990 MB for BLIP, ~600 MB for CLIP) from HuggingFace; subsequent runs load entirely from cache with no network access. Model revisions are pinned to exact commit SHAs for supply-chain safety.
 
 See the [Command Reference — Asset Describe](docs/command-reference.md#6-asset-describe-local-vision) for full details.
 
@@ -1172,6 +1172,7 @@ The `asset.describe` command lets agents "see" Unity assets without burning toke
 **Prerequisites:**
 
 - `python3` (>= 3.10) and `uv` — run `unifocl init` to install if missing
+- Script dependencies are hash-locked via requirements (`uv run --with-requirements`): `transformers==5.5.0`, `torch==2.11.0`, `Pillow==12.2.0`
 - First invocation downloads the model (~990 MB for BLIP, ~600 MB for CLIP); subsequent runs use the HuggingFace cache at `~/.cache/huggingface/`
 - Non-image assets (meshes, materials, prefabs) work if Unity can generate an `AssetPreview`; falls back to mini-thumbnail icon, then metadata-only
 

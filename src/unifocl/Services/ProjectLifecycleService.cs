@@ -478,6 +478,7 @@ internal sealed partial class ProjectLifecycleService
         }
 
         log($"[green]init[/]: ready at [white]{Markup.Escape(targetPath)}[/]");
+        CheckAndApplyGitignoreEntries(targetPath, log);
         return true;
     }
 
@@ -910,6 +911,7 @@ internal sealed partial class ProjectLifecycleService
         }
 
         log($"[green]open[/]: project mode active -> [white]{Markup.Escape(projectPath)}[/]");
+        CheckAndApplyGitignoreEntries(projectPath, log);
         _projectViewService.OpenInitialView(session);
         _ = _projectViewService.SyncMkTypeCacheAsync(session);
         _ = _projectViewService.SyncComponentTypeCacheAsync(session);
@@ -1667,6 +1669,12 @@ internal sealed partial class ProjectLifecycleService
         public string? Theme { get; set; }
         public string? UnityProjectPath { get; set; }
         public int? RecentPruneStaleDays { get; set; }
+        /// <summary>
+        /// <c>true</c> = auto-add missing gitignore entries on open/init;
+        /// <c>false</c> = never check; <c>null</c> = prompt once (default).
+        /// Managed via /config set setup.gitignore auto|off.
+        /// </summary>
+        public bool? GitignoreAutoIgnore { get; set; }
     }
 
     private sealed record PlatformUpdateSpec(
