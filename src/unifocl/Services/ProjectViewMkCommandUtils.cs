@@ -69,7 +69,7 @@ internal static class ProjectViewMkCommandUtils
         count = 1;
         name = null;
         parent = null;
-        error = "usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>] | mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]";
+        error = "usage: make --type <type> [--count <count>] [--name <name>|-n <name>] [--parent <idx|name>] | mk <type> [count] [--name <name>|-n <name>] [--parent <idx|name>]  (quote --parent paths with spaces: --parent \"Assets/My Folder\")";
         if (tokens.Count == 0)
         {
             return false;

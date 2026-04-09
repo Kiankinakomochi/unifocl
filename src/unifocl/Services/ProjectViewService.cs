@@ -133,7 +133,7 @@ internal sealed partial class ProjectViewService
         {
             if (tokens.Count < 2)
             {
-                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh> <...>");
+                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh|rename|remove> <...>");
                 handled = true;
             }
             else if (tokens[1].Equals("find", StringComparison.OrdinalIgnoreCase))
@@ -171,9 +171,35 @@ internal sealed partial class ProjectViewService
                 await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
                 handled = await HandleAssetRefreshAsync(tokens, session, outputs);
             }
+            else if (tokens[1].Equals("rename", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!EnsureVcsSetupForMutation(session, outputs))
+                {
+                    handled = true;
+                    ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                    RenderFrame(session.ProjectView);
+                    return true;
+                }
+
+                await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+                handled = await HandleAssetRenameByPathAsync(tokens, session, outputs);
+            }
+            else if (tokens[1].Equals("remove", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!EnsureVcsSetupForMutation(session, outputs))
+                {
+                    handled = true;
+                    ProjectViewTranscriptUtils.Append(session.ProjectView, outputs);
+                    RenderFrame(session.ProjectView);
+                    return true;
+                }
+
+                await EnsureModeContextAsync(session, daemonControlService, daemonRuntime);
+                handled = await HandleAssetRemoveByPathAsync(tokens, session, outputs);
+            }
             else
             {
-                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh> <...>");
+                outputs.Add("[x] usage: asset <find|duplicate|get|set|refresh|rename|remove> <...>");
                 handled = true;
             }
         }

@@ -541,8 +541,23 @@ internal sealed class HierarchyDaemonClient
         }
         catch (Exception ex)
         {
-            return new ProjectCommandTransportResult(null, $"daemon project command request failed: {ex.Message}", false);
+            var hint = IsConnectionRefusedException(ex)
+                ? " — Unity may have recompiled; call /open <project-path> to reconnect"
+                : string.Empty;
+            return new ProjectCommandTransportResult(null, $"daemon project command request failed: {ex.Message}{hint}", false);
         }
+    }
+
+    private static bool IsConnectionRefusedException(Exception ex)
+    {
+        if (ex.Message.Contains("Connection refused", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("actively refused", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("ECONNREFUSED", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return ex.InnerException is not null && IsConnectionRefusedException(ex.InnerException);
     }
 
     private static async Task<string> ProbeDaemonHealthAsync(string requestUri)
