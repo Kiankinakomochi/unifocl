@@ -547,7 +547,8 @@ namespace UniFocl.EditorBridge
                         if (!_isBatchMode)
                         {
                             // Bridge mode lives inside Unity GUI; restart listener so future /open can reattach without restarting the editor.
-                            EditorApplication.delayCall += RestartBridgeModeListenerAfterDetach;
+                            // Use EditorApplication.update (not delayCall) so the callback fires even when Unity is backgrounded.
+                            EditorApplication.update += RestartBridgeModeListenerOnNextUpdate;
                         }
                     }
                     return;
@@ -1725,6 +1726,13 @@ namespace UniFocl.EditorBridge
 
             Debug.Log("[unifocl] domain reload detected; shutting down daemon listener before reload.");
             StopInternal(quitEditor: false);
+        }
+
+        private static void RestartBridgeModeListenerOnNextUpdate()
+        {
+            // One-shot: unsubscribe immediately so this fires exactly once.
+            EditorApplication.update -= RestartBridgeModeListenerOnNextUpdate;
+            RestartBridgeModeListenerAfterDetach();
         }
 
         private static void RestartBridgeModeListenerAfterDetach()

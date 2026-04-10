@@ -303,7 +303,7 @@ internal static class AgenticStatePersistenceService
         return Path.Combine(home, ".unifocl-runtime", "agentic");
     }
 
-    private static string ResolveSessionPath(string sessionSeed)
+    public static string ResolveSessionPath(string sessionSeed)
     {
         return Path.Combine(ResolveRuntimeRoot(), "sessions", $"{sessionSeed}.json");
     }

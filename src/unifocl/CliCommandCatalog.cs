@@ -156,11 +156,9 @@ internal static class CliCommandCatalog
             // ── asset ─────────────────────────────────────────────────────
             new("/asset rename <path> <new-name>", "Rename an asset at the given path (DestructiveWrite, requires approval)", "/asset rename", "asset"),
             new("/asset remove <path>", "Delete an asset at the given path (DestructiveWrite, requires approval)", "/asset remove", "asset"),
-            new("/asset create <type> <path>", "Create a new asset of the given type at path", "/asset create", "asset"),
-            new("/asset create-script <name> <path>", "Create a new C# script at path", "/asset create-script", "asset"),
             new("/asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model (SafeRead)", "/asset describe", "asset"),
-            new("/asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer (SafeRead)", "/asset get", "asset"),
-            new("/asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer (SafeWrite)", "/asset set", "asset"),
+            new("/asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer; quote paths with spaces (SafeRead)", "/asset get", "asset"),
+            new("/asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer; quote paths with spaces (SafeWrite)", "/asset set", "asset"),
             new("/asset refresh [<path>]", "Trigger AssetDatabase.Refresh or targeted reimport of a single asset (SafeWrite)", "/asset refresh", "asset"),
 
             // ── animator ──────────────────────────────────────────────────
@@ -380,13 +378,10 @@ internal static class CliCommandCatalog
             new("layer rm <name|index>", "Alias for layer remove", "layer rm", "layer"),
 
             // ── asset ─────────────────────────────────────────────────────
-            new("asset rename <path> <new-name>", "Rename an asset at the given path", "asset rename", "asset"),
-            new("asset remove <path>", "Delete an asset at the given path", "asset remove", "asset"),
-            new("asset create <type> <path>", "Create a new asset of the given type at path", "asset create", "asset"),
-            new("asset create-script <name> <path>", "Create a new C# script at path", "asset create-script", "asset"),
-            new("asset describe <path> [--engine blip|clip]", "Describe asset visually using local BLIP/CLIP model", "asset describe", "asset"),
-            new("asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer", "asset get", "asset"),
-            new("asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer", "asset set", "asset"),
+            new("asset rename <path> <new-name>", "Rename an asset at the given path (quote paths with spaces)", "asset rename", "asset"),
+            new("asset remove <path>", "Delete an asset at the given path (quote paths with spaces)", "asset remove", "asset"),
+            new("asset get <path> [<field>]", "Read serialized fields from a ScriptableObject or asset importer; quote paths with spaces", "asset get", "asset"),
+            new("asset set <path> <field> <value>", "Write a serialized field on a ScriptableObject or asset importer; quote paths with spaces", "asset set", "asset"),
             new("asset refresh [<path>]", "Trigger AssetDatabase.Refresh or targeted reimport of a single asset", "asset refresh", "asset"),
 
             // ── time ─────────────────────────────────────────────────────

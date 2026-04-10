@@ -711,6 +711,7 @@ internal sealed partial class ProjectLifecycleService
                     && !string.Equals(ownerSeed, session.SessionSeed, StringComparison.Ordinal))
                 {
                     log($"[red]error[/]: project is already open in another agent session ({Markup.Escape(ownerSeed)})");
+                    log($"[yellow]hint[/]: if that session is no longer active, remove the stale lock: [white]rm {Markup.Escape(AgenticStatePersistenceService.ResolveSessionPath(ownerSeed))}[/]");
                     log($"[yellow]hint[/]: concurrent agents must clone the project to an isolated path before opening");
                     log($"[yellow]hint[/]: use the [white]project.clone[/] ExecV2 operation to create an isolated copy with a seeded Library cache, then open the cloned path");
                     log($"[yellow]example[/]: {{\"operation\":\"project.clone\",\"args\":{{\"sourcePath\":\"{Markup.Escape(projectPath)}\",\"destPath\":\"<new-path>\"}}}}");

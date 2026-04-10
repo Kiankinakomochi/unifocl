@@ -15,7 +15,7 @@ internal sealed partial class ProjectViewService
         // tokens: asset get <path> [<field>]
         if (tokens.Count < 3)
         {
-            outputs.Add("[x] usage: asset get <asset-path> [<field>]");
+            outputs.Add("[x] usage: asset get <asset-path> [<field>]  (quote paths with spaces: asset get \"Assets/My Folder/Foo.asset\")");
             return true;
         }
 
@@ -76,7 +76,7 @@ internal sealed partial class ProjectViewService
         // tokens: asset set <path> <field> <value>
         if (tokens.Count < 5)
         {
-            outputs.Add("[x] usage: asset set <asset-path> <field> <value>");
+            outputs.Add("[x] usage: asset set <asset-path> <field> <value>  (quote paths with spaces: asset set \"Assets/My Folder/Foo.asset\" fieldName value)");
             return true;
         }
 
@@ -101,6 +101,131 @@ internal sealed partial class ProjectViewService
 
         outputs.Add($"[+] {response.Message}");
         return true;
+    }
+
+    // ── asset rename ──────────────────────────────────────────────────────
+
+    private async Task<bool> HandleAssetRenameByPathAsync(
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        List<string> outputs)
+    {
+        // tokens: asset rename <source-path> <new-name>
+        if (tokens.Count < 4)
+        {
+            outputs.Add("[x] usage: asset rename <asset-path> <new-name>  (quote paths with spaces: asset rename \"Assets/My Folder/Foo.asset\" Bar)");
+            return true;
+        }
+
+        var sourceRelativePath = tokens[2];
+        var newName = tokens[3];
+
+        var isDirectory = !Path.HasExtension(sourceRelativePath)
+                          && !string.IsNullOrWhiteSpace(session.CurrentProjectPath)
+                          && Directory.Exists(Path.Combine(session.CurrentProjectPath, sourceRelativePath));
+        var destinationRelative = ProjectViewServiceUtils.ComputeRenameDestinationPath(sourceRelativePath, isDirectory, newName);
+
+        var state = session.ProjectView;
+        state.DbState = ProjectDbState.LockedImporting;
+        try
+        {
+            var response = await RunTrackableProgressAsync(
+                session,
+                $"renaming '{Path.GetFileName(sourceRelativePath)}' → '{newName}'",
+                TimeSpan.FromSeconds(10),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    BuildVcsAwareProjectRequest(
+                        session,
+                        new ProjectCommandRequestDto("rename-asset", sourceRelativePath, destinationRelative, null),
+                        sourceRelativePath,
+                        sourceRelativePath + ".meta",
+                        destinationRelative,
+                        destinationRelative + ".meta")));
+
+            if (!response.Ok)
+            {
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("asset rename", response.Message));
+                return true;
+            }
+
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
+                return true;
+            }
+
+            outputs.Add("[=] rename complete. .meta file updated successfully.");
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                ProjectViewTreeUtils.RefreshTree(session.CurrentProjectPath, state);
+            }
+
+            await SyncAssetIndexAsync(session);
+            return true;
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
+    }
+
+    // ── asset remove ──────────────────────────────────────────────────────
+
+    private async Task<bool> HandleAssetRemoveByPathAsync(
+        IReadOnlyList<string> tokens,
+        CliSessionState session,
+        List<string> outputs)
+    {
+        // tokens: asset remove <path>
+        if (tokens.Count < 3)
+        {
+            outputs.Add("[x] usage: asset remove <asset-path>  (quote paths with spaces: asset remove \"Assets/My Folder/Foo.asset\")");
+            return true;
+        }
+
+        var sourcePath = tokens[2];
+        var state = session.ProjectView;
+        state.DbState = ProjectDbState.LockedImporting;
+        try
+        {
+            var response = await RunTrackableProgressAsync(
+                session,
+                $"removing '{Path.GetFileName(sourcePath)}'",
+                TimeSpan.FromSeconds(6),
+                () => ExecuteProjectCommandAsync(
+                    session,
+                    BuildVcsAwareProjectRequest(
+                        session,
+                        new ProjectCommandRequestDto("remove-asset", sourcePath, null, null),
+                        sourcePath,
+                        sourcePath + ".meta")));
+
+            if (!response.Ok)
+            {
+                outputs.Add(ProjectViewServiceUtils.FormatProjectCommandFailure("asset remove", response.Message));
+                return true;
+            }
+
+            if (response.Kind?.Equals("dry-run", StringComparison.OrdinalIgnoreCase) == true
+                && TryAppendDryRunDiff(outputs, response.Content))
+            {
+                return true;
+            }
+
+            outputs.Add($"[=] removed: {sourcePath}");
+            if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath))
+            {
+                ProjectViewTreeUtils.RefreshTree(session.CurrentProjectPath, state);
+            }
+
+            await SyncAssetIndexAsync(session);
+            return true;
+        }
+        finally
+        {
+            state.DbState = ProjectDbState.IdleSafe;
+        }
     }
 
     // ── asset refresh ───────────────────────────────────────────────────────
