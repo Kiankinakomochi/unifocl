@@ -1140,6 +1140,15 @@ public static class McpExecTools
     private static string _implicitSessionSeed = $"mcp-{Guid.NewGuid():N}";
     private static string? _lastProject;
 
+    // Pending lifecycle boot — detached after the standard 30s timeout so the agent
+    // can poll for progress instead of waiting blind for minutes.
+    private static readonly TimeSpan BootCeiling = TimeSpan.FromMinutes(10);
+    private static Process? _pendingBootProcess;
+    private static Task<string>? _pendingBootStdout;
+    private static Task<string>? _pendingBootStderr;
+    private static DateTime _pendingBootStartedAt;
+    private static string? _pendingBootProject;
+
     [McpServerTool, Description(
         "Executes one or more unifocl commands and returns structured JSON results. " +
         "Commands run sequentially with shared session state — no need for --session-seed or shell escaping. " +
@@ -1166,6 +1175,11 @@ public static class McpExecTools
                 SessionSeed: _implicitSessionSeed,
                 Mode: null);
         }
+
+        // ── Check for a pending lifecycle boot from a previous detached call ──
+        var pendingResult = await TryResolvePendingBootAsync(commands);
+        if (pendingResult is not null)
+            return pendingResult;
 
         // Resolve project: explicit param > remembered > null
         var resolvedProject = project ?? _lastProject;
@@ -1211,9 +1225,12 @@ public static class McpExecTools
         if (dryRun)
             psi.ArgumentList.Add("--dry-run");
 
+        var isLifecycle = ContainsLifecycleCommand(commands);
+        var detached = false;
+        Process? process = null;
         try
         {
-            using var process = Process.Start(psi);
+            process = Process.Start(psi);
             if (process is null)
             {
                 return new McpExecResult(
@@ -1230,7 +1247,7 @@ public static class McpExecTools
             var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
             var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
-            // Timeout: 30 seconds
+            // Timeout: 30 seconds for all commands.
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
 
@@ -1240,6 +1257,20 @@ public static class McpExecTools
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
+                // Lifecycle commands (/open, /new, /clone, /recent) launch Unity and wait
+                // for daemon readiness, which can take minutes for large projects. Instead
+                // of blocking, detach the process and let the agent poll for completion.
+                if (isLifecycle)
+                {
+                    detached = true;
+                    _pendingBootProcess = process;
+                    _pendingBootStdout = stdoutTask;
+                    _pendingBootStderr = stderrTask;
+                    _pendingBootStartedAt = DateTime.UtcNow.AddSeconds(-30);
+                    _pendingBootProject = resolvedProject;
+                    return MakeBootingResult(resolvedProject, 30);
+                }
+
                 try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return new McpExecResult(
                     Ok: false,
@@ -1276,7 +1307,138 @@ public static class McpExecTools
                 SessionSeed: _implicitSessionSeed,
                 Mode: null);
         }
+        finally
+        {
+            if (!detached)
+                process?.Dispose();
+        }
     }
+
+    // ── Pending boot helpers ────────────────────────────────────────────────────
+
+    private static async Task<McpExecResult?> TryResolvePendingBootAsync(string[] commands)
+    {
+        if (_pendingBootProcess is null)
+            return null;
+
+        // Safety ceiling — kill runaway boots.
+        if (DateTime.UtcNow - _pendingBootStartedAt > BootCeiling)
+        {
+            KillAndClearPendingBoot();
+            return null; // fall through to normal execution
+        }
+
+        // If the agent sends /close, abort the pending boot and let /close execute normally.
+        if (ContainsCloseCommand(commands))
+        {
+            KillAndClearPendingBoot();
+            return null;
+        }
+
+        // Boot process finished — harvest its result.
+        if (_pendingBootProcess.HasExited)
+        {
+            var stdout = StripAnsi(await _pendingBootStdout!);
+            var stderr = await _pendingBootStderr!;
+            var exitCode = _pendingBootProcess.ExitCode;
+            var bootProject = _pendingBootProject;
+            ClearPendingBoot();
+
+            if (bootProject is not null && exitCode == 0)
+                _lastProject = bootProject;
+
+            return ParseEnvelope(stdout, stderr, exitCode);
+        }
+
+        // Boot still running — if the agent is retrying a lifecycle command (or the same
+        // /open), report progress instead of spawning a competing subprocess.
+        if (ContainsLifecycleCommand(commands))
+        {
+            var elapsed = (int)(DateTime.UtcNow - _pendingBootStartedAt).TotalSeconds;
+            return MakeBootingResult(_pendingBootProject, elapsed);
+        }
+
+        // Non-lifecycle command while boot is pending — let it through.
+        // It will likely fail because the daemon isn't ready, which is the expected signal.
+        return null;
+    }
+
+    private static void ClearPendingBoot()
+    {
+        _pendingBootProcess?.Dispose();
+        _pendingBootProcess = null;
+        _pendingBootStdout = null;
+        _pendingBootStderr = null;
+        _pendingBootProject = null;
+    }
+
+    private static void KillAndClearPendingBoot()
+    {
+        if (_pendingBootProcess is not null)
+        {
+            try { _pendingBootProcess.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+        }
+        ClearPendingBoot();
+    }
+
+    private static McpExecResult MakeBootingResult(string? projectPath, int elapsedSeconds)
+    {
+        var port = projectPath is not null
+            ? DaemonControlService.ResolveProjectDaemonPort(projectPath)
+            : (int?)null;
+
+        var data = new Dictionary<string, object?>
+        {
+            ["message"] = "Unity daemon is booting in the background.",
+            ["port"] = port,
+            ["projectPath"] = projectPath,
+            ["elapsedSeconds"] = elapsedSeconds,
+            ["hint"] = "Retry the same /open command to check progress. The boot result is returned automatically when ready. Call /close to abort."
+        };
+
+        return new McpExecResult(
+            Ok: false,
+            Status: "booting",
+            Data: data,
+            Errors: null,
+            Warnings: null,
+            SessionSeed: _implicitSessionSeed,
+            Mode: null);
+    }
+
+    // ── Command classification ───────────────────────────────────────────────────
+
+    private static bool ContainsLifecycleCommand(string[] commands)
+    {
+        foreach (var cmd in commands)
+        {
+            var trimmed = cmd.AsSpan().TrimStart();
+            if (trimmed.StartsWith("/open", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("/o ", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("/new", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("/clone", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("/recent", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsCloseCommand(string[] commands)
+    {
+        foreach (var cmd in commands)
+        {
+            var trimmed = cmd.AsSpan().TrimStart();
+            if (trimmed.StartsWith("/close", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    // ── Response parsing ─────────────────────────────────────────────────────────
 
     private static McpExecResult ParseEnvelope(string stdout, string stderr, int exitCode)
     {
