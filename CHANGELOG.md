@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.15.1 - 2026-05-05
+### Fixed
+- MCP host no longer accumulates the entire `unifocl exec /open` subprocess stdout/stderr
+  in RAM during long Unity boots. Output now streams to temp files and only the tail is
+  loaded back when the boot completes, eliminating the multi-hundred-megabyte memory
+  growth that could OOM the `dotnet` MCP host on cold-project opens.
+
 ## 3.15.0 - 2026-04-19
 ### Changed
 - `/open` (and `/new`, `/clone`, `/recent`) no longer block on the 30-second MCP timeout when Unity takes minutes to boot. The process is now detached after 30 s and the agent receives a `"booting"` status it can poll — retrying the same `/open` returns progress until the daemon is ready, at which point the real result is returned automatically.
