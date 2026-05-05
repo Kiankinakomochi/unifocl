@@ -1152,10 +1152,17 @@ public static class McpExecTools
     private static string? _pendingBootProject;
 
     // Child stdout/stderr is streamed to disk so a multi-minute Unity boot does not
-    // accumulate the whole log in the MCP host's RAM. Only this much of each file's
-    // tail is loaded back when the boot completes — enough to capture the JSON
-    // envelope (last line of stdout) plus a small amount of context.
-    private const int OutputTailBytes = 64 * 1024;
+    // accumulate the whole log in the MCP host's RAM. The stdout reader scans the
+    // file backwards for the start of the final pretty-printed JSON envelope so the
+    // envelope is captured intact regardless of size. Stderr is bounded to a small
+    // tail because the agentic envelope never lives there.
+    private const int StderrTailBytes = 64 * 1024;
+
+    // Cap how long we wait for the stdout/stderr pumps to flush after the child has
+    // exited or been killed. Pumps normally finish in milliseconds once the pipes
+    // close; this bound prevents a stuck child (failed Kill, zombie) from hanging
+    // the Exec call past its timeout.
+    private static readonly TimeSpan PumpFinishBound = TimeSpan.FromSeconds(2);
 
     [McpServerTool, Description(
         "Executes one or more unifocl commands and returns structured JSON results. " +
@@ -1298,11 +1305,12 @@ public static class McpExecTools
                     Mode: null);
             }
 
-            // Process exited; wait for pumps to flush both temp files before reading.
-            try { await Task.WhenAll(stdoutPump, stderrPump); } catch { /* surfaced via empty tail */ }
+            // Process exited; wait briefly for pumps to flush before reading. Bound the
+            // wait so a stuck pipe cannot hang Exec past its timeout.
+            try { await Task.WhenAll(stdoutPump, stderrPump).WaitAsync(PumpFinishBound); } catch { }
 
-            var stdout = StripAnsi(ReadTailText(stdoutPath, OutputTailBytes));
-            var stderr = ReadTailText(stderrPath, OutputTailBytes);
+            var stdout = StripAnsi(ReadAgenticEnvelope(stdoutPath));
+            var stderr = ReadStderrTail(stderrPath);
 
             // Remember project from successful /open calls
             if (resolvedProject is not null && process.ExitCode == 0)
@@ -1331,9 +1339,16 @@ public static class McpExecTools
             if (!detached)
             {
                 // Best-effort: ensure pumps finish so the temp files are closed before delete.
+                // Bound the wait — if Kill failed or the child is wedged, we must not hang
+                // here past the caller's timeout.
                 if (stdoutPump is not null || stderrPump is not null)
                 {
-                    try { await Task.WhenAll(stdoutPump ?? Task.CompletedTask, stderrPump ?? Task.CompletedTask); } catch { }
+                    try
+                    {
+                        await Task.WhenAll(stdoutPump ?? Task.CompletedTask, stderrPump ?? Task.CompletedTask)
+                            .WaitAsync(PumpFinishBound);
+                    }
+                    catch { }
                 }
                 process?.Dispose();
                 TryDeleteFile(stdoutPath);
@@ -1366,11 +1381,16 @@ public static class McpExecTools
         // Boot process finished — harvest its result.
         if (_pendingBootProcess.HasExited)
         {
-            // Wait for stdout/stderr pumps to finish flushing the temp files.
-            try { await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask); } catch { }
+            // Wait briefly for pumps to flush. If they're wedged, proceed with what's on disk.
+            try
+            {
+                await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask)
+                    .WaitAsync(PumpFinishBound);
+            }
+            catch { }
 
-            var stdout = StripAnsi(ReadTailText(_pendingBootStdoutPath, OutputTailBytes));
-            var stderr = ReadTailText(_pendingBootStderrPath, OutputTailBytes);
+            var stdout = StripAnsi(ReadAgenticEnvelope(_pendingBootStdoutPath));
+            var stderr = ReadStderrTail(_pendingBootStderrPath);
             var exitCode = _pendingBootProcess.ExitCode;
             var bootProject = _pendingBootProject;
             ClearPendingBoot();
@@ -1414,7 +1434,13 @@ public static class McpExecTools
             try { _pendingBootProcess.Kill(entireProcessTree: true); } catch { /* best-effort */ }
         }
         // Let pumps finish (they'll see EOF after the kill) before we delete the temp files.
-        try { await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask); } catch { }
+        // Bound the wait — a wedged Kill must not hang the next Exec call.
+        try
+        {
+            await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask)
+                .WaitAsync(PumpFinishBound);
+        }
+        catch { }
         ClearPendingBoot();
     }
 
@@ -1579,10 +1605,12 @@ public static class McpExecTools
         await source.CopyToAsync(fs);
     }
 
-    // Reads up to maxBytes from the END of a UTF-8 log file. We only need the tail
-    // because the agentic JSON envelope is the final stdout output; everything
-    // before it is human-facing log spam that the MCP host should not retain.
-    private static string ReadTailText(string? path, int maxBytes)
+    // Locates the start of the final pretty-printed JSON envelope in a UTF-8 log file
+    // by scanning backwards for the outermost '{' byte (a '{' that is either at file
+    // position 0 or immediately follows a '\n'). The envelope is read from that byte
+    // to EOF, so it is captured intact even when it is many megabytes (e.g. /dump
+    // project with 1000 entries). Pre-envelope log spam is not loaded.
+    private static string ReadAgenticEnvelope(string? path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
             return string.Empty;
@@ -1594,7 +1622,65 @@ public static class McpExecTools
             if (length == 0)
                 return string.Empty;
 
-            var start = Math.Max(0, length - maxBytes);
+            const int ChunkSize = 64 * 1024;
+            long envelopeStart = -1;
+            long cursor = length;
+
+            while (cursor > 0 && envelopeStart < 0)
+            {
+                var chunkLen = (int)Math.Min(ChunkSize, cursor);
+                var chunkStart = cursor - chunkLen;
+                // Read 1 extra byte before the chunk so we can check the predecessor of
+                // a '{' that lands on the chunk's first byte.
+                var contextLen = chunkStart > 0 ? 1 : 0;
+                var buffer = new byte[chunkLen + contextLen];
+                fs.Seek(chunkStart - contextLen, SeekOrigin.Begin);
+                var read = fs.Read(buffer, 0, buffer.Length);
+                if (read < buffer.Length)
+                    break;
+
+                for (int i = buffer.Length - 1; i >= contextLen; i--)
+                {
+                    if (buffer[i] != (byte)'{')
+                        continue;
+                    var fileOffset = chunkStart - contextLen + i;
+                    if (fileOffset == 0 || buffer[i - 1] == (byte)'\n')
+                    {
+                        envelopeStart = fileOffset;
+                        break;
+                    }
+                }
+                cursor = chunkStart;
+            }
+
+            if (envelopeStart < 0)
+                return string.Empty;
+
+            fs.Seek(envelopeStart, SeekOrigin.Begin);
+            using var reader = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: false);
+            return reader.ReadToEnd();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    // Reads up to StderrTailBytes from the END of a UTF-8 stderr log. Stderr never
+    // carries the agentic envelope, so a fixed tail is sufficient for diagnostics.
+    private static string ReadStderrTail(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            return string.Empty;
+
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var length = fs.Length;
+            if (length == 0)
+                return string.Empty;
+
+            var start = Math.Max(0, length - StderrTailBytes);
             fs.Seek(start, SeekOrigin.Begin);
             using var reader = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: false);
             return reader.ReadToEnd();
