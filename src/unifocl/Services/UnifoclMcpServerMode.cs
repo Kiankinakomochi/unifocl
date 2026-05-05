@@ -1144,10 +1144,18 @@ public static class McpExecTools
     // can poll for progress instead of waiting blind for minutes.
     private static readonly TimeSpan BootCeiling = TimeSpan.FromMinutes(10);
     private static Process? _pendingBootProcess;
-    private static Task<string>? _pendingBootStdout;
-    private static Task<string>? _pendingBootStderr;
+    private static Task? _pendingBootPumpStdout;
+    private static Task? _pendingBootPumpStderr;
+    private static string? _pendingBootStdoutPath;
+    private static string? _pendingBootStderrPath;
     private static DateTime _pendingBootStartedAt;
     private static string? _pendingBootProject;
+
+    // Child stdout/stderr is streamed to disk so a multi-minute Unity boot does not
+    // accumulate the whole log in the MCP host's RAM. Only this much of each file's
+    // tail is loaded back when the boot completes — enough to capture the JSON
+    // envelope (last line of stdout) plus a small amount of context.
+    private const int OutputTailBytes = 64 * 1024;
 
     [McpServerTool, Description(
         "Executes one or more unifocl commands and returns structured JSON results. " +
@@ -1228,6 +1236,10 @@ public static class McpExecTools
         var isLifecycle = ContainsLifecycleCommand(commands);
         var detached = false;
         Process? process = null;
+        var stdoutPath = NewTempLogPath("stdout");
+        var stderrPath = NewTempLogPath("stderr");
+        Task? stdoutPump = null;
+        Task? stderrPump = null;
         try
         {
             process = Process.Start(psi);
@@ -1243,9 +1255,11 @@ public static class McpExecTools
                     Mode: null);
             }
 
-            // Read stdout and stderr concurrently to avoid deadlocks
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            // Stream stdout and stderr straight to disk so long Unity boots do not
+            // accumulate output in RAM. Pumps run with no cancellation token so they
+            // continue draining when this method returns early (detached lifecycle).
+            stdoutPump = PumpToFileAsync(process.StandardOutput.BaseStream, stdoutPath);
+            stderrPump = PumpToFileAsync(process.StandardError.BaseStream, stderrPath);
 
             // Timeout: 30 seconds for all commands.
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -1264,8 +1278,10 @@ public static class McpExecTools
                 {
                     detached = true;
                     _pendingBootProcess = process;
-                    _pendingBootStdout = stdoutTask;
-                    _pendingBootStderr = stderrTask;
+                    _pendingBootPumpStdout = stdoutPump;
+                    _pendingBootPumpStderr = stderrPump;
+                    _pendingBootStdoutPath = stdoutPath;
+                    _pendingBootStderrPath = stderrPath;
                     _pendingBootStartedAt = DateTime.UtcNow.AddSeconds(-30);
                     _pendingBootProject = resolvedProject;
                     return MakeBootingResult(resolvedProject, 30);
@@ -1282,8 +1298,11 @@ public static class McpExecTools
                     Mode: null);
             }
 
-            var stdout = StripAnsi(await stdoutTask);
-            var stderr = await stderrTask;
+            // Process exited; wait for pumps to flush both temp files before reading.
+            try { await Task.WhenAll(stdoutPump, stderrPump); } catch { /* surfaced via empty tail */ }
+
+            var stdout = StripAnsi(ReadTailText(stdoutPath, OutputTailBytes));
+            var stderr = ReadTailText(stderrPath, OutputTailBytes);
 
             // Remember project from successful /open calls
             if (resolvedProject is not null && process.ExitCode == 0)
@@ -1310,7 +1329,16 @@ public static class McpExecTools
         finally
         {
             if (!detached)
+            {
+                // Best-effort: ensure pumps finish so the temp files are closed before delete.
+                if (stdoutPump is not null || stderrPump is not null)
+                {
+                    try { await Task.WhenAll(stdoutPump ?? Task.CompletedTask, stderrPump ?? Task.CompletedTask); } catch { }
+                }
                 process?.Dispose();
+                TryDeleteFile(stdoutPath);
+                TryDeleteFile(stderrPath);
+            }
         }
     }
 
@@ -1324,22 +1352,25 @@ public static class McpExecTools
         // Safety ceiling — kill runaway boots.
         if (DateTime.UtcNow - _pendingBootStartedAt > BootCeiling)
         {
-            KillAndClearPendingBoot();
+            await KillAndClearPendingBootAsync();
             return null; // fall through to normal execution
         }
 
         // If the agent sends /close, abort the pending boot and let /close execute normally.
         if (ContainsCloseCommand(commands))
         {
-            KillAndClearPendingBoot();
+            await KillAndClearPendingBootAsync();
             return null;
         }
 
         // Boot process finished — harvest its result.
         if (_pendingBootProcess.HasExited)
         {
-            var stdout = StripAnsi(await _pendingBootStdout!);
-            var stderr = await _pendingBootStderr!;
+            // Wait for stdout/stderr pumps to finish flushing the temp files.
+            try { await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask); } catch { }
+
+            var stdout = StripAnsi(ReadTailText(_pendingBootStdoutPath, OutputTailBytes));
+            var stderr = ReadTailText(_pendingBootStderrPath, OutputTailBytes);
             var exitCode = _pendingBootProcess.ExitCode;
             var bootProject = _pendingBootProject;
             ClearPendingBoot();
@@ -1367,17 +1398,23 @@ public static class McpExecTools
     {
         _pendingBootProcess?.Dispose();
         _pendingBootProcess = null;
-        _pendingBootStdout = null;
-        _pendingBootStderr = null;
+        _pendingBootPumpStdout = null;
+        _pendingBootPumpStderr = null;
+        TryDeleteFile(_pendingBootStdoutPath);
+        TryDeleteFile(_pendingBootStderrPath);
+        _pendingBootStdoutPath = null;
+        _pendingBootStderrPath = null;
         _pendingBootProject = null;
     }
 
-    private static void KillAndClearPendingBoot()
+    private static async Task KillAndClearPendingBootAsync()
     {
         if (_pendingBootProcess is not null)
         {
             try { _pendingBootProcess.Kill(entireProcessTree: true); } catch { /* best-effort */ }
         }
+        // Let pumps finish (they'll see EOF after the kill) before we delete the temp files.
+        try { await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask); } catch { }
         ClearPendingBoot();
     }
 
@@ -1520,8 +1557,60 @@ public static class McpExecTools
         }
     }
 
+    private static readonly Regex _ansiRegex = new(@"\x1b\[[0-9;]*[mJKH]", RegexOptions.Compiled);
+
     private static string StripAnsi(string input)
-        => Regex.Replace(input, @"\x1b\[[0-9;]*[mJKH]", "");
+        => _ansiRegex.Replace(input, "");
+
+    // ── Temp-file output streaming ───────────────────────────────────────────────
+
+    private static string NewTempLogPath(string suffix)
+        => Path.Combine(Path.GetTempPath(), $"unifocl-mcp-{Guid.NewGuid():N}.{suffix}.log");
+
+    private static async Task PumpToFileAsync(Stream source, string path)
+    {
+        await using var fs = new FileStream(
+            path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.Read,
+            bufferSize: 8192,
+            useAsync: true);
+        await source.CopyToAsync(fs);
+    }
+
+    // Reads up to maxBytes from the END of a UTF-8 log file. We only need the tail
+    // because the agentic JSON envelope is the final stdout output; everything
+    // before it is human-facing log spam that the MCP host should not retain.
+    private static string ReadTailText(string? path, int maxBytes)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            return string.Empty;
+
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var length = fs.Length;
+            if (length == 0)
+                return string.Empty;
+
+            var start = Math.Max(0, length - maxBytes);
+            fs.Seek(start, SeekOrigin.Begin);
+            using var reader = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: false);
+            return reader.ReadToEnd();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void TryDeleteFile(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return;
+        try { File.Delete(path); } catch { /* best-effort */ }
+    }
 }
 
 public sealed record McpExecResult(
