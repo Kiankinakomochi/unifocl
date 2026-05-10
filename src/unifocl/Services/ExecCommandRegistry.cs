@@ -471,7 +471,12 @@ internal sealed class ExecCommandRegistry
 
             case "compile.request":
             {
-                dto = new ProjectCommandRequestDto("compile-request", null, null, null, req.RequestId);
+                bool forceRecompile = GetBool(req.Args, "forceRecompile") ?? GetBool(req.Args, "force") ?? false;
+                bool waitForDomainReload = GetBool(req.Args, "waitForDomainReload") ?? GetBool(req.Args, "wait") ?? false;
+                var content = JsonSerializer.Serialize(new { forceRecompile, waitForDomainReload });
+                var base_ = new ProjectCommandRequestDto("compile-request", null, null, content, req.RequestId);
+                var withIntent = MutationIntentFactory.EnsureProjectIntent(base_);
+                dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };
                 return true;
             }
 

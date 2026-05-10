@@ -67,16 +67,48 @@ namespace UniFocl.EditorBridge
             public string name = string.Empty;
         }
 
+        // Per-compile detailed message accumulation. Used to build the
+        // CompilePersistedResult written to disk on compilationFinished.
+        // Reset on every compilationStarted; not lock-protected because both
+        // events fire on Unity's main thread.
+        private static readonly List<CompilePersistedIssue> _pendingErrors = new();
+        private static readonly List<CompilePersistedIssue> _pendingWarnings = new();
+
+        // SessionState keys used to correlate a compile request with its
+        // result file across the domain reload that follows a successful
+        // compile. The keys persist for the editor session (cleared on
+        // editor restart) but survive the AppDomain teardown.
+        private const string CompilePendingRequestIdKey = "unifocl.compile.pendingRequestId";
+        private const string CompilePendingForceRecompileKey = "unifocl.compile.pendingForceRecompile";
+        private const string CompilePendingStartedAtUtcKey = "unifocl.compile.pendingStartedAtUtc";
+
         [InitializeOnLoadMethod]
         private static void InitializeCompilationTracking()
         {
             CompilationPipeline.compilationStarted += OnCompilationStarted;
             CompilationPipeline.assemblyCompilationFinished += OnAssemblyCompilationFinished;
             CompilationPipeline.compilationFinished += OnCompilationFinished;
+
+            // Best-effort: clear stale result files left by previous editor
+            // sessions so the directory does not grow unbounded.
+            try
+            {
+                CompileResultPersistenceService.ClearStaleResults();
+            }
+            catch
+            {
+                // never fatal during init
+            }
         }
 
         private static void OnCompilationStarted(object obj)
         {
+            _pendingErrors.Clear();
+            _pendingWarnings.Clear();
+
+            string startedAtUtc = DateTime.UtcNow.ToString("O");
+            SessionState.SetString(CompilePendingStartedAtUtcKey, startedAtUtc);
+
             lock (CompilationStateLock)
             {
                 _compilationState = new CompilationRuntimeState
@@ -84,7 +116,7 @@ namespace UniFocl.EditorBridge
                     running = true,
                     succeeded = false,
                     errors = Array.Empty<string>(),
-                    startedAtUtc = DateTime.UtcNow.ToString("O"),
+                    startedAtUtc = startedAtUtc,
                     finishedAtUtc = string.Empty
                 };
             }
@@ -92,26 +124,48 @@ namespace UniFocl.EditorBridge
 
         private static void OnAssemblyCompilationFinished(string assemblyPath, CompilerMessage[] messages)
         {
-            var errorMessages = messages
-                .Where(m => m.type == CompilerMessageType.Error)
-                .Select(m => m.message)
-                .ToArray();
+            string assemblyName = string.IsNullOrEmpty(assemblyPath)
+                ? string.Empty
+                : Path.GetFileName(assemblyPath);
 
-            if (errorMessages.Length == 0)
+            foreach (CompilerMessage message in messages)
+            {
+                if (message.type == CompilerMessageType.Error)
+                {
+                    _pendingErrors.Add(new CompilePersistedIssue
+                    {
+                        message = message.message ?? string.Empty,
+                        file = message.file ?? string.Empty,
+                        line = message.line,
+                        assembly = assemblyName
+                    });
+                }
+                else if (message.type == CompilerMessageType.Warning)
+                {
+                    _pendingWarnings.Add(new CompilePersistedIssue
+                    {
+                        message = message.message ?? string.Empty,
+                        file = message.file ?? string.Empty,
+                        line = message.line,
+                        assembly = assemblyName
+                    });
+                }
+            }
+
+            if (_pendingErrors.Count == 0)
             {
                 return;
             }
 
+            // Mirror error message strings into the legacy CompilationRuntimeState
+            // so /compile/status keeps returning the same shape it always has.
             lock (CompilationStateLock)
             {
-                var existing = _compilationState.errors ?? Array.Empty<string>();
-                var combined = new string[existing.Length + errorMessages.Length];
-                Array.Copy(existing, combined, existing.Length);
-                Array.Copy(errorMessages, 0, combined, existing.Length, errorMessages.Length);
+                string[] combined = _pendingErrors.Select(e => e.message).ToArray();
                 _compilationState = new CompilationRuntimeState
                 {
                     running = _compilationState.running,
-                    succeeded = _compilationState.succeeded,
+                    succeeded = false,
                     errors = combined,
                     startedAtUtc = _compilationState.startedAtUtc,
                     finishedAtUtc = _compilationState.finishedAtUtc
@@ -121,17 +175,55 @@ namespace UniFocl.EditorBridge
 
         private static void OnCompilationFinished(object obj)
         {
+            string finishedAtUtc = DateTime.UtcNow.ToString("O");
+            string startedAtUtc = SessionState.GetString(CompilePendingStartedAtUtcKey, string.Empty);
+            bool succeeded = _pendingErrors.Count == 0;
+
             lock (CompilationStateLock)
             {
                 _compilationState = new CompilationRuntimeState
                 {
                     running = false,
-                    succeeded = _compilationState.errors == null || _compilationState.errors.Length == 0,
-                    errors = _compilationState.errors ?? Array.Empty<string>(),
-                    startedAtUtc = _compilationState.startedAtUtc,
-                    finishedAtUtc = DateTime.UtcNow.ToString("O")
+                    succeeded = succeeded,
+                    errors = _pendingErrors.Select(e => e.message).ToArray(),
+                    startedAtUtc = string.IsNullOrEmpty(startedAtUtc) ? _compilationState.startedAtUtc : startedAtUtc,
+                    finishedAtUtc = finishedAtUtc
                 };
             }
+
+            string pendingRequestId = SessionState.GetString(CompilePendingRequestIdKey, string.Empty);
+            if (!string.IsNullOrEmpty(pendingRequestId)
+                && CompileResultPersistenceService.IsRequestIdSafe(pendingRequestId))
+            {
+                bool forceRecompile = SessionState.GetBool(CompilePendingForceRecompileKey, false);
+                CompilePersistedResult result = new()
+                {
+                    requestId = pendingRequestId,
+                    outcome = succeeded ? "success" : "errors",
+                    success = succeeded,
+                    errorCount = _pendingErrors.Count,
+                    warningCount = _pendingWarnings.Count,
+                    startedAtUtc = startedAtUtc,
+                    finishedAtUtc = finishedAtUtc,
+                    message = succeeded
+                        ? "compilation completed successfully"
+                        : $"compilation completed with {_pendingErrors.Count} error(s)",
+                    errors = _pendingErrors.ToArray(),
+                    warnings = _pendingWarnings.ToArray(),
+                    forceRecompile = forceRecompile
+                };
+
+                CompileResultPersistenceService.SaveResult(pendingRequestId, result);
+
+                // Clear the pending state so a later untracked compile does
+                // not re-write to the same file.
+                SessionState.SetString(CompilePendingRequestIdKey, string.Empty);
+                SessionState.SetBool(CompilePendingForceRecompileKey, false);
+                SessionState.SetString(CompilePendingStartedAtUtcKey, string.Empty);
+            }
+
+            _pendingErrors.Clear();
+            _pendingWarnings.Clear();
         }
 
         public static string GetCompilationStatusPayload()
@@ -361,7 +453,7 @@ namespace UniFocl.EditorBridge
                 "addressables-cli" => Task.FromResult(ExecuteAddressablesCommand(request)),
                 "build-cancel" => Task.FromResult(ExecuteBuildCancel()),
                 "build-targets" => Task.FromResult(ExecuteBuildTargets()),
-                "compile-request" => Task.FromResult(ExecuteCompileRequest()),
+                "compile-request" => Task.FromResult(ExecuteCompileRequest(request)),
                 "compile-status" => Task.FromResult(ExecuteCompileStatus()),
                 "hierarchy-find" => Task.FromResult(ExecuteHierarchyFind(request)),
                 "settings-inspect" => Task.FromResult(ExecuteSettingsInspect()),
@@ -1184,15 +1276,191 @@ namespace UniFocl.EditorBridge
                 postVerifyMessage: $"upm remove completed but package is still present in manifest: {packageId}");
         }
 
-        private static string ExecuteCompileRequest()
+        [Serializable]
+        private sealed class CompileRequestPayload
         {
-            UnifoclCompilationService.RequestRecompile();
+            public bool forceRecompile;
+            public bool waitForDomainReload = true;
+        }
+
+        [Serializable]
+        private sealed class CompileRequestResponseExtras
+        {
+            public string requestId = string.Empty;
+            public bool tracked;
+            public string resultPath = string.Empty;
+            public string lockDir = string.Empty;
+        }
+
+        private static string ExecuteCompileRequest(ProjectCommandRequest request)
+        {
+            CompileRequestPayload payload = ParseCompileRequestPayload(request.content);
+
+            string requestId = CompileResultPersistenceService.IsRequestIdSafe(request.requestId)
+                ? request.requestId
+                : CompileResultPersistenceService.CreateRequestId();
+
+            bool tracked = payload.waitForDomainReload;
+            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            string resultDir = CompileResultPersistenceService.GetResultDirectory();
+            string resultPath = Path.Combine(resultDir, $"{requestId}.json");
+            string lockDir = Path.Combine(projectRoot, "Temp");
+
+            CompilationStateValidationService.ValidationResult validation = CompilationStateValidationService.Validate();
+            if (!validation.IsValid)
+            {
+                if (tracked)
+                {
+                    CompileResultPersistenceService.SaveResult(requestId, new CompilePersistedResult
+                    {
+                        requestId = requestId,
+                        outcome = "rejected",
+                        success = false,
+                        errorCount = 0,
+                        warningCount = 0,
+                        startedAtUtc = DateTime.UtcNow.ToString("O"),
+                        finishedAtUtc = DateTime.UtcNow.ToString("O"),
+                        message = $"{validation.ErrorCode}: {validation.ErrorMessage}",
+                        forceRecompile = payload.forceRecompile
+                    });
+                }
+
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = validation.ErrorMessage,
+                    kind = "compile-request",
+                    content = JsonUtility.ToJson(new CompileRequestResponseExtras
+                    {
+                        requestId = requestId,
+                        tracked = tracked,
+                        resultPath = tracked ? resultPath : string.Empty,
+                        lockDir = lockDir
+                    })
+                });
+            }
+
+            if (tracked)
+            {
+                SessionState.SetString(CompilePendingRequestIdKey, requestId);
+                SessionState.SetBool(CompilePendingForceRecompileKey, payload.forceRecompile);
+                SessionState.SetString(CompilePendingStartedAtUtcKey, DateTime.UtcNow.ToString("O"));
+            }
+            else
+            {
+                // Untracked compile: clear any leftover pending requestId so
+                // its compilationFinished does not write to a stranger's file.
+                SessionState.SetString(CompilePendingRequestIdKey, string.Empty);
+                SessionState.SetBool(CompilePendingForceRecompileKey, false);
+                SessionState.SetString(CompilePendingStartedAtUtcKey, string.Empty);
+            }
+
+            Action<string>? watchdogReporter = null;
+            if (tracked)
+            {
+                string watchdogRequestId = requestId;
+                bool watchdogForce = payload.forceRecompile;
+                watchdogReporter = diagnostic =>
+                {
+                    string pending = SessionState.GetString(CompilePendingRequestIdKey, string.Empty);
+                    if (pending != watchdogRequestId)
+                    {
+                        // A real compile started in the meantime, claimed the
+                        // requestId, and OnCompilationFinished will persist —
+                        // drop the watchdog report.
+                        return;
+                    }
+
+                    CompileResultPersistenceService.SaveResult(watchdogRequestId, new CompilePersistedResult
+                    {
+                        requestId = watchdogRequestId,
+                        outcome = "indeterminate",
+                        success = false,
+                        errorCount = 0,
+                        warningCount = 0,
+                        startedAtUtc = SessionState.GetString(CompilePendingStartedAtUtcKey, string.Empty),
+                        finishedAtUtc = DateTime.UtcNow.ToString("O"),
+                        message = diagnostic,
+                        forceRecompile = watchdogForce
+                    });
+
+                    SessionState.SetString(CompilePendingRequestIdKey, string.Empty);
+                    SessionState.SetBool(CompilePendingForceRecompileKey, false);
+                    SessionState.SetString(CompilePendingStartedAtUtcKey, string.Empty);
+                };
+            }
+
+            UnifoclCompilationService.RecompileOutcome outcome =
+                UnifoclCompilationService.RequestRecompile(payload.forceRecompile, watchdogReporter);
+
+            if (!outcome.Ok)
+            {
+                if (tracked)
+                {
+                    CompileResultPersistenceService.SaveResult(requestId, new CompilePersistedResult
+                    {
+                        requestId = requestId,
+                        outcome = "rejected",
+                        success = false,
+                        errorCount = 0,
+                        warningCount = 0,
+                        startedAtUtc = DateTime.UtcNow.ToString("O"),
+                        finishedAtUtc = DateTime.UtcNow.ToString("O"),
+                        message = outcome.Message,
+                        forceRecompile = payload.forceRecompile
+                    });
+
+                    SessionState.SetString(CompilePendingRequestIdKey, string.Empty);
+                    SessionState.SetBool(CompilePendingForceRecompileKey, false);
+                    SessionState.SetString(CompilePendingStartedAtUtcKey, string.Empty);
+                }
+
+                return JsonUtility.ToJson(new ProjectCommandResponse
+                {
+                    ok = false,
+                    message = outcome.Message,
+                    kind = "compile-request",
+                    content = JsonUtility.ToJson(new CompileRequestResponseExtras
+                    {
+                        requestId = requestId,
+                        tracked = tracked,
+                        resultPath = tracked ? resultPath : string.Empty,
+                        lockDir = lockDir
+                    })
+                });
+            }
+
             return JsonUtility.ToJson(new ProjectCommandResponse
             {
                 ok = true,
-                message = "compile request submitted",
-                kind = "compile-request"
+                message = outcome.Message,
+                kind = "compile-request",
+                content = JsonUtility.ToJson(new CompileRequestResponseExtras
+                {
+                    requestId = requestId,
+                    tracked = tracked,
+                    resultPath = tracked ? resultPath : string.Empty,
+                    lockDir = lockDir
+                })
             });
+        }
+
+        private static CompileRequestPayload ParseCompileRequestPayload(string? content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return new CompileRequestPayload();
+            }
+
+            try
+            {
+                CompileRequestPayload? parsed = JsonUtility.FromJson<CompileRequestPayload>(content);
+                return parsed ?? new CompileRequestPayload();
+            }
+            catch
+            {
+                return new CompileRequestPayload();
+            }
         }
 
         /// <summary>

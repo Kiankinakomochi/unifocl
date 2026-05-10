@@ -39,6 +39,8 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonCustomToolServiceResource = "Payload/EditorScripts/Services/DaemonCustomToolService.cs";
     private const string DaemonEvalServiceResource = "Payload/EditorScripts/Services/DaemonEvalService.cs";
     private const string UnifoclCompilationServiceResource = "Payload/EditorScripts/Services/UnifoclCompilationService.cs";
+    private const string CompilationStateValidationServiceResource = "Payload/EditorScripts/Services/CompilationStateValidationService.cs";
+    private const string CompileResultPersistenceServiceResource = "Payload/EditorScripts/Services/CompileResultPersistenceService.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
     // Runtime operations (3.7.0+)
     private const string DaemonRuntimeBridgeResource = "Payload/EditorScripts/Services/DaemonRuntimeBridge.cs";
@@ -200,6 +202,8 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "DaemonCustomToolService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonEvalService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "UnifoclCompilationService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "CompilationStateValidationService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "CompileResultPersistenceService.cs"),
             // Runtime operations (3.7.0+)
             Path.Combine(packagePath, "Editor", "Services", "DaemonRuntimeBridge.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonRuntimeModels.cs"),
@@ -389,6 +393,8 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonCustomToolServiceResource,       Path.Combine("Editor", "Services", "DaemonCustomToolService.cs")),
                 (DaemonEvalServiceResource,             Path.Combine("Editor", "Services", "DaemonEvalService.cs")),
                 (UnifoclCompilationServiceResource,     Path.Combine("Editor", "Services", "UnifoclCompilationService.cs")),
+                (CompilationStateValidationServiceResource, Path.Combine("Editor", "Services", "CompilationStateValidationService.cs")),
+                (CompileResultPersistenceServiceResource, Path.Combine("Editor", "Services", "CompileResultPersistenceService.cs")),
                 // Runtime operations (3.7.0+)
                 (DaemonRuntimeBridgeResource,           Path.Combine("Editor", "Services", "DaemonRuntimeBridge.cs")),
                 (DaemonRuntimeModelsServiceResource,    Path.Combine("Editor", "Services", "DaemonRuntimeModels.cs")),
