@@ -57,6 +57,31 @@ internal sealed record CompileStatusDto(
     string? StartedAtUtc,
     string? FinishedAtUtc);
 
+internal sealed record CompileRequestExtrasDto(
+    string RequestId,
+    bool Tracked,
+    string ResultPath,
+    string LockDir);
+
+internal sealed record CompilePersistedIssueDto(
+    string Message,
+    string File,
+    int Line,
+    string Assembly);
+
+internal sealed record CompilePersistedResultDto(
+    string RequestId,
+    string Outcome,
+    bool Success,
+    int ErrorCount,
+    int WarningCount,
+    string StartedAtUtc,
+    string FinishedAtUtc,
+    string Message,
+    CompilePersistedIssueDto[] Errors,
+    CompilePersistedIssueDto[] Warnings,
+    bool ForceRecompile);
+
 internal sealed record BuildLogLineDto(
     string Level,
     string Text);

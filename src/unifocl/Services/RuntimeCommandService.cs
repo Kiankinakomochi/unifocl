@@ -145,29 +145,170 @@ internal sealed class RuntimeCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /compile <request|status>");
+            log("[x] usage: /compile <request|status> [--force] [--wait] [--timeout-ms <n>]");
             return;
         }
 
         var sub = tokens[1].ToLowerInvariant();
-        var action = sub switch
-        {
-            "request" => "compile-request",
-            "status" => "compile-status",
-            _ => null
-        };
 
-        if (action is null)
+        if (sub == "status")
         {
-            log($"[x] unknown compile subcommand: {Markup.Escape(sub)}");
+            var statusDto = new ProjectCommandRequestDto("compile-status", null, null, null, NewId());
+            await DispatchProjectCommandAsync(session, statusDto, "compile", log);
             return;
         }
 
-        var dto = sub == "request"
-            ? MutationIntentFactory.EnsureProjectIntent(
-                new ProjectCommandRequestDto(action, null, null, null, NewId()))
-            : new ProjectCommandRequestDto(action, null, null, null, NewId());
-        await DispatchProjectCommandAsync(session, dto, "compile", log);
+        if (sub != "request")
+        {
+            log($"[x] unknown compile subcommand: {Markup.Escape(sub)}");
+            log("usage: /compile <request|status> [--force] [--wait] [--timeout-ms <n>]");
+            return;
+        }
+
+        bool force = tokens.Contains("--force");
+        bool wait = tokens.Contains("--wait");
+        int timeoutMs = ParseIntArg(tokens, "--timeout-ms");
+        if (timeoutMs <= 0) timeoutMs = 120_000;
+
+        await DispatchCompileRequestAsync(session, force, wait, timeoutMs, log);
+    }
+
+    private async Task DispatchCompileRequestAsync(
+        CliSessionState session,
+        bool forceRecompile,
+        bool wait,
+        int timeoutMs,
+        Action<string> log)
+    {
+        if (DaemonControlService.GetPort(session) is not int port)
+        {
+            log("[yellow]compile[/]: daemon not running — start with /open");
+            return;
+        }
+
+        var requestId = $"compile_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Guid.NewGuid().ToString("N")[..8]}";
+        var content = JsonSerializer.Serialize(new
+        {
+            forceRecompile,
+            waitForDomainReload = wait
+        });
+
+        var dto = MutationIntentFactory.EnsureProjectIntent(
+            new ProjectCommandRequestDto("compile-request", null, null, content, requestId));
+
+        log($"[grey]compile[/]: dispatching compile-request"
+            + (forceRecompile ? " --force" : "")
+            + (wait ? " --wait" : "")
+            + "...");
+
+        var response = await _daemonClient.ExecuteProjectCommandAsync(port, dto,
+            onStatus: status => log($"[grey]compile[/]: {Markup.Escape(status)}"));
+
+        if (!response.Ok)
+        {
+            log($"[red]compile[/]: rejected — {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        CompileRequestExtrasDto? extras = TryParseCompileExtras(response.Content);
+        if (extras is null)
+        {
+            log($"[green]compile[/]: {Markup.Escape(response.Message)}");
+            return;
+        }
+
+        log($"[green]compile[/]: {Markup.Escape(response.Message)} (requestId={Markup.Escape(extras.RequestId)})");
+
+        if (!wait || !extras.Tracked)
+        {
+            return;
+        }
+
+        var projectRoot = session.CurrentProjectPath;
+        if (string.IsNullOrWhiteSpace(projectRoot))
+        {
+            log("[yellow]compile[/]: cannot wait — no current project path");
+            return;
+        }
+
+        var waiter = new CompileCompletionWaiter();
+        var waitResult = await waiter.WaitAsync(
+            projectRoot: projectRoot,
+            requestId: extras.RequestId,
+            daemonPort: port,
+            timeoutMs: timeoutMs,
+            onProgress: phase => log($"[grey]compile[/]: phase={phase}"));
+
+        switch (waitResult.Outcome)
+        {
+            case CompileCompletionWaiter.WaitOutcome.Completed:
+                ReportCompileResult(waitResult.Payload, log);
+                break;
+            case CompileCompletionWaiter.WaitOutcome.TimedOut:
+                log($"[yellow]compile[/]: {Markup.Escape(waitResult.Diagnostic ?? "timed out")}");
+                if (waitResult.Payload is not null)
+                {
+                    ReportCompileResult(waitResult.Payload, log);
+                }
+                break;
+            case CompileCompletionWaiter.WaitOutcome.Cancelled:
+                log("[yellow]compile[/]: wait cancelled");
+                break;
+        }
+    }
+
+    private static CompileRequestExtrasDto? TryParseCompileExtras(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<CompileRequestExtrasDto>(content, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void ReportCompileResult(CompilePersistedResultDto? payload, Action<string> log)
+    {
+        if (payload is null)
+        {
+            log("[yellow]compile[/]: result file unreadable");
+            return;
+        }
+
+        switch (payload.Outcome)
+        {
+            case "success":
+                log($"[green]compile[/]: success ({payload.WarningCount} warning(s))");
+                break;
+            case "errors":
+                log($"[red]compile[/]: {payload.ErrorCount} error(s), {payload.WarningCount} warning(s)");
+                foreach (var err in payload.Errors.Take(10))
+                {
+                    var loc = string.IsNullOrEmpty(err.File) ? "" : $" {err.File}:{err.Line}";
+                    log($"[red]compile[/]:  {Markup.Escape(err.Message)}{Markup.Escape(loc)}");
+                }
+                if (payload.Errors.Length > 10)
+                {
+                    log($"[red]compile[/]:  …and {payload.Errors.Length - 10} more");
+                }
+                break;
+            case "rejected":
+                log($"[red]compile[/]: rejected — {Markup.Escape(payload.Message)}");
+                break;
+            case "indeterminate":
+                log($"[yellow]compile[/]: indeterminate — {Markup.Escape(payload.Message)}");
+                break;
+            default:
+                log($"[yellow]compile[/]: outcome={Markup.Escape(payload.Outcome)} message={Markup.Escape(payload.Message)}");
+                break;
+        }
     }
 
     // ── Profiler ────────────────────────────────────────────────────────
