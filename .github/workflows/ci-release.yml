@@ -1,5 +1,17 @@
 name: CI And Release
 
+# Credential policy for this workflow:
+#   * No Personal Access Tokens. Version bumps push with GITHUB_TOKEN; the
+#     Homebrew tap push uses a short-lived GitHub App installation token.
+#   * npm publishes via OIDC trusted publishing (no NPM_TOKEN).
+#   * Every action is pinned to a full commit SHA — a moved tag cannot swap
+#     code in underneath us (cf. the tj-actions/changed-files compromise).
+#   * `persist-credentials: false` everywhere except the one job that pushes,
+#     so a compromised step cannot lift a token out of .git/config.
+#
+# See .github/RELEASING.md for the one-time GitHub App setup and for the
+# manual WinGet submission step.
+
 on:
   pull_request:
     branches:
@@ -19,7 +31,8 @@ permissions:
 
 concurrency:
   group: ci-release-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseding a PR build is fine. Cancelling a release mid-publish is not.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -28,12 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
 
@@ -42,9 +56,60 @@ jobs:
           dotnet restore src/unifocl/unifocl.csproj --locked-mode --disable-build-servers -v minimal
           dotnet build src/unifocl/unifocl.csproj --no-restore --disable-build-servers -v minimal
 
+  # Was changelog-aggregate.yml. That workflow needed a PAT purely so its push
+  # would trigger this one — a GITHUB_TOKEN push does not start a new run.
+  # Folding it in as a job removes the reason for the PAT entirely: the push
+  # needs no downstream trigger because `release` below just checks out the
+  # commit we produced here, in this same run.
+  aggregate:
+    name: Aggregate Changelog & Bump Version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for fragments
+        id: fragments
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(find changelog.d -maxdepth 1 -name '*.md' ! -name '.gitkeep' 2>/dev/null | wc -l | tr -d ' ')"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Fragment count: $count"
+
+      - name: Aggregate fragments and bump version
+        if: steps.fragments.outputs.count != '0'
+        run: bash scripts/aggregate-changelog.sh --commit
+
+      - name: Push version bump
+        id: push
+        if: steps.fragments.outputs.count != '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Pushed version bump — releasing it in this same run."
+
   release:
     name: Release (Main)
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    needs: aggregate
+    # `aggregate` is skipped on workflow_dispatch, which would otherwise skip
+    # this job too.
+    if: >-
+      !cancelled()
+      && (needs.aggregate.result == 'success' || needs.aggregate.result == 'skipped')
+      && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -54,26 +119,33 @@ jobs:
       skip: ${{ steps.version.outputs.skip }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ needs.aggregate.outputs.sha || github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The version bump `aggregate` just pushed, when there was one.
+          ref: ${{ needs.aggregate.outputs.sha || github.sha }}
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
 
       - name: Resolve release version
         id: version
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            semver="${{ inputs.version }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            semver="$INPUT_VERSION"
             tag="v${semver}"
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "skip_reason=none" >> "$GITHUB_OUTPUT"
@@ -124,17 +196,24 @@ jobs:
 
       - name: Skip release notice
         if: steps.version.outputs.skip == 'true'
+        shell: bash
+        env:
+          SKIP_REASON: ${{ steps.version.outputs.skip_reason }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          echo "release skipped: ${{ steps.version.outputs.skip_reason }}"
-          echo "version: ${{ steps.version.outputs.version }}"
-          echo "tag: ${{ steps.version.outputs.tag }}"
+          echo "release skipped: ${SKIP_REASON}"
+          echo "version: ${VERSION}"
+          echo "tag: ${TAG}"
 
       - name: Publish binaries
         if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
+          version="$VERSION"
           dist=".artifacts/v${version}/dist"
           mkdir -p "$dist" ".artifacts/v${version}/macos-arm64" ".artifacts/v${version}/win-x64"
 
@@ -172,7 +251,7 @@ jobs:
 
       - name: Attest release artifacts
         if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
@@ -184,9 +263,11 @@ jobs:
         if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
         id: notes
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
+          version="$VERSION"
           notes_file=".artifacts/v${version}/release-notes.md"
           mkdir -p ".artifacts/v${version}"
 
@@ -209,30 +290,45 @@ jobs:
 
           echo "file=$notes_file" >> "$GITHUB_OUTPUT"
 
+      # Uses the built-in gh CLI rather than a third-party release action, so
+      # no external code sees this job's contents:write / id-token:write scopes.
       - name: Create GitHub Release
         if: steps.version.outputs.skip == 'false' && github.event_name != 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          body_path: ${{ steps.notes.outputs.file }}
-          files: |
-            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
-            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-win-x64.zip
-            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}.tar.gz
-            .artifacts/v${{ steps.version.outputs.version }}/dist/unifocl-${{ steps.version.outputs.version }}-checksums.txt
-            scripts/install.sh
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          TARGET: ${{ needs.aggregate.outputs.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          dist=".artifacts/v${VERSION}/dist"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --target "$TARGET" \
+            --notes-file "$NOTES_FILE" \
+            "${dist}/unifocl-${VERSION}-macos-arm64.tar.gz" \
+            "${dist}/unifocl-${VERSION}-win-x64.zip" \
+            "${dist}/unifocl-${VERSION}.tar.gz" \
+            "${dist}/unifocl-${VERSION}-checksums.txt" \
+            scripts/install.sh \
             scripts/install.ps1
 
-  # Requires manual approval via the "publish" environment protection rule.
-  # GitHub will pause here and notify required reviewers — approve to proceed
-  # with the PAT-authenticated pushes below.
-  # npm publish uses OIDC Trusted Publishers — no NPM_TOKEN needed.
+  # Gated on the "publish" environment protection rule: GitHub pauses here and
+  # waits for a required reviewer. Registry credentials live as *environment*
+  # secrets on that environment, so no other job in this repo can read them.
+  #
+  #   * Homebrew — short-lived GitHub App installation token, minted per run,
+  #     scoped to the tap repo with contents:write and nothing else.
+  #   * npm — OIDC trusted publishing, no stored token at all.
   publish:
     name: Publish to Registries
-    needs: release
-    if: needs.release.outputs.skip == 'false'
+    needs: [aggregate, release]
+    if: >-
+      !cancelled()
+      && needs.release.result == 'success'
+      && needs.release.outputs.skip == 'false'
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -240,25 +336,38 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          ref: ${{ needs.release.outputs.sha }}
           submodules: recursive
+          persist-credentials: false
+
+      - name: Mint Homebrew tap token
+        id: tap_token
+        if: vars.TAP_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-unifocl
+          permission-contents: write
 
       - name: Update Homebrew Formula Tap
+        if: vars.TAP_APP_CLIENT_ID != ''
         shell: bash
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Expires when this job ends; scoped to homebrew-unifocl only.
+          TAP_TOKEN: ${{ steps.tap_token.outputs.token }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
-            echo "HOMEBREW_TAP_TOKEN is not set; skipping homebrew formula update."
-            exit 0
-          fi
 
-          version="${{ needs.release.outputs.version }}"
-          tag="${{ needs.release.outputs.tag }}"
-          release_asset_url="https://github.com/Kiankinakomochi/unifocl/releases/download/${tag}/unifocl-${version}-macos-arm64.tar.gz"
+          version="$VERSION"
+          tag="$TAG"
+          release_asset_url="https://github.com/${REPO_OWNER}/unifocl/releases/download/${tag}/unifocl-${version}-macos-arm64.tar.gz"
           archive_path="/tmp/unifocl-${version}-macos-arm64.tar.gz"
           formula_repo_dir="$(mktemp -d)"
           formula_path="${formula_repo_dir}/Formula/unifocl.rb"
@@ -266,7 +375,7 @@ jobs:
           curl -fsSL "${release_asset_url}" -o "${archive_path}"
           asset_sha256="$(sha256sum "${archive_path}" | awk '{print $1}')"
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Kiankinakomochi/homebrew-unifocl.git" "${formula_repo_dir}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${REPO_OWNER}/homebrew-unifocl.git" "${formula_repo_dir}"
 
           if [[ ! -f "${formula_path}" ]]; then
             echo "Formula file not found at ${formula_path}"
@@ -302,21 +411,28 @@ jobs:
           git -C "${formula_repo_dir}" commit -m "unifocl ${version}"
           git -C "${formula_repo_dir}" push origin HEAD:main
 
+      - name: Homebrew tap not configured
+        if: vars.TAP_APP_CLIENT_ID == ''
+        run: |
+          echo "::warning::TAP_APP_CLIENT_ID is not set; skipping Homebrew formula update."
+          echo "::warning::See .github/RELEASING.md for the GitHub App setup."
+
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Publish npm plugins
         shell: bash
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           set -euo pipefail
-          version="${{ needs.release.outputs.version }}"
           for plugin_dir in src/unifocl.claude-plugin src/unifocl.codex-plugin; do
             echo "Publishing npm package from ${plugin_dir}"
             pushd "${plugin_dir}" >/dev/null
-            VERSION="$version" node -e "
+            node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
               pkg.version = process.env.VERSION;
@@ -325,35 +441,3 @@ jobs:
             npm publish --access public --provenance
             popd >/dev/null
           done
-
-  winget:
-    name: Publish to WinGet
-    needs: release
-    if: needs.release.outputs.skip == 'false' && github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
-    environment: publish
-    permissions:
-      contents: read
-    steps:
-      - name: Publish to WinGet
-        shell: pwsh
-        env:
-          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-        run: |
-          if (-not $env:WINGET_TOKEN) {
-            Write-Host "WINGET_TOKEN is not set; skipping winget publish."
-            exit 0
-          }
-
-          $version = "${{ needs.release.outputs.version }}"
-          $tag = "${{ needs.release.outputs.tag }}"
-          $installerUrl = "https://github.com/Kiankinakomochi/unifocl/releases/download/$tag/unifocl-$version-win-x64.zip"
-
-          $wingetcreate = "$env:TEMP\wingetcreate.exe"
-          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile $wingetcreate
-
-          & $wingetcreate update KinichiAnjuMakino.unifocl `
-            --version $version `
-            --urls $installerUrl `
-            --token $env:WINGET_TOKEN `
-            --submit
