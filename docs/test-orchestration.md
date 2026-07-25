@@ -1,6 +1,8 @@
 # Test Orchestration
 
-unifocl's `test` commands invoke Unity's built-in test runner as a **direct subprocess** — separate from the daemon, independent of any running editor, and safe to call from CI pipelines, parallel agent sessions, or any headless environment.
+unifocl's `test` commands invoke Unity's built-in test runner as a **direct subprocess**, separate from the daemon and safe to call from CI pipelines or any headless environment.
+
+Because the subprocess is a real second Unity instance, the project must not be open in another editor while tests run — see [Unity project lock](#unity-project-lock).
 
 ---
 
@@ -150,19 +152,44 @@ All run artifacts land in `<projectPath>/Logs/unifocl-test/`:
 | `test-results-editmode.xml` | NUnit v3 XML from EditMode runs |
 | `test-results-playmode.xml` | NUnit v3 XML from PlayMode runs |
 | `test-list.txt` | Raw `-testResults` output from list runs |
+| `unity-editmode.log` / `unity-playmode.log` | Full stdout/stderr captured from the run subprocess |
+| `unity-list.log` | Full stdout/stderr captured from the list subprocess |
 
-If Unity crashes before writing the XML file, `test run` returns a zero-count result with an empty `failures` array rather than an error, so callers can distinguish a clean zero-test project from a hard crash by checking `total`.
+The previous run's XML is deleted before a new run starts, and a results file is only accepted if it was written by the run that produced it. A run that never got far enough to write results is reported as an **error** — never as a zero-count success — with the tail of Unity's output included in the message and the full log at the paths above.
+
+---
+
+## Unity Project Lock
+
+Unity holds an exclusive lock on `Temp/UnityLockfile` for as long as a project is open, and refuses to open the same project twice:
+
+```
+Aborting batchmode due to fatal error:
+It looks like another Unity instance is running with this project open.
+Multiple Unity instances cannot open the same project.
+```
+
+Because `test` commands launch their own Unity, they cannot run while the project is open — including when it is open **by unifocl itself**. Both `/open` modes hold the lock:
+
+- **Host mode** launches `Unity -projectPath <path> -batchmode -nographics -executeMethod ...`
+- **Bridge mode** attaches to your GUI editor
+
+unifocl checks for a held lock before launching and fails immediately with a resolution hint. The check probes the lock file for an exclusive open rather than testing for its existence, so a stale file left behind by a crashed editor does not block a run that would otherwise succeed.
+
+**To run tests, pick one:**
+
+- `/close` first (stops the unifocl daemon), run the tests, then `/open` again
+- Quit the Unity editor holding the project
+- Point the run at a separate clone or git worktree (`unifocl exec "test run editmode" --project <other-path>`)
 
 ---
 
 ## Multi-Agent Safety
 
-Because `test` commands run as isolated subprocesses with no shared daemon state:
-
-- Multiple agents can invoke `test list` or `test run` against the **same project path** concurrently without locking conflicts.
-- Each subprocess gets its own Unity instance with its own `Library` cache; heavy concurrent runs may contend on Unity's project lock file. Use separate git worktrees for fully isolated parallel runs.
 - `test.list` is `SafeRead` and carries no approval gate — agents can call it freely.
 - `test.run` is `PrivilegedExec` to prevent agents from silently launching expensive player builds.
+- Concurrent `test` invocations against the **same project path** do **not** work: the first Unity to start takes the project lock and every other one aborts. They also share one `Library` cache and one artifacts directory, so results would overwrite each other regardless.
+- For parallel runs, give each agent its own clone or git worktree. That is the only fully isolated arrangement.
 
 ---
 
@@ -172,6 +199,7 @@ Because `test` commands run as isolated subprocesses with no shared daemon state
 | --- | --- |
 | All tests pass | `ok: true`, `failed: 0` |
 | Some tests fail | `ok: false`, `failed: N > 0`, failures populated |
-| Unity crashes / XML missing | `ok: false`, all counters zero, empty failures |
-| Timeout | Unity killed, result is whatever XML was written before kill |
-| Project not open / no editor found | ExecV2 returns `error` with resolution hint |
+| Project open in another Unity | `error` naming the lock, with resolution steps |
+| Unity crashes / XML missing | `error` with Unity's exit code and output tail |
+| Timeout | Unity killed; partial XML is reported if written, otherwise `error` |
+| No editor found for the project | `error` with resolution hint |

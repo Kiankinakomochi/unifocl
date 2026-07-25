@@ -19,6 +19,22 @@ internal sealed class TestCommandService
     private static readonly TimeSpan DefaultEditModeTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan DefaultPlayModeTimeout = TimeSpan.FromMinutes(30);
 
+    // Exit code RunUnityProcessAsync reports when the process was killed (timeout or cancellation).
+    private const int KilledExitCode = -1;
+
+    // Grace period for the async stdout/stderr readers to drain after the process exits, so that
+    // Unity's fatal-error output is not truncated out of the diagnostics we surface.
+    private static readonly TimeSpan StreamDrainTimeout = TimeSpan.FromSeconds(2);
+
+    private const int FailureDetailLineLimit = 12;
+    private const int FailureDetailLengthLimit = 600;
+
+    private const string ProjectLockedMessage =
+        "another Unity instance already has this project open (Temp/UnityLockfile is held). "
+        + "Unity cannot open the same project twice, so the run would abort before any test executes. "
+        + "Close the editor — or run /close to stop the unifocl daemon — and retry, "
+        + "or point the run at a separate clone or git worktree of the project.";
+
     public async Task HandleTestCommandAsync(
         string input,
         CliSessionState session,
@@ -113,23 +129,18 @@ internal sealed class TestCommandService
             return (false, null, resolveError);
         }
 
-        var artifactsDir = GetArtifactsDir(projectPath);
-        Directory.CreateDirectory(artifactsDir);
-        var listOutputFile = Path.Combine(artifactsDir, "test-list.txt");
-
-        var args = BuildUnityArgs(projectPath, new[]
+        if (IsProjectLockHeld(projectPath))
         {
-            "-runTests",
-            "-testPlatform", "EditMode",
-            "-listTests",
-            "-testResults", listOutputFile
-        });
+            return (false, null, ProjectLockedMessage);
+        }
 
-        var (exitCode, stdout, stderr) = await RunUnityProcessAsync(
-            editorPath, args, TimeSpan.FromMinutes(5), cancellationToken);
+        var (entries, error) = await ListTestsAsync(projectPath, editorPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (error is not null)
+        {
+            return (false, null, error);
+        }
 
-        // Unity -listTests writes test names to stdout (one per line)
-        var entries = ParseTestListOutput(stdout, stderr);
         return (true, entries, null);
     }
 
@@ -148,28 +159,19 @@ internal sealed class TestCommandService
             return (false, null, resolveError);
         }
 
-        var artifactsDir = GetArtifactsDir(projectPath);
-        Directory.CreateDirectory(artifactsDir);
-        var resultsFile = Path.Combine(artifactsDir,
-            platform == TestPlatform.EditMode ? "test-results-editmode.xml" : "test-results-playmode.xml");
-        var platformFlag = platform == TestPlatform.EditMode ? "EditMode" : "PlayMode";
-
-        var args = BuildUnityArgs(projectPath, new[]
+        if (IsProjectLockHeld(projectPath))
         {
-            "-runTests",
-            "-testPlatform", platformFlag,
-            "-testResults", resultsFile,
-            "-batchmode",
-            "-nographics"
-        });
+            return (false, null, ProjectLockedMessage);
+        }
 
-        var stopwatch = Stopwatch.StartNew();
-        var (exitCode, stdout, stderr) = await RunUnityProcessAsync(editorPath, args, timeout, cancellationToken);
-        stopwatch.Stop();
+        var outcome = await RunTestsAsync(projectPath, editorPath, platform, timeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (outcome.Error is not null)
+        {
+            return (false, null, outcome.Error);
+        }
 
-        var result = ParseNUnitResults(resultsFile, stopwatch.Elapsed.TotalMilliseconds, artifactsDir);
-        AppendToHistory(projectPath, platform, result, resultsFile);
-        return (exitCode == 0 || result.Failed == 0, result, null);
+        return (outcome.Ok, outcome.Result, null);
     }
 
     /// <summary>
@@ -206,24 +208,22 @@ internal sealed class TestCommandService
         }
 
         log($"[grey]test[/]: editor: {Markup.Escape(editorPath)}");
+
+        if (IsProjectLockHeld(projectPath))
+        {
+            log($"[red]test[/]: {Markup.Escape(ProjectLockedMessage)}");
+            return;
+        }
+
         log("[grey]test[/]: listing tests (EditMode)...");
 
-        var artifactsDir = GetArtifactsDir(projectPath);
-        Directory.CreateDirectory(artifactsDir);
-        var listOutputFile = Path.Combine(artifactsDir, "test-list.txt");
-
-        var args = BuildUnityArgs(projectPath, new[]
+        var (entries, error) = await ListTestsAsync(projectPath, editorPath, cancellationToken);
+        if (error is not null)
         {
-            "-runTests",
-            "-testPlatform", "EditMode",
-            "-listTests",
-            "-testResults", listOutputFile
-        });
+            log($"[red]test[/]: {Markup.Escape(error)}");
+            return;
+        }
 
-        var (exitCode, stdout, stderr) = await RunUnityProcessAsync(
-            editorPath, args, TimeSpan.FromMinutes(5), cancellationToken);
-
-        var entries = ParseTestListOutput(stdout, stderr);
         log($"[green]test[/]: found {entries.Count} test(s)");
         foreach (var entry in entries)
         {
@@ -251,29 +251,22 @@ internal sealed class TestCommandService
 
         log($"[grey]test[/]: editor: {Markup.Escape(editorPath)}");
 
-        var artifactsDir = GetArtifactsDir(projectPath);
-        Directory.CreateDirectory(artifactsDir);
-        var resultsFile = Path.Combine(artifactsDir,
-            platform == TestPlatform.EditMode ? "test-results-editmode.xml" : "test-results-playmode.xml");
-
-        var args = BuildUnityArgs(projectPath, new[]
+        if (IsProjectLockHeld(projectPath))
         {
-            "-runTests",
-            "-testPlatform", platformLabel,
-            "-testResults", resultsFile,
-            "-batchmode",
-            "-nographics"
-        });
+            log($"[red]test[/]: {Markup.Escape(ProjectLockedMessage)}");
+            return;
+        }
 
         log($"[grey]test[/]: running {Markup.Escape(platformLabel)} tests (timeout: {(int)timeout.TotalSeconds}s)...");
 
-        var stopwatch = Stopwatch.StartNew();
-        var (exitCode, stdout, stderr) = await RunUnityProcessAsync(editorPath, args, timeout, cancellationToken);
-        stopwatch.Stop();
+        var outcome = await RunTestsAsync(projectPath, editorPath, platform, timeout, cancellationToken);
+        if (outcome.Error is not null)
+        {
+            log($"[red]test[/]: {Markup.Escape(outcome.Error)}");
+            return;
+        }
 
-        var result = ParseNUnitResults(resultsFile, stopwatch.Elapsed.TotalMilliseconds, artifactsDir);
-        AppendToHistory(projectPath, platform, result, resultsFile);
-
+        var result = outcome.Result;
         var statusColor = result.Failed == 0 ? "green" : "red";
         log($"[{statusColor}]test[/]: {platformLabel} — total={result.Total} passed={result.Passed} failed={result.Failed} skipped={result.Skipped} ({result.DurationMs:0}ms)");
         log($"[grey]test[/]: artifacts: {Markup.Escape(result.ArtifactsPath)}");
@@ -440,6 +433,253 @@ internal sealed class TestCommandService
         return entries;
     }
 
+    // ── Execution core ────────────────────────────────────────────────────────
+
+    private sealed record TestRunOutcome(bool Ok, TestRunResult Result, string? Error);
+
+    /// <summary>
+    /// Shared run path for the CLI and ExecV2 entry points. A missing results file is reported as
+    /// a real error rather than a zero-count success, so a Unity that never started is
+    /// distinguishable from a project that genuinely has no tests.
+    /// </summary>
+    private static async Task<TestRunOutcome> RunTestsAsync(
+        string projectPath,
+        string editorPath,
+        TestPlatform platform,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var artifactsDir = GetArtifactsDir(projectPath);
+        Directory.CreateDirectory(artifactsDir);
+
+        var platformFlag = platform == TestPlatform.EditMode ? "EditMode" : "PlayMode";
+        var resultsFile = Path.Combine(artifactsDir,
+            platform == TestPlatform.EditMode ? "test-results-editmode.xml" : "test-results-playmode.xml");
+        var logFile = Path.Combine(artifactsDir,
+            platform == TestPlatform.EditMode ? "unity-editmode.log" : "unity-playmode.log");
+
+        // Drop the previous run's XML first: if Unity fails to start, a leftover file would
+        // otherwise be parsed and reported as this run's result.
+        TryDeleteFile(resultsFile);
+
+        var args = BuildUnityArgs(projectPath, new[]
+        {
+            "-runTests",
+            "-testPlatform", platformFlag,
+            "-testResults", resultsFile,
+            "-batchmode",
+            "-nographics"
+        });
+
+        // Guards the case where the stale file could not be deleted: only a file written after this
+        // point belongs to the run we are about to start.
+        var runStartedUtc = DateTime.UtcNow.AddSeconds(-2);
+
+        var stopwatch = Stopwatch.StartNew();
+        var (exitCode, stdout, stderr) = await RunUnityProcessAsync(editorPath, args, timeout, cancellationToken)
+            .ConfigureAwait(false);
+        stopwatch.Stop();
+
+        PersistUnityOutput(logFile, stdout, stderr);
+
+        if (!ProducedResults(resultsFile, runStartedUtc))
+        {
+            return new TestRunOutcome(
+                false,
+                new TestRunResult(0, 0, 0, 0, stopwatch.Elapsed.TotalMilliseconds, artifactsDir, []),
+                BuildFailureMessage(exitCode, stdout, stderr, logFile));
+        }
+
+        var result = ParseNUnitResults(resultsFile, stopwatch.Elapsed.TotalMilliseconds, artifactsDir);
+        AppendToHistory(projectPath, platform, result, resultsFile);
+        return new TestRunOutcome(result.Failed == 0, result, null);
+    }
+
+    /// <summary>
+    /// Shared list path for the CLI and ExecV2 entry points.
+    /// </summary>
+    private static async Task<(List<TestCaseEntry> Entries, string? Error)> ListTestsAsync(
+        string projectPath,
+        string editorPath,
+        CancellationToken cancellationToken)
+    {
+        var artifactsDir = GetArtifactsDir(projectPath);
+        Directory.CreateDirectory(artifactsDir);
+        var listOutputFile = Path.Combine(artifactsDir, "test-list.txt");
+        var logFile = Path.Combine(artifactsDir, "unity-list.log");
+
+        var args = BuildUnityArgs(projectPath, new[]
+        {
+            "-runTests",
+            "-testPlatform", "EditMode",
+            "-listTests",
+            "-testResults", listOutputFile
+        });
+
+        var (exitCode, stdout, stderr) = await RunUnityProcessAsync(
+            editorPath, args, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+
+        PersistUnityOutput(logFile, stdout, stderr);
+
+        if (exitCode != 0)
+        {
+            return ([], BuildFailureMessage(exitCode, stdout, stderr, logFile));
+        }
+
+        // Unity -listTests writes test names to stdout (one per line)
+        return (ParseTestListOutput(stdout, stderr), null);
+    }
+
+    // ── Unity project lock ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reports whether another Unity instance currently holds this project's lock. Unity refuses to
+    /// open a project twice, so a held lock aborts any test run before it starts.
+    /// </summary>
+    /// <remarks>
+    /// The lock file is probed for an exclusive open rather than merely tested for existence: a
+    /// crashed editor leaves <c>Temp/UnityLockfile</c> behind, and a leftover file must not block a
+    /// run that would otherwise succeed. If the probe cannot decide, the run proceeds and
+    /// <see cref="BuildFailureMessage"/> recognises Unity's own multi-instance error as a backstop.
+    /// </remarks>
+    private static bool IsProjectLockHeld(string projectPath)
+    {
+        var lockFile = Path.Combine(projectPath, "Temp", "UnityLockfile");
+        if (!File.Exists(lockFile))
+        {
+            return false;
+        }
+
+        try
+        {
+            using (File.Open(lockFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+            }
+
+            return false;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A permissions problem says nothing about the lock — let Unity make the call.
+            return false;
+        }
+    }
+
+    private static bool MentionsProjectLock(string stdout, string stderr)
+    {
+        var combined = stdout + stderr;
+        return combined.Contains("Multiple Unity instances cannot open the same project", StringComparison.OrdinalIgnoreCase)
+               || combined.Contains("another Unity instance is running with this project open", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Diagnostics ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Turns a run that produced no results file into an actionable message. Unity reports fatal
+    /// startup errors on stdout, which would otherwise be discarded with the process handle.
+    /// </summary>
+    private static string BuildFailureMessage(int exitCode, string stdout, string stderr, string logFile)
+    {
+        if (MentionsProjectLock(stdout, stderr))
+        {
+            return ProjectLockedMessage;
+        }
+
+        var reason = exitCode == KilledExitCode
+            ? "Unity was killed after exceeding the timeout"
+            : $"Unity exited with code {exitCode} without producing test output";
+
+        var detail = ExtractFailureDetail(stdout, stderr);
+        return string.IsNullOrWhiteSpace(detail)
+            ? $"{reason}; full output: {logFile}"
+            : $"{reason}: {detail} (full output: {logFile})";
+    }
+
+    private static string ExtractFailureDetail(string stdout, string stderr)
+    {
+        foreach (var source in new[] { stderr, stdout })
+        {
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                continue;
+            }
+
+            var lines = source
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => line.Length > 0)
+                .ToList();
+            if (lines.Count == 0)
+            {
+                continue;
+            }
+
+            // Unity prefixes its fatal batchmode errors with a fixed banner; prefer that over the tail.
+            var bannerIndex = lines.FindIndex(line =>
+                line.StartsWith("Aborting batchmode due to fatal error", StringComparison.OrdinalIgnoreCase));
+            var selected = bannerIndex >= 0
+                ? lines.Skip(bannerIndex).Take(FailureDetailLineLimit)
+                : lines.TakeLast(FailureDetailLineLimit);
+
+            var joined = string.Join(" | ", selected);
+            return joined.Length > FailureDetailLengthLimit
+                ? joined[..FailureDetailLengthLimit] + "..."
+                : joined;
+        }
+
+        return string.Empty;
+    }
+
+    private static void PersistUnityOutput(string logFile, string stdout, string stderr)
+    {
+        try
+        {
+            var content = string.IsNullOrWhiteSpace(stderr)
+                ? stdout
+                : $"{stdout}{Environment.NewLine}--- stderr ---{Environment.NewLine}{stderr}";
+            File.WriteAllText(logFile, content);
+        }
+        catch
+        {
+            // Log capture is best-effort — never fail a run because the log could not be written.
+        }
+    }
+
+    /// <summary>
+    /// Reports whether the results file was written by the run that started at
+    /// <paramref name="runStartedUtc"/>, rather than left over from an earlier one.
+    /// </summary>
+    private static bool ProducedResults(string resultsFile, DateTime runStartedUtc)
+    {
+        try
+        {
+            return File.Exists(resultsFile) && File.GetLastWriteTimeUtc(resultsFile) >= runStartedUtc;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Deletion is best-effort — ProducedResults still rejects a surviving stale file.
+        }
+    }
+
     // ── Subprocess helpers ────────────────────────────────────────────────────
 
     private static string? ResolveEditorPath(string projectPath, out string? error)
@@ -492,13 +732,20 @@ internal sealed class TestCommandService
         using var process = new Process { StartInfo = psi };
         var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // A null Data payload signals end-of-stream; both readers must drain before the captured
+        // output can be trusted to contain Unity's final (and most diagnostic) lines.
+        var stdoutClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stderrClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         process.OutputDataReceived += (_, e) =>
         {
-            if (e.Data is not null) stdoutSb.AppendLine(e.Data);
+            if (e.Data is null) stdoutClosed.TrySetResult();
+            else stdoutSb.AppendLine(e.Data);
         };
         process.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data is not null) stderrSb.AppendLine(e.Data);
+            if (e.Data is null) stderrClosed.TrySetResult();
+            else stderrSb.AppendLine(e.Data);
         };
         process.Exited += (_, _) => tcs.TrySetResult(process.ExitCode);
         process.EnableRaisingEvents = true;
@@ -516,6 +763,13 @@ internal sealed class TestCommandService
         });
 
         var exitCode = await tcs.Task.ConfigureAwait(false);
+
+        // Bounded wait: a killed process may never close its pipes, and a hang here would outlive
+        // the timeout the caller asked for.
+        await Task.WhenAny(
+            Task.WhenAll(stdoutClosed.Task, stderrClosed.Task),
+            Task.Delay(StreamDrainTimeout, CancellationToken.None)).ConfigureAwait(false);
+
         return (exitCode, stdoutSb.ToString(), stderrSb.ToString());
     }
 
