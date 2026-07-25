@@ -11,6 +11,10 @@
     <UnityProjectPath Condition="'$(UnityProjectPath)' == ''">$(UNIFOCL_UNITY_PROJECT_PATH)</UnityProjectPath>
     <UnityScriptAssembliesDir Condition="'$(UnityScriptAssembliesDir)' == '' and '$(UnityProjectPath)' != ''">$(UnityProjectPath)/Library/ScriptAssemblies</UnityScriptAssembliesDir>
     <UnityTemplateLibcacheDir Condition="'$(UnityTemplateLibcacheDir)' == '' and '$(UnityEditorManagedDir)' != ''">$([System.String]::Copy('$(UnityEditorManagedDir)').Replace('/Contents/Resources/Scripting/Managed', '/Contents/Resources/PackageManager/ProjectTemplates/libcache').Replace('/Contents/Managed', '/Contents/Resources/PackageManager/ProjectTemplates/libcache'))</UnityTemplateLibcacheDir>
+    <!-- Mirrors the UniFocl.EditorBridge.TestRunner asmdef's define constraint: the test-runner
+         adapter is only compiled when the Test Framework assemblies are actually available to
+         reference, exactly as Unity skips that assembly when the package is absent. -->
+    <DefineConstants Condition="'$(UnityScriptAssembliesDir)' != '' and Exists('$(UnityScriptAssembliesDir)/UnityEditor.TestRunner.dll')">$(DefineConstants);UNITY_TESTS_FRAMEWORK</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

@@ -82,6 +82,26 @@ internal sealed record CompilePersistedResultDto(
     CompilePersistedIssueDto[] Warnings,
     bool ForceRecompile);
 
+/// <summary>Payload returned when the editor accepts a test job; <c>ResultPath</c> is polled.</summary>
+internal sealed record TestJobAcceptedDto(
+    string RequestId,
+    string Kind,
+    string ResultPath,
+    string ArtifactsPath);
+
+/// <summary>Completion marker the editor writes once an in-editor test job finishes.</summary>
+internal sealed record TestJobResultDto(
+    string RequestId,
+    string Kind,
+    bool Ok,
+    string Message,
+    string XmlPath,
+    TestListEntryDto[] Tests);
+
+internal sealed record TestListEntryDto(
+    string TestName,
+    string Assembly);
+
 internal sealed record BuildLogLineDto(
     string Level,
     string Text);

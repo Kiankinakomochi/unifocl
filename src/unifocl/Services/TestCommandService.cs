@@ -15,6 +15,17 @@ internal sealed class TestCommandService
         WriteIndented = false
     };
 
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static readonly HierarchyDaemonClient DaemonClient = new();
+
+    // Short: this only decides which execution path to take, and a missing daemon is the
+    // common case for CI runs.
+    private static readonly TimeSpan DaemonProbeTimeout = TimeSpan.FromSeconds(3);
+
+    // Listing scans test assemblies but runs nothing, so it should never take long.
+    private static readonly TimeSpan EditorListTimeout = TimeSpan.FromMinutes(2);
+
     // Default timeout for EditMode runs; PlayMode gets its own override.
     private static readonly TimeSpan DefaultEditModeTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan DefaultPlayModeTimeout = TimeSpan.FromMinutes(30);
@@ -32,8 +43,11 @@ internal sealed class TestCommandService
     private const string ProjectLockedMessage =
         "another Unity instance already has this project open (Temp/UnityLockfile is held). "
         + "Unity cannot open the same project twice, so the run would abort before any test executes. "
-        + "Close the editor — or run /close to stop the unifocl daemon — and retry, "
-        + "or point the run at a separate clone or git worktree of the project.";
+        + "Quit that editor and retry — note that /close releases the lock only when unifocl launched "
+        + "the editor itself in host mode; in bridge mode it detaches the session and leaves your "
+        + "editor running. Alternatively, point the run at a separate clone or git worktree. "
+        + "EditMode tests do not need any of this when a project is open: they run inside the "
+        + "attached editor.";
 
     public async Task HandleTestCommandAsync(
         string input,
@@ -123,6 +137,13 @@ internal sealed class TestCommandService
         string projectPath,
         CancellationToken cancellationToken = default)
     {
+        if (await TryResolveLiveDaemonPortAsync(projectPath).ConfigureAwait(false) is int livePort)
+        {
+            var (editorEntries, editorError) = await ListInEditorAsync(
+                projectPath, livePort, EditorListTimeout, null, cancellationToken).ConfigureAwait(false);
+            return editorError is not null ? (false, null, editorError) : (true, editorEntries, null);
+        }
+
         var editorPath = ResolveEditorPath(projectPath, out var resolveError);
         if (editorPath is null)
         {
@@ -153,6 +174,16 @@ internal sealed class TestCommandService
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
+        if (platform == TestPlatform.EditMode
+            && await TryResolveLiveDaemonPortAsync(projectPath).ConfigureAwait(false) is int livePort)
+        {
+            var editorOutcome = await RunInEditorAsync(
+                projectPath, livePort, timeout, null, cancellationToken).ConfigureAwait(false);
+            return editorOutcome.Error is not null
+                ? (false, null, editorOutcome.Error)
+                : (editorOutcome.Ok, editorOutcome.Result, null);
+        }
+
         var editorPath = ResolveEditorPath(projectPath, out var resolveError);
         if (editorPath is null)
         {
@@ -198,26 +229,39 @@ internal sealed class TestCommandService
         CancellationToken cancellationToken)
     {
         var projectPath = session.CurrentProjectPath!;
-        log("[grey]test[/]: resolving Unity editor...");
 
-        var editorPath = ResolveEditorPath(projectPath, out var resolveError);
-        if (editorPath is null)
+        List<TestCaseEntry> entries;
+        string? error;
+
+        if (await TryResolveLiveDaemonPortAsync(projectPath) is int livePort)
         {
-            log($"[red]test[/]: {Markup.Escape(resolveError ?? "could not resolve Unity editor")}");
-            return;
+            log("[grey]test[/]: listing tests in the attached editor (EditMode)...");
+            (entries, error) = await ListInEditorAsync(
+                projectPath, livePort, EditorListTimeout, log, cancellationToken);
+        }
+        else
+        {
+            log("[grey]test[/]: resolving Unity editor...");
+
+            var editorPath = ResolveEditorPath(projectPath, out var resolveError);
+            if (editorPath is null)
+            {
+                log($"[red]test[/]: {Markup.Escape(resolveError ?? "could not resolve Unity editor")}");
+                return;
+            }
+
+            log($"[grey]test[/]: editor: {Markup.Escape(editorPath)}");
+
+            if (IsProjectLockHeld(projectPath))
+            {
+                log($"[red]test[/]: {Markup.Escape(ProjectLockedMessage)}");
+                return;
+            }
+
+            log("[grey]test[/]: listing tests (EditMode)...");
+            (entries, error) = await ListTestsAsync(projectPath, editorPath, cancellationToken);
         }
 
-        log($"[grey]test[/]: editor: {Markup.Escape(editorPath)}");
-
-        if (IsProjectLockHeld(projectPath))
-        {
-            log($"[red]test[/]: {Markup.Escape(ProjectLockedMessage)}");
-            return;
-        }
-
-        log("[grey]test[/]: listing tests (EditMode)...");
-
-        var (entries, error) = await ListTestsAsync(projectPath, editorPath, cancellationToken);
         if (error is not null)
         {
             log($"[red]test[/]: {Markup.Escape(error)}");
@@ -240,26 +284,38 @@ internal sealed class TestCommandService
     {
         var projectPath = session.CurrentProjectPath!;
         var platformLabel = platform == TestPlatform.EditMode ? "EditMode" : "PlayMode";
-        log($"[grey]test[/]: resolving Unity editor...");
 
-        var editorPath = ResolveEditorPath(projectPath, out var resolveError);
-        if (editorPath is null)
+        TestRunOutcome outcome;
+
+        if (platform == TestPlatform.EditMode
+            && await TryResolveLiveDaemonPortAsync(projectPath) is int livePort)
         {
-            log($"[red]test[/]: {Markup.Escape(resolveError ?? "could not resolve Unity editor")}");
-            return;
+            log($"[grey]test[/]: running EditMode tests in the attached editor (timeout: {(int)timeout.TotalSeconds}s)...");
+            outcome = await RunInEditorAsync(projectPath, livePort, timeout, log, cancellationToken);
+        }
+        else
+        {
+            log($"[grey]test[/]: resolving Unity editor...");
+
+            var editorPath = ResolveEditorPath(projectPath, out var resolveError);
+            if (editorPath is null)
+            {
+                log($"[red]test[/]: {Markup.Escape(resolveError ?? "could not resolve Unity editor")}");
+                return;
+            }
+
+            log($"[grey]test[/]: editor: {Markup.Escape(editorPath)}");
+
+            if (IsProjectLockHeld(projectPath))
+            {
+                log($"[red]test[/]: {Markup.Escape(ProjectLockedMessage)}");
+                return;
+            }
+
+            log($"[grey]test[/]: running {Markup.Escape(platformLabel)} tests (timeout: {(int)timeout.TotalSeconds}s)...");
+            outcome = await RunTestsAsync(projectPath, editorPath, platform, timeout, cancellationToken);
         }
 
-        log($"[grey]test[/]: editor: {Markup.Escape(editorPath)}");
-
-        if (IsProjectLockHeld(projectPath))
-        {
-            log($"[red]test[/]: {Markup.Escape(ProjectLockedMessage)}");
-            return;
-        }
-
-        log($"[grey]test[/]: running {Markup.Escape(platformLabel)} tests (timeout: {(int)timeout.TotalSeconds}s)...");
-
-        var outcome = await RunTestsAsync(projectPath, editorPath, platform, timeout, cancellationToken);
         if (outcome.Error is not null)
         {
             log($"[red]test[/]: {Markup.Escape(outcome.Error)}");
@@ -431,6 +487,181 @@ internal sealed class TestCommandService
         }
 
         return entries;
+    }
+
+    // ── In-editor execution (attached daemon) ────────────────────────────────
+
+    /// <summary>
+    /// Resolves the project's daemon port when a live editor bridge is answering on it.
+    /// Its presence is what makes in-editor execution possible — and, equally, what makes the
+    /// subprocess runner impossible, since that editor holds the project lock.
+    /// </summary>
+    private static async Task<int?> TryResolveLiveDaemonPortAsync(string projectPath)
+    {
+        try
+        {
+            var port = DaemonControlService.ResolveProjectDaemonPort(projectPath);
+            return await DaemonControlService
+                .IsProjectCommandEndpointResponsiveAsync(port, DaemonProbeTimeout)
+                .ConfigureAwait(false)
+                ? port
+                : null;
+        }
+        catch
+        {
+            // An unreachable daemon just means we fall back to the subprocess path.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Runs EditMode tests inside the attached editor. The editor writes NUnit XML in the same
+    /// format and location the subprocess runner used, so results parse identically.
+    /// </summary>
+    private static async Task<TestRunOutcome> RunInEditorAsync(
+        string projectPath,
+        int port,
+        TimeSpan timeout,
+        Action<string>? log,
+        CancellationToken cancellationToken)
+    {
+        var artifactsDir = GetArtifactsDir(projectPath);
+        var empty = new TestRunResult(0, 0, 0, 0, 0, artifactsDir, []);
+
+        var (accepted, dispatchError) = await DispatchTestJobAsync(
+            port, "test-run", cancellationToken).ConfigureAwait(false);
+        if (dispatchError is not null)
+        {
+            return new TestRunOutcome(false, empty, dispatchError);
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        var wait = await new TestCompletionWaiter()
+            .WaitAsync(
+                projectPath,
+                accepted!.RequestId,
+                timeout,
+                elapsed => log?.Invoke($"[grey]test[/]: still running... {elapsed.TotalSeconds:0}s elapsed"),
+                cancellationToken)
+            .ConfigureAwait(false);
+        stopwatch.Stop();
+
+        if (wait.Outcome != TestCompletionWaiter.WaitOutcome.Completed || wait.Payload is null)
+        {
+            return new TestRunOutcome(false, empty, wait.Diagnostic ?? "the editor did not report test completion");
+        }
+
+        if (!wait.Payload.Ok)
+        {
+            return new TestRunOutcome(false, empty, wait.Payload.Message);
+        }
+
+        var resultsFile = string.IsNullOrWhiteSpace(wait.Payload.XmlPath)
+            ? Path.Combine(artifactsDir, "test-results-editmode.xml")
+            : wait.Payload.XmlPath;
+
+        if (!File.Exists(resultsFile))
+        {
+            return new TestRunOutcome(false, empty,
+                $"the editor reported completion but wrote no results file at {resultsFile}");
+        }
+
+        var result = ParseNUnitResults(resultsFile, stopwatch.Elapsed.TotalMilliseconds, artifactsDir);
+        AppendToHistory(projectPath, TestPlatform.EditMode, result, resultsFile);
+        return new TestRunOutcome(result.Failed == 0, result, null);
+    }
+
+    /// <summary>
+    /// Lists EditMode tests through the attached editor. Names come from the test tree rather
+    /// than scraped stdout, so assemblies are exact and Unity log noise cannot leak in.
+    /// </summary>
+    private static async Task<(List<TestCaseEntry> Entries, string? Error)> ListInEditorAsync(
+        string projectPath,
+        int port,
+        TimeSpan timeout,
+        Action<string>? log,
+        CancellationToken cancellationToken)
+    {
+        var (accepted, dispatchError) = await DispatchTestJobAsync(
+            port, "test-list", cancellationToken).ConfigureAwait(false);
+        if (dispatchError is not null)
+        {
+            return ([], dispatchError);
+        }
+
+        var wait = await new TestCompletionWaiter()
+            .WaitAsync(
+                projectPath,
+                accepted!.RequestId,
+                timeout,
+                elapsed => log?.Invoke($"[grey]test[/]: still listing... {elapsed.TotalSeconds:0}s elapsed"),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (wait.Outcome != TestCompletionWaiter.WaitOutcome.Completed || wait.Payload is null)
+        {
+            return ([], wait.Diagnostic ?? "the editor did not report the test list");
+        }
+
+        if (!wait.Payload.Ok)
+        {
+            return ([], wait.Payload.Message);
+        }
+
+        var entries = (wait.Payload.Tests ?? [])
+            .Select(test => new TestCaseEntry(test.TestName ?? string.Empty, test.Assembly ?? "Unknown"))
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.TestName))
+            .ToList();
+        return (entries, null);
+    }
+
+    private static async Task<(TestJobAcceptedDto? Accepted, string? Error)> DispatchTestJobAsync(
+        int port,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        var requestId = $"{action.Replace("-", string.Empty)}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Guid.NewGuid().ToString("N")[..8]}";
+        var dto = MutationIntentFactory.EnsureProjectIntent(
+            new ProjectCommandRequestDto(action, null, null, null, requestId));
+
+        ProjectCommandResponseDto response;
+        try
+        {
+            response = await DaemonClient.ExecuteProjectCommandAsync(port, dto).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return (null, $"could not reach the editor bridge on port {port}: {ex.Message}");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!response.Ok)
+        {
+            return (null, response.Message);
+        }
+
+        var accepted = TryParseAccepted(response.Content);
+        if (accepted is null || string.IsNullOrWhiteSpace(accepted.RequestId))
+        {
+            return (null, "the editor accepted the request but returned no tracking id");
+        }
+
+        return (accepted, null);
+    }
+
+    private static TestJobAcceptedDto? TryParseAccepted(string? content)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(content)
+                ? null
+                : JsonSerializer.Deserialize<TestJobAcceptedDto>(content, WebJsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ── Execution core ────────────────────────────────────────────────────────
