@@ -41,6 +41,9 @@ internal sealed class EditorDependencyInitializerService
     private const string UnifoclCompilationServiceResource = "Payload/EditorScripts/Services/UnifoclCompilationService.cs";
     private const string CompilationStateValidationServiceResource = "Payload/EditorScripts/Services/CompilationStateValidationService.cs";
     private const string CompileResultPersistenceServiceResource = "Payload/EditorScripts/Services/CompileResultPersistenceService.cs";
+    private const string DaemonTestRunnerBridgeResource = "Payload/EditorScripts/Services/DaemonTestRunnerBridge.cs";
+    // Test runner adapter — ships into its own assembly, see TestRunnerAsmdef below.
+    private const string UnifoclTestRunnerAdapterResource = "Payload/EditorScripts/TestRunner/UnifoclTestRunnerAdapter.cs";
     private const string SharedModelsSourceResource = "Payload/SharedModels/BridgeModels.cs";
     // Runtime operations (3.7.0+)
     private const string DaemonRuntimeBridgeResource = "Payload/EditorScripts/Services/DaemonRuntimeBridge.cs";
@@ -204,6 +207,10 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "UnifoclCompilationService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "CompilationStateValidationService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "CompileResultPersistenceService.cs"),
+            // In-editor test runner
+            Path.Combine(packagePath, "Editor", "Services", "DaemonTestRunnerBridge.cs"),
+            Path.Combine(packagePath, "Editor", "TestRunner", "UniFocl.EditorBridge.TestRunner.asmdef"),
+            Path.Combine(packagePath, "Editor", "TestRunner", "UnifoclTestRunnerAdapter.cs"),
             // Runtime operations (3.7.0+)
             Path.Combine(packagePath, "Editor", "Services", "DaemonRuntimeBridge.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonRuntimeModels.cs"),
@@ -300,6 +307,7 @@ internal sealed class EditorDependencyInitializerService
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Profiling"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Recorder"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "TestRunner"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Runtime"));
 
             var packageJson =
@@ -338,6 +346,41 @@ internal sealed class EditorDependencyInitializerService
                 }
                 """;
 
+            // Kept out of UniFocl.EditorBridge because UnityEditor.TestRunner sets
+            // "autoReferenced": false and is gated behind UNITY_TESTS_FRAMEWORK. Carrying the
+            // same define constraint here means Unity skips this assembly entirely when the test
+            // framework package is absent, instead of failing the whole bridge to compile.
+            var testRunnerAsmdef =
+                """
+                {
+                  "name": "UniFocl.EditorBridge.TestRunner",
+                  "rootNamespace": "UniFocl.EditorBridge.TestRunner",
+                  "references": [
+                    "UniFocl.EditorBridge",
+                    "UnityEditor.TestRunner"
+                  ],
+                  "includePlatforms": [
+                    "Editor"
+                  ],
+                  "excludePlatforms": [],
+                  "allowUnsafeCode": false,
+                  "overrideReferences": false,
+                  "precompiledReferences": [],
+                  "autoReferenced": false,
+                  "defineConstraints": [
+                    "UNITY_TESTS_FRAMEWORK"
+                  ],
+                  "versionDefines": [
+                    {
+                      "name": "com.unity.test-framework",
+                      "expression": "",
+                      "define": "UNITY_TESTS_FRAMEWORK"
+                    }
+                  ],
+                  "noEngineReferences": false
+                }
+                """;
+
             var runtimeAsmdef =
                 """
                 {
@@ -357,6 +400,7 @@ internal sealed class EditorDependencyInitializerService
 
             File.WriteAllText(Path.Combine(payloadPath, "package.json"), packageJson + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "UniFocl.EditorBridge.asmdef"), asmdef + Environment.NewLine, Encoding.UTF8);
+            File.WriteAllText(Path.Combine(payloadPath, "Editor", "TestRunner", "UniFocl.EditorBridge.TestRunner.asmdef"), testRunnerAsmdef + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Runtime", "UniFocl.Runtime.asmdef"), runtimeAsmdef + Environment.NewLine, Encoding.UTF8);
 
             var resourceToTarget = new (string Resource, string RelativePath)[]
@@ -395,6 +439,8 @@ internal sealed class EditorDependencyInitializerService
                 (UnifoclCompilationServiceResource,     Path.Combine("Editor", "Services", "UnifoclCompilationService.cs")),
                 (CompilationStateValidationServiceResource, Path.Combine("Editor", "Services", "CompilationStateValidationService.cs")),
                 (CompileResultPersistenceServiceResource, Path.Combine("Editor", "Services", "CompileResultPersistenceService.cs")),
+                (DaemonTestRunnerBridgeResource,        Path.Combine("Editor", "Services", "DaemonTestRunnerBridge.cs")),
+                (UnifoclTestRunnerAdapterResource,      Path.Combine("Editor", "TestRunner", "UnifoclTestRunnerAdapter.cs")),
                 // Runtime operations (3.7.0+)
                 (DaemonRuntimeBridgeResource,           Path.Combine("Editor", "Services", "DaemonRuntimeBridge.cs")),
                 (DaemonRuntimeModelsServiceResource,    Path.Combine("Editor", "Services", "DaemonRuntimeModels.cs")),

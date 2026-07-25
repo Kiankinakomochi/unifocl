@@ -455,6 +455,8 @@ namespace UniFocl.EditorBridge
                 "build-targets" => Task.FromResult(ExecuteBuildTargets()),
                 "compile-request" => Task.FromResult(ExecuteCompileRequest(request)),
                 "compile-status" => Task.FromResult(ExecuteCompileStatus()),
+                "test-run" => Task.FromResult(DaemonTestRunnerBridge.ExecuteTestRun(request)),
+                "test-list" => Task.FromResult(DaemonTestRunnerBridge.ExecuteTestList(request)),
                 "hierarchy-find" => Task.FromResult(ExecuteHierarchyFind(request)),
                 "settings-inspect" => Task.FromResult(ExecuteSettingsInspect()),
                 "console-dump" => Task.FromResult(ExecuteConsoleDump(request)),

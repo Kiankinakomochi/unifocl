@@ -496,7 +496,7 @@ internal sealed partial class DaemonControlService
         }
     }
 
-    private static async Task<bool> IsProjectCommandEndpointResponsiveAsync(int port, TimeSpan timeout)
+    public static async Task<bool> IsProjectCommandEndpointResponsiveAsync(int port, TimeSpan timeout)
     {
         var probe = await ProbeProjectCommandEndpointAsync(port, timeout);
         return probe.Ok;

@@ -31,7 +31,7 @@ internal static class CliAgenticIssueService
                 escalationEvidence = line;
             }
 
-            if (lower.StartsWith("error") || lower.Contains("failed") || lower.StartsWith("x "))
+            if (lower.StartsWith("error") || ContainsFailureWord(lower) || lower.StartsWith("x "))
             {
                 var code = GuessErrorCode(lower);
                 if (code == "E_UNITY_API" && lower.Contains("being used by another process"))
@@ -61,6 +61,40 @@ internal static class CliAgenticIssueService
 
         return (errors, warnings, requiresEscalation, escalationEvidence);
     }
+
+    /// <summary>
+    /// Matches "failed" as a whole word rather than as a fragment of an identifier.
+    /// </summary>
+    /// <remarks>
+    /// This classifier runs over the log stream of every agentic exec, and <c>test list</c> prints
+    /// one line per test case using the fully-qualified test name. Both boundaries must be checked:
+    /// a trailing-only fragment such as <c>Purchase_GrantFailure_ReturnsGrantFailed</c> is caught by
+    /// the left check, while a leading one such as <c>Foo.FailedStateTests.Handles_Retry</c> is only
+    /// caught by the right. Real failure messages ("failed to write", "compile: failed") keep a
+    /// separator on both sides and still match.
+    /// </remarks>
+    internal static bool ContainsFailureWord(string normalizedLine)
+    {
+        const string token = "failed";
+        for (var index = normalizedLine.IndexOf(token, StringComparison.Ordinal);
+             index >= 0;
+             index = normalizedLine.IndexOf(token, index + 1, StringComparison.Ordinal))
+        {
+            var startsWord = index == 0 || !IsWordCharacter(normalizedLine[index - 1]);
+
+            var afterToken = index + token.Length;
+            var endsWord = afterToken >= normalizedLine.Length || !IsWordCharacter(normalizedLine[afterToken]);
+
+            if (startsWord && endsWord)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsWordCharacter(char value) => char.IsLetterOrDigit(value) || value == '_';
 
     private static bool IsBenignUnityLicensingLine(string normalizedLine)
     {

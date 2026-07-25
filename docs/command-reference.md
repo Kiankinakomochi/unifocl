@@ -208,8 +208,8 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `addressable bulk add --folder <path> --group <name> [--type <T>]` |  | Add all matching assets in a folder to a group in one operation. |
 | `addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]` |  | Add/remove labels for matching folder assets in one operation. |
 | `addressable analyze [--duplicate]` |  | Output structured Addressables analysis or duplicate dependency report. |
-| `test list` |  | List all available edit-mode tests (name + assembly). No daemon required. |
-| `test run editmode [--timeout <s>]` |  | Run all EditMode tests via Unity subprocess; returns structured JSON results. Default timeout 600s. |
+| `test list` |  | List all available edit-mode tests (name + assembly). Uses the attached editor when open, otherwise a Unity subprocess. |
+| `test run editmode [--timeout <s>]` |  | Run all EditMode tests; uses the attached editor when open, otherwise a Unity subprocess. Returns structured JSON results. Default timeout 600s. |
 | `test run playmode [--timeout <s>]` |  | Run all PlayMode tests via Unity subprocess. May trigger player build. Default timeout 1800s. |
 | `diag script-defines` |  | Show scripting define symbols per build target group in project mode. |
 | `diag compile-errors` |  | Show compiler messages from last compilation pass in project mode. |
@@ -713,6 +713,10 @@ unifocl exec "test run playmode --timeout 3600" --agentic --format json --projec
 ```
 
 ExecV2 operations: `test.list` (`SafeRead`), `test.run` (`PrivilegedExec` — requires approval on first call), `test.flaky-report` (`SafeRead`).
+
+**Execution paths:** with a project open, EditMode tests run **inside the attached editor** via `TestRunnerApi` — no second Unity, no lock conflict (requires `com.unity.test-framework`). With nothing attached, tests run as a Unity subprocess.
+
+**Unity project lock:** the subprocess path launches its own Unity, and Unity refuses to open a project that is already open. This affects PlayMode always, and EditMode only when no daemon is attached. Quit the editor first (in host mode `/close` is enough; in bridge mode it is not — it leaves your GUI editor running), or target a separate clone or git worktree. unifocl detects a held lock up front and fails with a resolution hint instead of running.
 
 Full reference: [`test-orchestration.md`](test-orchestration.md)
 
