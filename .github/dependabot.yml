@@ -1,0 +1,17 @@
+version: 2
+
+# Actions in .github/workflows are pinned to full commit SHAs so a moved tag
+# cannot swap code in underneath us. That only stays safe if the pins actually
+# move forward — Dependabot opens the PRs that keep them current, rewriting
+# both the SHA and its trailing version comment.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: chore
