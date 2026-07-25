@@ -31,7 +31,7 @@ internal static class CliAgenticIssueService
                 escalationEvidence = line;
             }
 
-            if (lower.StartsWith("error") || lower.Contains("failed") || lower.StartsWith("x "))
+            if (lower.StartsWith("error") || ContainsFailureWord(lower) || lower.StartsWith("x "))
             {
                 var code = GuessErrorCode(lower);
                 if (code == "E_UNITY_API" && lower.Contains("being used by another process"))
@@ -60,6 +60,34 @@ internal static class CliAgenticIssueService
         }
 
         return (errors, warnings, requiresEscalation, escalationEvidence);
+    }
+
+    /// <summary>
+    /// Matches "failed" as a word rather than as a fragment of an identifier.
+    /// <c>test list</c> prints one line per test case, and names like
+    /// <c>Purchase_GrantFailure_ReturnsGrantFailed</c> would otherwise report a successful
+    /// listing as a failed command.
+    /// </summary>
+    private static bool ContainsFailureWord(string normalizedLine)
+    {
+        const string token = "failed";
+        for (var index = normalizedLine.IndexOf(token, StringComparison.Ordinal);
+             index >= 0;
+             index = normalizedLine.IndexOf(token, index + 1, StringComparison.Ordinal))
+        {
+            if (index == 0)
+            {
+                return true;
+            }
+
+            var previous = normalizedLine[index - 1];
+            if (!char.IsLetterOrDigit(previous) && previous != '_')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsBenignUnityLicensingLine(string normalizedLine)

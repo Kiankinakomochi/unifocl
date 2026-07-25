@@ -16,6 +16,13 @@ bump: minor
   `UNITY_TESTS_FRAMEWORK`. Unity skips it when `com.unity.test-framework` is absent, and unifocl
   reports that explicitly rather than failing obscurely.
 
+### Fixed
+
+- The agentic log scanner no longer treats `failed` inside an identifier as a command failure.
+  `test list` prints one line per test case, so names such as
+  `Purchase_GrantFailure_ReturnsGrantFailed` reported a successful listing as `status: error`
+  with exit code 2. The match is now anchored to word boundaries.
+
 ### Changed
 
 - `test run editmode` / `test list` select their execution path automatically: in-editor when a
