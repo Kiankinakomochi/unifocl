@@ -1,5 +1,81 @@
 # Changelog
 
+## 3.17.0 - 2026-07-25
+### Added
+
+- **EditMode tests now run inside the attached editor.** With a project open, `test run editmode`
+  and `test list` drive Unity's `TestRunnerApi` in the editor that already holds the project
+  instead of launching a second Unity, so the project lock is never contended. Previously these
+  commands could not succeed at all while a project was open — Unity refuses to open the same
+  project twice, and every `/open` mode holds the lock.
+- Test names and assemblies from `test list` are now read from the test tree when running
+  in-editor, replacing the stdout-scraping heuristic that could report Unity banner lines
+  (e.g. `Branch: 6000.4/staging`) as test cases.
+- The editor bridge ships a new `UniFocl.EditorBridge.TestRunner` assembly, constrained to
+  `UNITY_TESTS_FRAMEWORK`. Unity skips it when `com.unity.test-framework` is absent, and unifocl
+  reports that explicitly rather than failing obscurely.
+
+### Fixed
+
+- The agentic log scanner no longer treats `failed` inside an identifier as a command failure.
+  `test list` prints one line per test case, so names such as
+  `Purchase_GrantFailure_ReturnsGrantFailed` (trailing fragment) or `Foo.FailedStateTests`
+  (leading fragment) reported a successful listing as `status: error` with exit code 2. The match
+  is now anchored to word boundaries on both sides. This classifier runs over every agentic exec,
+  not just `test list`.
+- Diagnostics for a failed subprocess run now search both output streams for Unity's fatal
+  batchmode banner. Previously the first non-empty stream won outright, so any licensing noise on
+  stderr suppressed the actual cause — which Unity writes to stdout.
+- A failure reported by the editor without a message no longer falls through to a green
+  zero-count summary.
+- `DispatchTestJobAsync` reports cancellation as a structured error instead of throwing
+  `OperationCanceledException` out of a method whose callers promise ExecV2 a structured result.
+
+### Changed
+
+- `test run editmode` / `test list` select their execution path automatically: in-editor when a
+  daemon is answering for the project, subprocess otherwise. Both write the same NUnit v3 XML to
+  `Logs/unifocl-test/`, so the structured output contract is unchanged.
+- PlayMode continues to use the subprocess path and therefore still requires the project to be
+  closed.
+- Completion is signalled through `Temp/unifocl/test-results/<requestId>.json` rather than the
+  daemon response, so a domain reload during a run cannot swallow the result — the same on-disk
+  handoff `/compile` uses. Markers older than six hours are swept on the next job so they cannot
+  accumulate one file per run.
+- The editor-side `ICallbacks` implementation registers once per domain rather than once per run.
+  Unity's `CallbacksHolder` appends without deduplicating, so the previous code left `RunFinished`
+  firing once for every run ever started, and leaked a `TestRunnerApi` ScriptableObject each time.
+
+### Documentation
+
+- `docs/test-orchestration.md` documents both execution paths, and records that `/close` releases
+  the project lock in host mode but not in bridge mode, where it detaches the session and leaves
+  the GUI editor running.
+### Fixed
+
+- `test run` and `test list` no longer report a silent success when Unity never started. A run that
+  produces no results file is now an error carrying Unity's exit code and the tail of its output,
+  instead of a green `total=0 passed=0 failed=0` result.
+- `test` commands detect a held Unity project lock (`Temp/UnityLockfile`) before launching and fail
+  with a resolution hint. Unity refuses to open a project twice, so a run started while the project
+  is open — including when opened by unifocl's own daemon — aborted before executing any test.
+- A stale results XML from an earlier run can no longer be reported as the current run's result; the
+  file is cleared first and only accepted if the run that started actually wrote it.
+- Unity's stdout/stderr is persisted to `Logs/unifocl-test/unity-<platform>.log` and drained before
+  the process handle is released, so fatal startup errors are no longer discarded.
+
+### Changed
+
+- `test run` returns `ok: false` whenever tests failed, matching the documented contract (previously
+  a non-zero Unity exit code combined with zero parsed failures could report `ok: true`).
+- Test history no longer records runs that produced no results file.
+
+### Documentation
+
+- `docs/test-orchestration.md` gains a **Unity Project Lock** section and corrects the multi-agent
+  safety guidance: concurrent `test` runs against the same project path do not work, and the exit
+  code table now matches the implementation.
+
 ## 3.16.1 - 2026-07-25
 ### Changed
 - CI no longer uses Personal Access Tokens. The changelog aggregation step moved
