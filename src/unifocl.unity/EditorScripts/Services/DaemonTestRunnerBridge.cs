@@ -55,6 +55,9 @@ namespace UniFocl.EditorBridge
         // sequences when used as a file name.
         private static readonly Regex SafeRequestIdRegex = new("^[a-zA-Z0-9_-]+$", RegexOptions.Compiled);
 
+        // Comfortably longer than any CLI poll budget, so a marker this old has no waiter left.
+        private static readonly TimeSpan StaleMarkerThreshold = TimeSpan.FromHours(6);
+
         public static string ProjectRoot => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
 
         /// <summary>Completion markers the CLI polls for.</summary>
@@ -182,6 +185,38 @@ namespace UniFocl.EditorBridge
             if (clearXml)
             {
                 TryDelete(GetResultsXmlPath());
+            }
+
+            SweepStaleMarkers();
+        }
+
+        /// <summary>
+        /// Request ids are unique, so a completed marker is never overwritten and they would
+        /// otherwise accumulate one file per job until Unity next clears Temp/. Nothing can still
+        /// be waiting on a marker older than the threshold.
+        /// </summary>
+        private static void SweepStaleMarkers()
+        {
+            try
+            {
+                string directory = GetResultDirectory();
+                if (!Directory.Exists(directory))
+                {
+                    return;
+                }
+
+                DateTime cutoff = DateTime.UtcNow - StaleMarkerThreshold;
+                foreach (string path in Directory.GetFiles(directory, "*.json"))
+                {
+                    if (File.GetLastWriteTimeUtc(path) < cutoff)
+                    {
+                        TryDelete(path);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[unifocl] could not sweep stale test markers: {ex.Message}");
             }
         }
 

@@ -40,6 +40,8 @@ internal sealed class TestCommandService
     private const int FailureDetailLineLimit = 12;
     private const int FailureDetailLengthLimit = 600;
 
+    private const string FatalErrorBanner = "Aborting batchmode due to fatal error";
+
     private const string ProjectLockedMessage =
         "another Unity instance already has this project open (Temp/UnityLockfile is held). "
         + "Unity cannot open the same project twice, so the run would abort before any test executes. "
@@ -553,12 +555,13 @@ internal sealed class TestCommandService
 
         if (!wait.Payload.Ok)
         {
-            return new TestRunOutcome(false, empty, wait.Payload.Message);
+            return new TestRunOutcome(false, empty, DescribeEditorFailure(wait.Payload));
         }
 
-        var resultsFile = string.IsNullOrWhiteSpace(wait.Payload.XmlPath)
-            ? Path.Combine(artifactsDir, "test-results-editmode.xml")
-            : wait.Payload.XmlPath;
+        // Recomputed rather than taken from the payload, the same way TestCompletionWaiter
+        // recomputes the marker path: the editor writes into the artifacts directory it shares
+        // with the subprocess path, so there is nothing to learn from the reported value.
+        var resultsFile = Path.Combine(artifactsDir, "test-results-editmode.xml");
 
         if (!File.Exists(resultsFile))
         {
@@ -605,7 +608,7 @@ internal sealed class TestCommandService
 
         if (!wait.Payload.Ok)
         {
-            return ([], wait.Payload.Message);
+            return ([], DescribeEditorFailure(wait.Payload));
         }
 
         var entries = (wait.Payload.Tests ?? [])
@@ -634,7 +637,12 @@ internal sealed class TestCommandService
             return (null, $"could not reach the editor bridge on port {port}: {ex.Message}");
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
+        // Reported rather than thrown: callers of this method promise ExecV2 a structured
+        // (Ok, Result, Error) and an escaping OperationCanceledException would break that.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return (null, "cancelled before the editor reported acceptance");
+        }
 
         if (!response.Ok)
         {
@@ -649,6 +657,16 @@ internal sealed class TestCommandService
 
         return (accepted, null);
     }
+
+    /// <summary>
+    /// Guarantees a non-empty error string. An empty message would leave <c>Error</c> null on a
+    /// failed outcome, and the caller would fall through and print a green zero-count summary —
+    /// the exact failure mode the surrounding work exists to remove.
+    /// </summary>
+    private static string DescribeEditorFailure(TestJobResultDto payload) =>
+        string.IsNullOrWhiteSpace(payload.Message)
+            ? "the editor reported a failure with no message"
+            : payload.Message;
 
     private static TestJobAcceptedDto? TryParseAccepted(string? content)
     {
@@ -773,7 +791,7 @@ internal sealed class TestCommandService
     /// run that would otherwise succeed. If the probe cannot decide, the run proceeds and
     /// <see cref="BuildFailureMessage"/> recognises Unity's own multi-instance error as a backstop.
     /// </remarks>
-    private static bool IsProjectLockHeld(string projectPath)
+    internal static bool IsProjectLockHeld(string projectPath)
     {
         var lockFile = Path.Combine(projectPath, "Temp", "UnityLockfile");
         if (!File.Exists(lockFile))
@@ -830,39 +848,53 @@ internal sealed class TestCommandService
             : $"{reason}: {detail} (full output: {logFile})";
     }
 
-    private static string ExtractFailureDetail(string stdout, string stderr)
+    /// <summary>
+    /// Picks the most useful lines out of a failed run's output.
+    /// </summary>
+    /// <remarks>
+    /// Unity writes its fatal batchmode banner to stdout while emitting licensing and native noise
+    /// on stderr, so the banner is searched for across both streams before falling back to a tail.
+    /// Returning the first non-empty stream's tail would surface the noise and drop the cause.
+    /// </remarks>
+    internal static string ExtractFailureDetail(string stdout, string stderr)
     {
-        foreach (var source in new[] { stderr, stdout })
+        var sources = new[] { stderr, stdout }
+            .Select(SplitIntoLines)
+            .Where(lines => lines.Count > 0)
+            .ToList();
+        if (sources.Count == 0)
         {
-            if (string.IsNullOrWhiteSpace(source))
-            {
-                continue;
-            }
+            return string.Empty;
+        }
 
-            var lines = source
+        foreach (var lines in sources)
+        {
+            var bannerIndex = lines.FindIndex(line =>
+                line.StartsWith(FatalErrorBanner, StringComparison.OrdinalIgnoreCase));
+            if (bannerIndex >= 0)
+            {
+                return Summarize(lines.Skip(bannerIndex));
+            }
+        }
+
+        return Summarize(sources[0].TakeLast(FailureDetailLineLimit));
+    }
+
+    private static List<string> SplitIntoLines(string? source) =>
+        string.IsNullOrWhiteSpace(source)
+            ? []
+            : source
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.Trim())
                 .Where(line => line.Length > 0)
                 .ToList();
-            if (lines.Count == 0)
-            {
-                continue;
-            }
 
-            // Unity prefixes its fatal batchmode errors with a fixed banner; prefer that over the tail.
-            var bannerIndex = lines.FindIndex(line =>
-                line.StartsWith("Aborting batchmode due to fatal error", StringComparison.OrdinalIgnoreCase));
-            var selected = bannerIndex >= 0
-                ? lines.Skip(bannerIndex).Take(FailureDetailLineLimit)
-                : lines.TakeLast(FailureDetailLineLimit);
-
-            var joined = string.Join(" | ", selected);
-            return joined.Length > FailureDetailLengthLimit
-                ? joined[..FailureDetailLengthLimit] + "..."
-                : joined;
-        }
-
-        return string.Empty;
+    private static string Summarize(IEnumerable<string> lines)
+    {
+        var joined = string.Join(" | ", lines.Take(FailureDetailLineLimit));
+        return joined.Length > FailureDetailLengthLimit
+            ? joined[..FailureDetailLengthLimit] + "..."
+            : joined;
     }
 
     private static void PersistUnityOutput(string logFile, string stdout, string stderr)
@@ -884,7 +916,7 @@ internal sealed class TestCommandService
     /// Reports whether the results file was written by the run that started at
     /// <paramref name="runStartedUtc"/>, rather than left over from an earlier one.
     /// </summary>
-    private static bool ProducedResults(string resultsFile, DateTime runStartedUtc)
+    internal static bool ProducedResults(string resultsFile, DateTime runStartedUtc)
     {
         try
         {

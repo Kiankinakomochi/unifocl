@@ -63,25 +63,29 @@ internal static class CliAgenticIssueService
     }
 
     /// <summary>
-    /// Matches "failed" as a word rather than as a fragment of an identifier.
-    /// <c>test list</c> prints one line per test case, and names like
-    /// <c>Purchase_GrantFailure_ReturnsGrantFailed</c> would otherwise report a successful
-    /// listing as a failed command.
+    /// Matches "failed" as a whole word rather than as a fragment of an identifier.
     /// </summary>
-    private static bool ContainsFailureWord(string normalizedLine)
+    /// <remarks>
+    /// This classifier runs over the log stream of every agentic exec, and <c>test list</c> prints
+    /// one line per test case using the fully-qualified test name. Both boundaries must be checked:
+    /// a trailing-only fragment such as <c>Purchase_GrantFailure_ReturnsGrantFailed</c> is caught by
+    /// the left check, while a leading one such as <c>Foo.FailedStateTests.Handles_Retry</c> is only
+    /// caught by the right. Real failure messages ("failed to write", "compile: failed") keep a
+    /// separator on both sides and still match.
+    /// </remarks>
+    internal static bool ContainsFailureWord(string normalizedLine)
     {
         const string token = "failed";
         for (var index = normalizedLine.IndexOf(token, StringComparison.Ordinal);
              index >= 0;
              index = normalizedLine.IndexOf(token, index + 1, StringComparison.Ordinal))
         {
-            if (index == 0)
-            {
-                return true;
-            }
+            var startsWord = index == 0 || !IsWordCharacter(normalizedLine[index - 1]);
 
-            var previous = normalizedLine[index - 1];
-            if (!char.IsLetterOrDigit(previous) && previous != '_')
+            var afterToken = index + token.Length;
+            var endsWord = afterToken >= normalizedLine.Length || !IsWordCharacter(normalizedLine[afterToken]);
+
+            if (startsWord && endsWord)
             {
                 return true;
             }
@@ -89,6 +93,8 @@ internal static class CliAgenticIssueService
 
         return false;
     }
+
+    private static bool IsWordCharacter(char value) => char.IsLetterOrDigit(value) || value == '_';
 
     private static bool IsBenignUnityLicensingLine(string normalizedLine)
     {

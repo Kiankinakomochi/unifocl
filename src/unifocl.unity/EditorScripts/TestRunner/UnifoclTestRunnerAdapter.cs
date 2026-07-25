@@ -29,6 +29,8 @@ namespace UniFocl.EditorBridge.TestRunner
     {
         private static readonly UnifoclTestRunnerAdapter Instance = new();
 
+        private static TestRunnerApi? _api;
+
         /// <summary>
         /// The requestId of the job in flight. Static so it survives for the lifetime of the
         /// domain; a domain reload mid-run is handled by the CLI's poll timeout rather than by
@@ -36,12 +38,36 @@ namespace UniFocl.EditorBridge.TestRunner
         /// </summary>
         private static string _activeRequestId = string.Empty;
 
-        private static string _activeKind = string.Empty;
-
         static UnifoclTestRunnerAdapter()
         {
+            // Registered once per domain, never per run: Unity's CallbacksHolder appends without
+            // deduplicating, so a per-run registration would leave RunFinished firing once for
+            // every run ever started. The holder is reset by a domain reload, and so is this
+            // static constructor, which keeps the two in step.
+            TestRunnerApi.RegisterTestCallback(Instance);
+
             DaemonTestRunnerBridge.RunHandler = StartRun;
             DaemonTestRunnerBridge.ListHandler = StartList;
+        }
+
+        /// <summary>
+        /// One API object per domain. ScriptableObjects are not collected like plain objects, so
+        /// creating one per call would leak instances until the next reload.
+        /// </summary>
+        private static TestRunnerApi Api
+        {
+            get
+            {
+                // Unity overloads equality so a destroyed object also compares equal to null,
+                // which is the behaviour wanted here. That overload is opaque to the compiler's
+                // null-state analysis, hence the suppression on the return.
+                if (_api == null)
+                {
+                    _api = ScriptableObject.CreateInstance<TestRunnerApi>();
+                }
+
+                return _api!;
+            }
         }
 
         // ── Handlers registered with the bridge ─────────────────────────────────
@@ -50,24 +76,20 @@ namespace UniFocl.EditorBridge.TestRunner
         {
             if (!string.IsNullOrEmpty(_activeRequestId))
             {
-                return $"a test job is already running (requestId={_activeRequestId})";
+                return $"a test job is already running (requestId={_activeRequestId}). "
+                     + "If the CLI timed out and left it stranded, trigger a domain reload "
+                     + "(recompile any script, or use the Test Runner window) to clear it.";
             }
 
             try
             {
-                var api = ScriptableObject.CreateInstance<TestRunnerApi>();
-                api.RegisterCallbacks(Instance);
-
                 _activeRequestId = requestId;
-                _activeKind = DaemonTestRunnerBridge.RunKind;
-
-                api.Execute(new ExecutionSettings(new Filter { testMode = TestMode.EditMode }));
+                Api.Execute(new ExecutionSettings(new Filter { testMode = TestMode.EditMode }));
                 return null;
             }
             catch (Exception ex)
             {
                 _activeRequestId = string.Empty;
-                _activeKind = string.Empty;
                 return $"{ex.GetType().Name}: {ex.Message}";
             }
         }
@@ -76,11 +98,9 @@ namespace UniFocl.EditorBridge.TestRunner
         {
             try
             {
-                var api = ScriptableObject.CreateInstance<TestRunnerApi>();
-
                 // The callback may fire asynchronously once test assemblies have been scanned,
                 // which is why listing goes through the same marker handoff as a run.
-                api.RetrieveTestList(TestMode.EditMode, root =>
+                Api.RetrieveTestList(TestMode.EditMode, root =>
                 {
                     var entries = new List<TestListEntry>();
                     try
@@ -119,7 +139,6 @@ namespace UniFocl.EditorBridge.TestRunner
         {
             string requestId = _activeRequestId;
             _activeRequestId = string.Empty;
-            _activeKind = string.Empty;
 
             if (string.IsNullOrEmpty(requestId))
             {

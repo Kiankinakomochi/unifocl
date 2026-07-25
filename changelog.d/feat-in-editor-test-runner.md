@@ -20,8 +20,17 @@ bump: minor
 
 - The agentic log scanner no longer treats `failed` inside an identifier as a command failure.
   `test list` prints one line per test case, so names such as
-  `Purchase_GrantFailure_ReturnsGrantFailed` reported a successful listing as `status: error`
-  with exit code 2. The match is now anchored to word boundaries.
+  `Purchase_GrantFailure_ReturnsGrantFailed` (trailing fragment) or `Foo.FailedStateTests`
+  (leading fragment) reported a successful listing as `status: error` with exit code 2. The match
+  is now anchored to word boundaries on both sides. This classifier runs over every agentic exec,
+  not just `test list`.
+- Diagnostics for a failed subprocess run now search both output streams for Unity's fatal
+  batchmode banner. Previously the first non-empty stream won outright, so any licensing noise on
+  stderr suppressed the actual cause — which Unity writes to stdout.
+- A failure reported by the editor without a message no longer falls through to a green
+  zero-count summary.
+- `DispatchTestJobAsync` reports cancellation as a structured error instead of throwing
+  `OperationCanceledException` out of a method whose callers promise ExecV2 a structured result.
 
 ### Changed
 
@@ -32,7 +41,11 @@ bump: minor
   closed.
 - Completion is signalled through `Temp/unifocl/test-results/<requestId>.json` rather than the
   daemon response, so a domain reload during a run cannot swallow the result — the same on-disk
-  handoff `/compile` uses.
+  handoff `/compile` uses. Markers older than six hours are swept on the next job so they cannot
+  accumulate one file per run.
+- The editor-side `ICallbacks` implementation registers once per domain rather than once per run.
+  Unity's `CallbacksHolder` appends without deduplicating, so the previous code left `RunFinished`
+  firing once for every run ever started, and leaked a `TestRunnerApi` ScriptableObject each time.
 
 ### Documentation
 

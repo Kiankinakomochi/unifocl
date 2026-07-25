@@ -940,7 +940,7 @@ Interact directly with the active environment. Mutating operations are safely ro
 | `addressable bulk label --folder <path> --label <name> [--type <T>] [--remove]` |  | Add/remove labels for matching folder assets in one operation. |
 | `addressable analyze [--duplicate]` |  | Output structured Addressables analysis or duplicate dependency report. |
 | `test list` |  | List all available edit-mode tests (name + assembly). Uses the attached editor when open, otherwise a Unity subprocess. |
-| `test run editmode [--timeout <s>]` |  | Run all EditMode tests via Unity subprocess; returns structured JSON results. Default timeout 600s. |
+| `test run editmode [--timeout <s>]` |  | Run all EditMode tests; uses the attached editor when open, otherwise a Unity subprocess. Returns structured JSON results. Default timeout 600s. |
 | `test run playmode [--timeout <s>]` |  | Run all PlayMode tests via Unity subprocess. May trigger player build. Default timeout 1800s. |
 | `diag script-defines` |  | Show scripting define symbols per build target group in project mode. |
 | `diag compile-errors` |  | Show compiler messages from last compilation pass in project mode. |

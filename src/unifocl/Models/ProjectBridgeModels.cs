@@ -82,7 +82,11 @@ internal sealed record CompilePersistedResultDto(
     CompilePersistedIssueDto[] Warnings,
     bool ForceRecompile);
 
-/// <summary>Payload returned when the editor accepts a test job; <c>ResultPath</c> is polled.</summary>
+/// <summary>
+/// Payload returned when the editor accepts a test job. Only <c>RequestId</c> is consumed:
+/// <c>ResultPath</c> and <c>ArtifactsPath</c> are protocol documentation, and the CLI deliberately
+/// recomputes both locally rather than following a path the editor reported. Leave them unread.
+/// </summary>
 internal sealed record TestJobAcceptedDto(
     string RequestId,
     string Kind,
