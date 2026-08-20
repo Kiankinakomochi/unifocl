@@ -75,10 +75,12 @@ internal sealed partial class DaemonControlService
             {
                 var details = BuildProcessFailureSummary(outputTail);
                 var compileLines = ExtractCompileErrorLines(outputTail);
+                var recoverableBuildWarnings = ExtractRecoverableBuildWarningLines(outputTail);
                 _lastStartupFailure = new DaemonStartupFailure(
                     IsCompileError: compileLines.Count > 0,
                     Summary: string.IsNullOrWhiteSpace(details) ? $"process exited with code {process.ExitCode}" : details,
-                    Lines: compileLines.Count > 0 ? compileLines : outputTail.ToList());
+                    Lines: compileLines.Count > 0 ? compileLines : outputTail.ToList(),
+                    RecoverableBuildWarnings: recoverableBuildWarnings);
                 log($"[red]daemon[/]: process exited before daemon became ready (pid {process.Id}, exit {process.ExitCode})");
                 if (!string.IsNullOrWhiteSpace(details))
                 {
@@ -90,7 +92,8 @@ internal sealed partial class DaemonControlService
                 _lastStartupFailure = new DaemonStartupFailure(
                     IsCompileError: false,
                     Summary: $"daemon did not respond on port {startOptions.Port} within {resolvedStartupTimeout.TotalSeconds:0}s",
-                    Lines: outputTail.ToList());
+                    Lines: outputTail.ToList(),
+                    RecoverableBuildWarnings: []);
                 log($"[red]daemon[/]: process launched (pid {process.Id}) but not responding on port {startOptions.Port} within {resolvedStartupTimeout.TotalSeconds:0}s");
                 TryTerminateSpawnedProcess(process, log);
             }
@@ -328,18 +331,31 @@ internal sealed partial class DaemonControlService
         return string.Join(" | ", outputTail.TakeLast(3));
     }
 
-    private static List<string> ExtractCompileErrorLines(Queue<string> outputTail)
+    internal static List<string> ExtractCompileErrorLines(Queue<string> outputTail)
     {
         var lines = outputTail
             .Where(line =>
                 line.Contains("error CS", StringComparison.OrdinalIgnoreCase)
                 || line.Contains("Scripts have compiler errors", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("Script Compilation Error", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("Tundra build failed", StringComparison.OrdinalIgnoreCase))
+                || line.Contains("Script Compilation Error", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.Ordinal)
             .Take(30)
             .ToList();
         return lines;
+    }
+
+    /// <summary>
+    /// Transient build-bootstrap failures (e.g. "Tundra build failed") are classified as
+    /// recoverable warnings rather than compile errors, matching
+    /// <see cref="CliAgenticIssueService"/>'s severity mapping for one-shot agentic parsing.
+    /// </summary>
+    internal static List<string> ExtractRecoverableBuildWarningLines(Queue<string> outputTail)
+    {
+        return outputTail
+            .Where(CliAgenticIssueService.IsRecoverableBuildFailureLine)
+            .Distinct(StringComparer.Ordinal)
+            .Take(30)
+            .ToList();
     }
 
     private static void TryTerminateSpawnedProcess(Process process, Action<string> log)
