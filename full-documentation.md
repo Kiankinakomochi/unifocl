@@ -1462,7 +1462,7 @@ The `diag` command family provides read-only structural introspection of the pro
 | Subcommand | Description |
 | --- | --- |
 | `script-defines` | Scripting define symbols per build target group (`PlayerSettings.GetScriptingDefineSymbolsForGroup`). |
-| `compile-errors` | Compiler messages from the last compilation pass (`CompilationPipeline.GetAssemblies` + `.compilerMessages`). |
+| `compile-errors` | Compiler messages from the last compilation pass, cross-checked against `EditorUtility.scriptCompilationFailed` and expected-vs-actual assembly output in `Library/ScriptAssemblies`. Reports a non-success status (`ok: false`) when the project does not compile. |
 | `assembly-graph` | Asmdef-level assembly dependency graph (`assemblyReferences` per assembly). |
 | `scene-deps` | Transitive `AssetDatabase.GetDependencies` per enabled build scene. |
 | `prefab-deps` | Transitive `AssetDatabase.GetDependencies` per prefab under `Assets/` (capped at 100). |
@@ -2271,9 +2271,15 @@ unifocl exec "/diag script-defines" --agentic --format json --project ./MyProjec
 
 ### `diag compile-errors`
 
-Reads `CompilationPipeline.GetAssemblies()` and collects all `CompilerMessage` entries from the last compilation pass.
+Reports whether the project compiles, combining three signals:
 
-> **Note:** This reflects the messages stored on the compiled assembly objects from Unity's last full compile — it does not trigger a recompilation.
+1. **Captured compiler messages** from the last compilation pass (collected via `CompilationPipeline.assemblyCompilationFinished`).
+2. **Unity's `EditorUtility.scriptCompilationFailed` flag** — authoritative even when no messages were captured (e.g. the daemon domain reloaded since the failing pass).
+3. **Expected-vs-actual assembly diff** — every assembly `CompilationPipeline.GetAssemblies()` intends to build must have its output DLL present in `Library/ScriptAssemblies`. An expected-but-missing DLL means that assembly's last compilation failed to emit, and it is reported as a compile failure with a synthetic `Error` message.
+
+When any signal indicates a broken compile state, the response envelope carries **`ok: false`** (a failed exec status), so agents and CI gates cannot mistake a broken project for a clean one. The diagnostic payload is still present in `content`.
+
+> **Note:** This reflects the state of Unity's last compile — it does not trigger a recompilation. Run `/asset refresh` (or `/compile request`) first if you changed scripts.
 
 **Output:**
 
@@ -2281,14 +2287,17 @@ Reads `CompilationPipeline.GetAssemblies()` and collects all `CompilerMessage` e
 {
   "op": "compile-errors",
   "assemblyCount": 12,
-  "errorCount": 1,
-  "warningCount": 3,
+  "errorCount": 2,
+  "warningCount": 0,
+  "compilationFailed": true,
+  "missingAssemblies": ["Game.Core"],
   "messages": [
     {
-      "assembly": "Assembly-CSharp",
-      "file": "Assets/Scripts/Player.cs",
-      "line": 42,
-      "message": "error CS0246: The type or namespace name 'Foo' could not be found",
+      "message": "Assets/Scripts/Player.cs(42,5): error CS0246: The type or namespace name 'Foo' could not be found",
+      "type": "Error"
+    },
+    {
+      "message": "assembly 'Game.Core' has no compiled output at Library/ScriptAssemblies/Game.Core.dll — its last compilation failed to emit a DLL; check Editor.log for 'error CS' lines",
       "type": "Error"
     }
   ]
@@ -2298,14 +2307,14 @@ Reads `CompilationPipeline.GetAssemblies()` and collects all `CompilerMessage` e
 | Field | Description |
 | --- | --- |
 | `assemblyCount` | Total number of assemblies discovered by the compilation pipeline |
-| `errorCount` | Messages with `type == "Error"` |
+| `errorCount` | Messages with `type == "Error"` (including synthetic missing-output messages) |
 | `warningCount` | Messages with `type == "Warning"` |
-| `messages[].assembly` | Name of the assembly the message belongs to |
-| `messages[].file` | Source file path |
-| `messages[].line` | Line number in the source file |
-| `messages[].type` | `Error`, `Warning`, or `Information` |
+| `compilationFailed` | `true` when the project is in a broken compile state (any of the three signals) |
+| `missingAssemblies` | Names of assemblies whose expected output DLL is absent from `Library/ScriptAssemblies` |
+| `messages[].message` | Full compiler message text; file/line context is embedded (e.g. `Assets/Foo.cs(42,5): error CS0246: ...`) |
+| `messages[].type` | `Error` or `Warning` |
 
-**Use case:** surface compile errors and warnings without opening the Unity editor console. Useful as a quick CI probe after a script change.
+**Use case:** surface compile errors without opening the Unity editor console, or gate an agent/CI workflow on the project actually compiling. `ok: true` with `errorCount: 0` is only reported when Unity's own compilation state confirms the last pass succeeded and every expected assembly emitted output.
 
 ```sh
 /diag compile-errors

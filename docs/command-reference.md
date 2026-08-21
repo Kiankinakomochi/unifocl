@@ -731,7 +731,7 @@ The `diag` command family provides read-only structural introspection of the pro
 | Subcommand | Description |
 | --- | --- |
 | `script-defines` | Scripting define symbols per build target group (`PlayerSettings.GetScriptingDefineSymbolsForGroup`). |
-| `compile-errors` | Compiler messages from the last compilation pass (`CompilationPipeline.GetAssemblies` + `.compilerMessages`). |
+| `compile-errors` | Compiler messages from the last compilation pass, cross-checked against `EditorUtility.scriptCompilationFailed` and expected-vs-actual assembly output in `Library/ScriptAssemblies`. Reports a non-success status (`ok: false`) when the project does not compile. |
 | `assembly-graph` | Asmdef-level assembly dependency graph (`assemblyReferences` per assembly). |
 | `scene-deps` | Transitive `AssetDatabase.GetDependencies` per enabled build scene. |
 | `prefab-deps` | Transitive `AssetDatabase.GetDependencies` per prefab under `Assets/` (capped at 100). |

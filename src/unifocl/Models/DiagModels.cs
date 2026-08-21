@@ -10,12 +10,17 @@ internal sealed record DiagScriptDefinesResult(
 internal sealed record DiagBuildTargetEntry(string BuildTarget, string Group, string Defines);
 
 /// <summary>
-/// Compiler messages from the last compilation pass.
+/// Compiler messages from the last compilation pass, cross-checked against
+/// Unity's scriptCompilationFailed flag and expected-vs-actual assembly output.
+/// MissingAssemblies lists assemblies the compilation pipeline intends to build
+/// whose output DLL is absent (i.e. their last compilation failed to emit).
 /// </summary>
 internal sealed record DiagCompileErrorsResult(
     int AssemblyCount,
     int ErrorCount,
     int WarningCount,
+    bool CompilationFailed,
+    List<string>? MissingAssemblies,
     List<DiagCompilerMessage> Messages);
 
 /// Message text from Unity includes file/line context inline

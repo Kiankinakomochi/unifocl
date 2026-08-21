@@ -79,17 +79,95 @@ namespace UniFocl.EditorBridge
             {
                 message = e,
                 type = "Error"
-            }).ToArray();
+            }).ToList();
 
+            // The event cache can be empty even though the project is broken
+            // (the daemon domain may have reloaded since the failing pass), so
+            // cross-check against ground truth: an assembly the compilation
+            // pipeline intends to build whose output DLL is absent from
+            // Library/ScriptAssemblies did not compile.
+            string projectRoot;
+            try
+            {
+                projectRoot = Path.GetDirectoryName(Application.dataPath) ?? Directory.GetCurrentDirectory();
+            }
+            catch
+            {
+                projectRoot = Directory.GetCurrentDirectory();
+            }
+
+            var missingAssemblies = new List<string>();
+            foreach (var assembly in assemblies)
+            {
+                var outputPath = assembly.outputPath;
+                if (string.IsNullOrEmpty(outputPath))
+                {
+                    continue;
+                }
+
+                bool exists;
+                try
+                {
+                    var fullPath = Path.IsPathRooted(outputPath)
+                        ? outputPath
+                        : Path.Combine(projectRoot, outputPath);
+                    exists = File.Exists(fullPath);
+                }
+                catch
+                {
+                    // best-effort: never let a path failure break the diagnostic
+                    continue;
+                }
+
+                if (!exists)
+                {
+                    missingAssemblies.Add(assembly.name);
+                    messages.Add(new DiagCompilerMessage
+                    {
+                        message = $"assembly '{assembly.name}' has no compiled output at {outputPath} — " +
+                                  "its last compilation failed to emit a DLL; check Editor.log for 'error CS' lines",
+                        type = "Error"
+                    });
+                }
+            }
+
+            // Unity's own flag for the last compilation pass survives domain
+            // reloads and is authoritative even when no messages were captured.
+            bool scriptCompilationFailed;
+            try
+            {
+                scriptCompilationFailed = EditorUtility.scriptCompilationFailed;
+            }
+            catch
+            {
+                scriptCompilationFailed = false;
+            }
+
+            var compilationFailed = scriptCompilationFailed || messages.Count > 0;
+            if (compilationFailed && messages.Count == 0)
+            {
+                messages.Add(new DiagCompilerMessage
+                {
+                    message = "Unity reports the last script compilation failed, but no compiler messages were " +
+                              "captured and no assembly output is missing — check Editor.log for 'error CS' lines",
+                    type = "Error"
+                });
+            }
+
+            var errorCount = messages.Count(m => m.type == "Error");
             var result = new DiagCompileErrorsResult
             {
                 assemblyCount = assemblies.Length,
-                errorCount = messages.Length,
+                errorCount = errorCount,
                 warningCount = 0,
-                messages = messages
+                compilationFailed = compilationFailed,
+                missingAssemblies = missingAssemblies.ToArray(),
+                messages = messages.ToArray()
             };
-            return BuildDiagResponse("compile-errors", JsonUtility.ToJson(result),
-                $"{assemblies.Length} assembl(ies), {messages.Length} error(s)");
+            var summary = compilationFailed
+                ? $"compilation failed — {errorCount} error(s), {missingAssemblies.Count} of {assemblies.Length} assembl(ies) missing compiled output"
+                : $"{assemblies.Length} assembl(ies), 0 error(s)";
+            return BuildDiagResponse("compile-errors", JsonUtility.ToJson(result), summary, ok: !compilationFailed);
         }
 
         // ── diag-assembly-graph ─────────────────────────────────────────
@@ -385,11 +463,11 @@ namespace UniFocl.EditorBridge
 
         // ── shared helpers ───────────────────────────────────────────────
 
-        private static string BuildDiagResponse(string op, string contentJson, string message)
+        private static string BuildDiagResponse(string op, string contentJson, string message, bool ok = true)
         {
             var response = new ProjectCommandResponse
             {
-                ok = true,
+                ok = ok,
                 message = message,
                 kind = "diag",
                 content = contentJson
@@ -437,6 +515,8 @@ namespace UniFocl.EditorBridge
             public int assemblyCount;
             public int errorCount;
             public int warningCount;
+            public bool compilationFailed;
+            public string[] missingAssemblies = Array.Empty<string>();
             public DiagCompilerMessage[] messages = Array.Empty<DiagCompilerMessage>();
         }
 

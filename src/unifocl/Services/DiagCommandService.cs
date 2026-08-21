@@ -84,6 +84,14 @@ internal sealed class DiagCommandService
 
         if (!response.Ok)
         {
+            // compile-errors reports ok:false when the project does not compile,
+            // with the diagnostic detail in the content payload — render it.
+            if (op == "compile-errors" && !string.IsNullOrWhiteSpace(response.Content))
+            {
+                RenderCompileErrors(response.Content, log);
+                return;
+            }
+
             log($"[red]diag[/]: {Markup.Escape(op)} failed — {Markup.Escape(response.Message)}");
             return;
         }
@@ -136,12 +144,21 @@ internal sealed class DiagCommandService
         catch { log("[red]diag[/]: compile-errors — failed to parse response"); return; }
         if (result is null) return;
 
-        var statusColor = result.ErrorCount == 0 ? CliTheme.Success : CliTheme.Error;
-        var statusIcon = result.ErrorCount == 0 ? "✓" : "✗";
+        var failed = result.CompilationFailed || result.ErrorCount > 0;
+        var statusColor = failed ? CliTheme.Error : CliTheme.Success;
+        var statusIcon = failed ? "✗" : "✓";
         log($"[bold {statusColor}]{statusIcon}[/] [{CliTheme.TextPrimary}]compile-errors[/]  " +
             $"[{CliTheme.TextMuted}]{result.AssemblyCount} assembl(ies)[/]  " +
             $"[{CliTheme.Error}]{result.ErrorCount} error(s)[/]  " +
             $"[{CliTheme.Warning}]{result.WarningCount} warning(s)[/]");
+        if (failed)
+        {
+            var missingCount = result.MissingAssemblies?.Count ?? 0;
+            var detail = missingCount > 0
+                ? $"compilation failed — {missingCount} assembl(ies) missing compiled output"
+                : "compilation failed";
+            log($"  [{CliTheme.Error}]{Markup.Escape(detail)}[/]");
+        }
 
         foreach (var msg in result.Messages)
         {

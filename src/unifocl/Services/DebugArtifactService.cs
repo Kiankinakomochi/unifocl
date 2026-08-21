@@ -293,6 +293,21 @@ internal sealed class DebugArtifactService
             if (result?.Ok != true)
             {
                 errors.Add(new DebugArtifactCollectionError(label, result?.Message ?? "failed"));
+
+                // Some diagnostics (e.g. diag-compile-errors on a broken project)
+                // report ok:false while still carrying the detail payload — keep it.
+                if (!string.IsNullOrEmpty(result?.Content))
+                {
+                    try
+                    {
+                        return JsonSerializer.Deserialize<JsonElement>(result.Content);
+                    }
+                    catch
+                    {
+                        // fall through to null
+                    }
+                }
+
                 return null;
             }
 
