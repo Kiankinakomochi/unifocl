@@ -121,7 +121,9 @@ internal sealed partial class ProjectViewService
         // name was split at a space — refuse instead of renaming a truncated target.
         if (tokens.Count > 4)
         {
-            outputs.Add($"[x] asset rename expects exactly <asset-path> <new-name> but got {tokens.Count - 2} arguments (first: '{tokens[2]}')");
+            // "error:" survives markup stripping, so the agentic envelope reports
+            // this refusal as an error instead of a success with a buried log line.
+            outputs.Add($"[red]error[/]: asset rename expects exactly <asset-path> <new-name> but got {tokens.Count - 2} arguments (first: '{tokens[2]}') — refusing the destructive operation");
             outputs.Add("[x] quote values containing spaces: asset rename \"Assets/My Folder/Foo.asset\" \"New Name\"");
             return true;
         }
@@ -197,7 +199,9 @@ internal sealed partial class ProjectViewService
         // split at a space — refuse instead of deleting the truncated target.
         if (tokens.Count > 3)
         {
-            outputs.Add($"[x] asset remove expects exactly one path but got {tokens.Count - 2} arguments (first: '{tokens[2]}')");
+            // "error:" survives markup stripping, so the agentic envelope reports
+            // this refusal as an error instead of a success with a buried log line.
+            outputs.Add($"[red]error[/]: asset remove expects exactly one path but got {tokens.Count - 2} arguments (first: '{tokens[2]}') — refusing the destructive operation");
             outputs.Add("[x] quote paths containing spaces: asset remove \"Assets/My Folder/Foo.asset\"");
             return true;
         }
