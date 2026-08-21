@@ -84,10 +84,15 @@ internal sealed class DiagCommandService
 
         if (!response.Ok)
         {
-            // compile-errors reports ok:false when the project does not compile,
-            // with the diagnostic detail in the content payload — render it.
+            // compile-errors reports ok:false when the project does not compile
+            // (or a compile is still running), with the diagnostic detail in the
+            // content payload. The leading "error:" line is load-bearing: the
+            // agentic issue classifier keys on it, so the exec envelope reports
+            // a non-success status even when the transport surfaced no failure
+            // line of its own.
             if (op == "compile-errors" && !string.IsNullOrWhiteSpace(response.Content))
             {
+                log($"[red]error[/]: compile-errors — {Markup.Escape(response.Message)}");
                 RenderCompileErrors(response.Content, log);
                 return;
             }
