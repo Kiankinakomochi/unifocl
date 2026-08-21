@@ -23,6 +23,20 @@ namespace UniFocl.EditorBridge.Profiling
             try
             {
                 var normalized = ProfilerPathUtils.NormalizeSnapshotPath(path);
+
+                // A memory snapshot is a raw file write the Undo sandbox cannot
+                // revert — skip the capture entirely during a dry-run.
+                if (DaemonDryRunContext.IsActive)
+                {
+                    return JsonUtility.ToJson(new ProfilerTakeSnapshotResponse
+                    {
+                        ok            = true,
+                        message       = $"Dry-run: memory snapshot skipped (no file written): {normalized}",
+                        path          = normalized,
+                        fileSizeBytes = 0,
+                    });
+                }
+
                 ProfilerPathUtils.EnsureParentDirectory(normalized);
 
                 var tempPath = ProfilerPathUtils.GetTempPathForAtomic(normalized);
@@ -39,10 +53,17 @@ namespace UniFocl.EditorBridge.Profiling
 
                     try
                     {
-                        if (File.Exists(finalPath))
-                            File.Delete(finalPath);
-                        File.Move(snapshotPath, finalPath);
-                        Debug.Log($"[unifocl] Memory snapshot saved: {finalPath} ({ProfilerPathUtils.GetFileSize(finalPath)} bytes)");
+                        if (DaemonDryRunFileIo.DeleteFileIfExists(finalPath)
+                            && DaemonDryRunFileIo.MoveFile(snapshotPath, finalPath))
+                        {
+                            Debug.Log($"[unifocl] Memory snapshot saved: {finalPath} ({ProfilerPathUtils.GetFileSize(finalPath)} bytes)");
+                        }
+                        else
+                        {
+                            // Dry-run became active while the async capture ran.
+                            Debug.Log("[unifocl] Dry-run active — memory snapshot discarded.");
+                            TryDeleteFile(snapshotPath);
+                        }
                     }
                     catch (Exception ex)
                     {

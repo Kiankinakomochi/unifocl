@@ -86,7 +86,7 @@ These commands manage your session, project loading, and configuration. In the i
 | `/protocol` |  | Show supported JSON schema capabilities. |
 | `/dump <hierarchy\|project\|inspector> [--format json\|yaml] [--compact] [--depth n] [--limit n]` |  | Dump deterministic mode state for agentic workflows. |
 | `/time scale <float>` |  | Set `Time.timeScale` to speed up or slow down execution (e.g., `0.1` for slow motion, `2.0` for fast-forward). (SafeWrite) |
-| `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate arbitrary C# in the Unity Editor context (PrivilegedExec). |
+| `/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]` | `/ev` | Evaluate a C# statement body in the Unity Editor context — snippet is taken verbatim (quotes/spaces safe); a bare expression is auto-returned (PrivilegedExec). |
 | `/validate <sub>` | `/val` | Run project validation checks (`scene-list`, `missing-scripts`, `packages`, `build-settings`, `asmdef`, `asset-refs`, `addressables`, `scripts`, `all`). |
 | `/test <sub>` |  | Run Unity tests via subprocess (`list`, `run editmode`, `run playmode`, `flaky-report`). No daemon required. |
 | `/diag <sub>` |  | Run project diagnostics (`script-defines`, `compile-errors`, `assembly-graph`, `scene-deps`, `prefab-deps`, `asset-size`, `import-hotspots`, `all`). All ops are read-only and require the daemon. See [`project-diagnostics.md`](project-diagnostics.md). |
@@ -494,6 +494,14 @@ The `/eval` command compiles and executes arbitrary C# code directly in the Unit
 ```
 /eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]
 ```
+
+**Snippet semantics:**
+
+- The snippet is extracted **verbatim** from the command — interior string literals, double quotes and spaces are preserved as typed. Flags must come before or after the snippet, not inside it.
+- One symmetric pair of outer quotes (single or double) wrapping the whole snippet is stripped, so `/eval 'return 1+1;'` and `/eval return 1+1;` are equivalent.
+- The snippet compiles as a **statement body**: multiple statements, variable declarations and `return` all work. Use `return` to produce a value.
+- A bare expression with no top-level `;` (e.g. `/eval 1+1` or `/eval Directory.Exists("/tmp")`) is automatically wrapped in `return (...);`.
+- A `--declarations` value containing spaces must be wrapped in double quotes; for complex declarations prefer the `eval.run` ExecV2 operation, which takes the code as a JSON argument with no quoting rules at all.
 
 **Flags:**
 

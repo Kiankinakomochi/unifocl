@@ -117,6 +117,15 @@ internal sealed partial class ProjectViewService
             return true;
         }
 
+        // Destructive command: surplus tokens usually mean an unquoted path or
+        // name was split at a space — refuse instead of renaming a truncated target.
+        if (tokens.Count > 4)
+        {
+            outputs.Add($"[x] asset rename expects exactly <asset-path> <new-name> but got {tokens.Count - 2} arguments (first: '{tokens[2]}')");
+            outputs.Add("[x] quote values containing spaces: asset rename \"Assets/My Folder/Foo.asset\" \"New Name\"");
+            return true;
+        }
+
         var sourceRelativePath = tokens[2];
         var newName = tokens[3];
 
@@ -181,6 +190,15 @@ internal sealed partial class ProjectViewService
         if (tokens.Count < 3)
         {
             outputs.Add("[x] usage: asset remove <asset-path>  (quote paths with spaces: asset remove \"Assets/My Folder/Foo.asset\")");
+            return true;
+        }
+
+        // Destructive command: surplus tokens usually mean an unquoted path was
+        // split at a space — refuse instead of deleting the truncated target.
+        if (tokens.Count > 3)
+        {
+            outputs.Add($"[x] asset remove expects exactly one path but got {tokens.Count - 2} arguments (first: '{tokens[2]}')");
+            outputs.Add("[x] quote paths containing spaces: asset remove \"Assets/My Folder/Foo.asset\"");
             return true;
         }
 

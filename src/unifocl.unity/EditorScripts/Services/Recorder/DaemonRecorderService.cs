@@ -429,9 +429,21 @@ namespace UniFocl.EditorBridge.Recorder
                     ? outputPath
                     : System.IO.Path.Combine(projectRoot, outputPath);
 
+                // ScreenCapture writes straight to disk — nothing the Undo-based
+                // dry-run sandbox could revert, so skip the capture entirely.
+                if (DaemonDryRunContext.IsActive)
+                {
+                    return JsonUtility.ToJson(new RecorderResponse
+                    {
+                        ok = true,
+                        message = $"Dry-run: snapshot skipped (no file written): {outputPath}",
+                        outputPath = fullPath
+                    });
+                }
+
                 var dir = System.IO.Path.GetDirectoryName(fullPath);
                 if (!string.IsNullOrWhiteSpace(dir) && !System.IO.Directory.Exists(dir))
-                    System.IO.Directory.CreateDirectory(dir);
+                    DaemonDryRunFileIo.CreateDirectory(dir);
 
                 if (!UnityEditor.EditorApplication.isPlaying)
                 {

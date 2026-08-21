@@ -1,5 +1,4 @@
 using Spectre.Console;
-using System.Text;
 
 internal sealed class ProjectCommandRouterService
 {
@@ -67,12 +66,13 @@ internal sealed class ProjectCommandRouterService
             return true;
         }
 
-        var tokens = Tokenize(normalizedInput);
+        var spans = CliCommandParsingService.TokenizeWithSpans(normalizedInput);
+        var tokens = spans.Select(s => s.Value).ToList();
         var autoEnterInspectorFocus = false;
-        if (TryStripInspectorFocusFlags(tokens, out var requestInspectorFocus))
+        if (TryStripInspectorFocusFlags(normalizedInput, spans, tokens, out var strippedInput))
         {
-            autoEnterInspectorFocus = requestInspectorFocus;
-            normalizedInput = string.Join(' ', tokens);
+            autoEnterInspectorFocus = true;
+            normalizedInput = strippedInput;
         }
 
         if (tokens.Count == 0)
@@ -173,38 +173,60 @@ internal sealed class ProjectCommandRouterService
         return false;
     }
 
-    private static bool TryStripInspectorFocusFlags(List<string> tokens, out bool requestFocus)
+    /// <summary>
+    /// Removes "--focus"/"--interactive" from an "inspect" command. Works on raw
+    /// token spans so quoting elsewhere in the input survives the rewrite; the
+    /// span list and value list are kept in sync for downstream token routing.
+    /// </summary>
+    internal static bool TryStripInspectorFocusFlags(
+        string input,
+        List<RawToken> spans,
+        List<string> tokens,
+        out string strippedInput)
     {
-        requestFocus = false;
+        strippedInput = input;
         if (tokens.Count == 0 || !tokens[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
         var removed = false;
-        for (var i = tokens.Count - 1; i >= 1; i--)
+        for (var i = spans.Count - 1; i >= 1; i--)
         {
-            if (tokens[i].Equals("--focus", StringComparison.OrdinalIgnoreCase)
-                || tokens[i].Equals("--interactive", StringComparison.OrdinalIgnoreCase))
+            var raw = input.Substring(spans[i].Start, spans[i].Length);
+            if (raw.Equals("--focus", StringComparison.OrdinalIgnoreCase)
+                || raw.Equals("--interactive", StringComparison.OrdinalIgnoreCase))
             {
+                spans.RemoveAt(i);
                 tokens.RemoveAt(i);
-                requestFocus = true;
                 removed = true;
             }
+        }
+
+        if (removed)
+        {
+            strippedInput = string.Join(' ', spans.Select(s => input.Substring(s.Start, s.Length)));
         }
 
         return removed;
     }
 
-    private static string? NormalizeContextualInput(string input, CliContextMode mode, Action<string> log)
+    /// <summary>
+    /// Rewrites command-word aliases (head token, and the subcommand for "upm")
+    /// while keeping the rest of the input byte-for-byte intact. The rewrite works
+    /// on raw token spans: quote characters in arguments (e.g. paths with spaces)
+    /// must survive so the downstream quote-aware tokenizers still group them.
+    /// </summary>
+    internal static string? NormalizeContextualInput(string input, CliContextMode mode, Action<string> log)
     {
-        var tokens = Tokenize(input);
-        if (tokens.Count == 0)
+        var spans = CliCommandParsingService.TokenizeWithSpans(input);
+        if (spans.Count == 0)
         {
             return input;
         }
 
-        tokens[0] = tokens[0].ToLowerInvariant() switch
+        var rawParts = spans.Select(s => input.Substring(s.Start, s.Length)).ToList();
+        var head = spans[0].Value.ToLowerInvariant() switch
         {
             "ins" => "inspect",
             "list" => "ls",
@@ -220,12 +242,12 @@ internal sealed class ProjectCommandRouterService
             "t" => "toggle",
             "find" => "f",
             "move" => "mv",
-            _ => tokens[0]
+            _ => spans[0].Value
         };
 
-        if (tokens[0].Equals("upm", StringComparison.OrdinalIgnoreCase) && tokens.Count >= 2)
+        if (head.Equals("upm", StringComparison.OrdinalIgnoreCase) && spans.Count >= 2)
         {
-            tokens[1] = tokens[1].ToLowerInvariant() switch
+            rawParts[1] = spans[1].Value.ToLowerInvariant() switch
             {
                 "list" => "ls",
                 "add" => "install",
@@ -233,18 +255,18 @@ internal sealed class ProjectCommandRouterService
                 "rm" => "remove",
                 "uninstall" => "remove",
                 "u" => "update",
-                _ => tokens[1]
+                _ => rawParts[1]
             };
         }
 
-        if (tokens[0].Equals("up", StringComparison.OrdinalIgnoreCase))
+        if (head.Equals("up", StringComparison.OrdinalIgnoreCase))
         {
-            tokens[0] = mode == CliContextMode.Inspector ? ":i" : "up";
+            head = mode == CliContextMode.Inspector ? ":i" : "up";
         }
 
-        if (tokens[0].Equals("cd", StringComparison.OrdinalIgnoreCase))
+        if (head.Equals("cd", StringComparison.OrdinalIgnoreCase))
         {
-            if (tokens.Count < 2)
+            if (spans.Count < 2)
             {
                 log("[yellow]usage[/]: enter <idx>");
                 return null;
@@ -252,64 +274,29 @@ internal sealed class ProjectCommandRouterService
 
             if (mode == CliContextMode.Project)
             {
-                return $"cd {tokens[1]} -nest";
+                return $"cd {spans[1].Value} -nest";
             }
 
             if (mode == CliContextMode.Inspector)
             {
-                return $"inspect {tokens[1]}";
+                return $"inspect {spans[1].Value}";
             }
         }
 
-        if (tokens[0].Equals("set", StringComparison.OrdinalIgnoreCase) && mode == CliContextMode.Project)
+        if (head.Equals("set", StringComparison.OrdinalIgnoreCase) && mode == CliContextMode.Project)
         {
             log("[yellow]project[/]: set is blocked in project mode");
             return null;
         }
 
-        if (tokens[0].Equals("toggle", StringComparison.OrdinalIgnoreCase) && mode == CliContextMode.Project)
+        if (head.Equals("toggle", StringComparison.OrdinalIgnoreCase) && mode == CliContextMode.Project)
         {
             log("[yellow]project[/]: toggle is blocked in project mode");
             return null;
         }
 
-        return string.Join(' ', tokens);
-    }
-
-    private static List<string> Tokenize(string input)
-    {
-        var tokens = new List<string>();
-        var current = new StringBuilder();
-        var inQuotes = false;
-
-        foreach (var ch in input)
-        {
-            if (ch == '"')
-            {
-                inQuotes = !inQuotes;
-                continue;
-            }
-
-            if (!inQuotes && char.IsWhiteSpace(ch))
-            {
-                if (current.Length > 0)
-                {
-                    tokens.Add(current.ToString());
-                    current.Clear();
-                }
-
-                continue;
-            }
-
-            current.Append(ch);
-        }
-
-        if (current.Length > 0)
-        {
-            tokens.Add(current.ToString());
-        }
-
-        return tokens;
+        rawParts[0] = head;
+        return string.Join(' ', rawParts);
     }
 
     /// <summary>Returns the structured <see cref="MutateBatchResult"/> so callers can surface it in agentic responses.</summary>
