@@ -20,6 +20,7 @@ internal sealed record DiagCompileErrorsResult(
     int ErrorCount,
     int WarningCount,
     bool CompilationFailed,
+    bool CompilationInProgress,
     List<string>? MissingAssemblies,
     List<DiagCompilerMessage> Messages);
 

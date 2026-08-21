@@ -2279,6 +2279,8 @@ Reports whether the project compiles, combining three signals:
 
 When any signal indicates a broken compile state, the response envelope carries **`ok: false`** (a failed exec status), so agents and CI gates cannot mistake a broken project for a clean one. The diagnostic payload is still present in `content`.
 
+While a compilation is **still running**, every signal above reflects the previous pass, so the command also reports `ok: false` with `compilationInProgress: true` instead of asserting success — retry once the compile settles.
+
 > **Note:** This reflects the state of Unity's last compile — it does not trigger a recompilation. Run `/asset refresh` (or `/compile request`) first if you changed scripts.
 
 **Output:**
@@ -2290,6 +2292,7 @@ When any signal indicates a broken compile state, the response envelope carries 
   "errorCount": 2,
   "warningCount": 0,
   "compilationFailed": true,
+  "compilationInProgress": false,
   "missingAssemblies": ["Game.Core"],
   "messages": [
     {
@@ -2310,6 +2313,7 @@ When any signal indicates a broken compile state, the response envelope carries 
 | `errorCount` | Messages with `type == "Error"` (including synthetic missing-output messages) |
 | `warningCount` | Messages with `type == "Warning"` |
 | `compilationFailed` | `true` when the project is in a broken compile state (any of the three signals) |
+| `compilationInProgress` | `true` when a compilation is currently running (`EditorApplication.isCompiling`) — the rest of the payload reflects the previous pass |
 | `missingAssemblies` | Names of assemblies whose expected output DLL is absent from `Library/ScriptAssemblies` |
 | `messages[].message` | Full compiler message text; file/line context is embedded (e.g. `Assets/Foo.cs(42,5): error CS0246: ...`) |
 | `messages[].type` | `Error` or `Warning` |

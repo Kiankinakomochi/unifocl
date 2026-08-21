@@ -143,6 +143,19 @@ namespace UniFocl.EditorBridge
                 scriptCompilationFailed = false;
             }
 
+            // While a compile is still running every signal above reflects the
+            // PREVIOUS pass, so a clean answer would be premature — report the
+            // in-progress state instead of asserting success.
+            bool compilationInProgress;
+            try
+            {
+                compilationInProgress = EditorApplication.isCompiling;
+            }
+            catch
+            {
+                compilationInProgress = false;
+            }
+
             var compilationFailed = scriptCompilationFailed || messages.Count > 0;
             if (compilationFailed && messages.Count == 0)
             {
@@ -161,13 +174,26 @@ namespace UniFocl.EditorBridge
                 errorCount = errorCount,
                 warningCount = 0,
                 compilationFailed = compilationFailed,
+                compilationInProgress = compilationInProgress,
                 missingAssemblies = missingAssemblies.ToArray(),
                 messages = messages.ToArray()
             };
-            var summary = compilationFailed
-                ? $"compilation failed — {errorCount} error(s), {missingAssemblies.Count} of {assemblies.Length} assembl(ies) missing compiled output"
-                : $"{assemblies.Length} assembl(ies), 0 error(s)";
-            return BuildDiagResponse("compile-errors", JsonUtility.ToJson(result), summary, ok: !compilationFailed);
+            string summary;
+            if (compilationFailed)
+            {
+                summary = $"compilation failed — {errorCount} error(s), {missingAssemblies.Count} of {assemblies.Length} assembl(ies) missing compiled output";
+            }
+            else if (compilationInProgress)
+            {
+                summary = "compilation in progress — results reflect the previous pass; retry when it finishes";
+            }
+            else
+            {
+                summary = $"{assemblies.Length} assembl(ies), 0 error(s)";
+            }
+
+            return BuildDiagResponse("compile-errors", JsonUtility.ToJson(result), summary,
+                ok: !compilationFailed && !compilationInProgress);
         }
 
         // ── diag-assembly-graph ─────────────────────────────────────────
@@ -516,6 +542,7 @@ namespace UniFocl.EditorBridge
             public int errorCount;
             public int warningCount;
             public bool compilationFailed;
+            public bool compilationInProgress;
             public string[] missingAssemblies = Array.Empty<string>();
             public DiagCompilerMessage[] messages = Array.Empty<DiagCompilerMessage>();
         }

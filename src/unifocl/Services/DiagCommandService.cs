@@ -145,8 +145,9 @@ internal sealed class DiagCommandService
         if (result is null) return;
 
         var failed = result.CompilationFailed || result.ErrorCount > 0;
-        var statusColor = failed ? CliTheme.Error : CliTheme.Success;
-        var statusIcon = failed ? "✗" : "✓";
+        var inProgress = !failed && result.CompilationInProgress;
+        var statusColor = failed ? CliTheme.Error : (inProgress ? CliTheme.Warning : CliTheme.Success);
+        var statusIcon = failed ? "✗" : (inProgress ? "…" : "✓");
         log($"[bold {statusColor}]{statusIcon}[/] [{CliTheme.TextPrimary}]compile-errors[/]  " +
             $"[{CliTheme.TextMuted}]{result.AssemblyCount} assembl(ies)[/]  " +
             $"[{CliTheme.Error}]{result.ErrorCount} error(s)[/]  " +
@@ -158,6 +159,10 @@ internal sealed class DiagCommandService
                 ? $"compilation failed — {missingCount} assembl(ies) missing compiled output"
                 : "compilation failed";
             log($"  [{CliTheme.Error}]{Markup.Escape(detail)}[/]");
+        }
+        else if (inProgress)
+        {
+            log($"  [{CliTheme.Warning}]compilation in progress — results reflect the previous pass; retry when it finishes[/]");
         }
 
         foreach (var msg in result.Messages)
