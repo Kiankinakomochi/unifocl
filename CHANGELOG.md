@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.17.2 - 2026-09-12
+### Fixed
+- `/diag compile-errors` no longer reports `✓ 0 error(s)` with `ok: true` while the
+  project is in a broken compile state (#216). The command now cross-checks the
+  event-captured compiler messages against `EditorUtility.scriptCompilationFailed`
+  and diffs the assemblies `CompilationPipeline.GetAssemblies()` expects against
+  the DLLs actually present in `Library/ScriptAssemblies`; expected-but-missing
+  output is reported as a compile failure. When the project does not compile the
+  response carries `ok: false` (failed exec status) plus new `compilationFailed`
+  and `missingAssemblies` payload fields, and the CLI renders the failure with
+  the captured or synthesized error messages.
+- Debug artifact collection now preserves a diagnostic's content payload even
+  when the daemon reports `ok: false` for it, so compile-error details from a
+  broken project land in the artifact instead of being dropped.
+
 ## 3.17.1 - 2026-09-12
 ### Fixed
 - Quote characters are no longer stripped from project-mode commands routed through exec/MCP: contextual alias normalization now rewrites command words in place instead of re-joining quote-stripped tokens, so quoted paths containing spaces (e.g. `asset remove "Assets/Asset Packs/Foo"`) reach the handler as a single argument (#213).
