@@ -202,7 +202,7 @@ internal static class CliCommandCatalog
             new("/playmode step", "Advance the game by exactly one frame (must be paused)", "/playmode step", "playmode"),
 
             // ── eval ──────────────────────────────────────────────────────
-            new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate C# in the Unity Editor context (PrivilegedExec)", "/eval", "eval"),
+            new("/eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run] [--json]", "Evaluate a C# statement body in the Unity Editor context — snippet is taken verbatim (quotes/spaces safe); a bare expression is auto-returned (PrivilegedExec)", "/eval", "eval"),
             new("/ev '<code>'", "Alias for /eval", "/ev", "eval"),
 
             // ── timeline ─────────────────────────────────────────────

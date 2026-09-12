@@ -674,4 +674,233 @@ internal static class CliCommandParsingService
 
         return $"\"{token.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
+
+    /// <summary>
+    /// Tokenizes like <see cref="TokenizeComposerInput"/> but also records each
+    /// token's raw span in the input (quote characters included), so callers can
+    /// rewrite individual tokens without destroying the quoting of the rest.
+    /// </summary>
+    public static List<RawToken> TokenizeWithSpans(string input)
+    {
+        var tokens = new List<RawToken>();
+        var current = new StringBuilder();
+        var inQuotes = false;
+        var start = -1;
+        for (var i = 0; i < input.Length; i++)
+        {
+            var ch = input[i];
+            if (ch == '"')
+            {
+                inQuotes = !inQuotes;
+                if (start < 0)
+                {
+                    start = i;
+                }
+
+                continue;
+            }
+
+            if (!inQuotes && char.IsWhiteSpace(ch))
+            {
+                if (start >= 0)
+                {
+                    tokens.Add(new RawToken(current.ToString(), start, i - start));
+                    current.Clear();
+                    start = -1;
+                }
+
+                continue;
+            }
+
+            if (start < 0)
+            {
+                start = i;
+            }
+
+            current.Append(ch);
+        }
+
+        if (start >= 0)
+        {
+            tokens.Add(new RawToken(current.ToString(), start, input.Length - start));
+        }
+
+        return tokens;
+    }
+
+    /// <summary>
+    /// Parses an interactive/one-shot "/eval" command. The code snippet is taken
+    /// verbatim from the raw input (string literals, quotes and spaces intact);
+    /// tokenization is used only to locate the flags. One symmetric pair of outer
+    /// quotes (single or double) around the whole snippet is stripped, and a bare
+    /// expression (no top-level ';') is wrapped in "return (...);" so it produces
+    /// a value inside the daemon's statement-body wrapper.
+    /// </summary>
+    public static bool TryParseEvalCommand(string input, out EvalCommandArguments? arguments, out string? error)
+    {
+        const string Usage = "usage: /eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]  (code is a C# statement body; a bare expression is auto-returned)";
+        arguments = null;
+        error = null;
+
+        var spans = TokenizeWithSpans(input);
+        if (spans.Count < 2)
+        {
+            error = Usage;
+            return false;
+        }
+
+        var declarations = string.Empty;
+        var timeoutMs = 10000;
+        var dryRun = false;
+        var codeStart = -1;
+        var codeEnd = -1;
+        var flagIndexes = new List<int>();
+
+        for (var i = 1; i < spans.Count; i++)
+        {
+            var raw = input.Substring(spans[i].Start, spans[i].Length);
+            if (raw.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                flagIndexes.Add(i);
+                continue;
+            }
+
+            if (raw.Equals("--timeout", StringComparison.OrdinalIgnoreCase) && i + 1 < spans.Count)
+            {
+                if (!int.TryParse(spans[i + 1].Value, out var parsedTimeout) || parsedTimeout <= 0)
+                {
+                    error = "invalid --timeout value (positive integer in ms)";
+                    return false;
+                }
+
+                timeoutMs = parsedTimeout;
+                flagIndexes.Add(i);
+                i++;
+                continue;
+            }
+
+            if (raw.Equals("--declarations", StringComparison.OrdinalIgnoreCase) && i + 1 < spans.Count)
+            {
+                var declSpan = spans[i + 1];
+                declarations = StripSymmetricOuterQuotes(input.Substring(declSpan.Start, declSpan.Length));
+                flagIndexes.Add(i);
+                i++;
+                continue;
+            }
+
+            if (codeStart < 0)
+            {
+                codeStart = i;
+            }
+
+            codeEnd = i;
+        }
+
+        if (codeStart < 0)
+        {
+            error = "eval requires a code snippet. " + Usage;
+            return false;
+        }
+
+        if (flagIndexes.Any(idx => idx > codeStart && idx < codeEnd))
+        {
+            error = "eval flags must come before or after the code snippet, not inside it — quote the snippet if it contains flag-like tokens";
+            return false;
+        }
+
+        var rawStart = spans[codeStart].Start;
+        var rawEnd = spans[codeEnd].Start + spans[codeEnd].Length;
+        var code = StripSymmetricOuterQuotes(input[rawStart..rawEnd].Trim());
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            error = "eval requires a code snippet. " + Usage;
+            return false;
+        }
+
+        if (!ContainsTopLevelSemicolon(code))
+        {
+            code = $"return ({code});";
+        }
+
+        arguments = new EvalCommandArguments(code, declarations, timeoutMs, dryRun);
+        return true;
+    }
+
+    /// <summary>
+    /// Strips exactly one pair of matching outer quote characters, but only when
+    /// the same quote character does not also occur inside — so a snippet that
+    /// merely starts and ends with a literal (e.g. "a" + "b") is left verbatim.
+    /// </summary>
+    public static string StripSymmetricOuterQuotes(string text)
+    {
+        if (text.Length >= 2)
+        {
+            var first = text[0];
+            if ((first == '\'' || first == '"') && text[^1] == first)
+            {
+                var inner = text[1..^1];
+                if (!inner.Contains(first))
+                {
+                    return inner;
+                }
+            }
+        }
+
+        return text;
+    }
+
+    private static bool ContainsTopLevelSemicolon(string code)
+    {
+        var inString = false;
+        var inChar = false;
+        var escaped = false;
+        foreach (var ch in code)
+        {
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if ((inString || inChar) && ch == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (inString)
+            {
+                inString = ch != '"';
+                continue;
+            }
+
+            if (inChar)
+            {
+                inChar = ch != '\'';
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+            }
+            else if (ch == '\'')
+            {
+                inChar = true;
+            }
+            else if (ch == ';')
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
+
+/// <summary>A token value plus the raw span it occupies in the original input (quotes included).</summary>
+internal readonly record struct RawToken(string Value, int Start, int Length);
+
+/// <summary>Arguments extracted from a "/eval" command by <see cref="CliCommandParsingService.TryParseEvalCommand"/>.</summary>
+internal sealed record EvalCommandArguments(string Code, string Declarations, int TimeoutMs, bool DryRun);

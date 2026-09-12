@@ -1139,51 +1139,18 @@ internal static class CliOneShotExecutionService
         DaemonRuntime daemonRuntime,
         List<string> streamLog)
     {
-        var tokens = CliCommandParsingService.TokenizeComposerInput(input);
-        if (tokens.Count < 2)
+        // The snippet must reach the daemon verbatim — string literals, quotes and
+        // spaces included — so extraction works on raw spans, not rejoined tokens.
+        if (!CliCommandParsingService.TryParseEvalCommand(input, out var evalArgs, out var evalError))
         {
-            CliLogService.AppendLog(streamLog, "[red]eval[/]: usage: /eval '<code>' [--declarations '<decl>'] [--timeout <ms>] [--dry-run]");
+            CliLogService.AppendLog(streamLog, $"[red]eval[/]: {Markup.Escape(evalError!)}");
             return;
         }
 
-        string? code = null;
-        string? declarations = null;
-        var timeoutMs = 10000;
-        var dryRun = false;
-
-        for (var i = 1; i < tokens.Count; i++)
-        {
-            var token = tokens[i];
-            if (token.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
-            {
-                dryRun = true;
-                continue;
-            }
-
-            if (token.Equals("--declarations", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
-            {
-                declarations = tokens[++i];
-                continue;
-            }
-
-            if (token.Equals("--timeout", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
-            {
-                if (int.TryParse(tokens[++i], out var parsed) && parsed > 0)
-                {
-                    timeoutMs = parsed;
-                }
-
-                continue;
-            }
-
-            code ??= token;
-        }
-
-        if (string.IsNullOrWhiteSpace(code))
-        {
-            CliLogService.AppendLog(streamLog, "[red]eval[/]: code expression is required");
-            return;
-        }
+        var code = evalArgs!.Code;
+        var declarations = evalArgs.Declarations;
+        var timeoutMs = evalArgs.TimeoutMs;
+        var dryRun = evalArgs.DryRun;
 
         // Ensure daemon is attached (re-attach/start if session has a persisted project)
         if (DaemonControlService.GetPort(session) is not int)
@@ -1211,7 +1178,7 @@ internal static class CliOneShotExecutionService
             return;
         }
 
-        var content = System.Text.Json.JsonSerializer.Serialize(new { code, declarations = declarations ?? string.Empty, timeoutMs });
+        var content = System.Text.Json.JsonSerializer.Serialize(new { code, declarations, timeoutMs });
         var baseDto = new ProjectCommandRequestDto("eval-code", null, null, content);
         var withIntent = MutationIntentFactory.EnsureProjectIntent(baseDto);
         var dto = withIntent with { Intent = withIntent.Intent! with { Flags = withIntent.Intent.Flags with { DryRun = dryRun } } };

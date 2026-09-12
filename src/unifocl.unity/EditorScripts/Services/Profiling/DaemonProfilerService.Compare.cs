@@ -209,16 +209,16 @@ namespace UniFocl.EditorBridge.Profiling
                 var normalized = Path.GetFullPath(path.Trim());
                 var dir = Path.GetDirectoryName(normalized);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
+                    DaemonDryRunFileIo.CreateDirectory(dir);
 
-                File.WriteAllText(normalized, json);
+                var wrote = DaemonDryRunFileIo.WriteAllText(normalized, json);
 
                 return JsonUtility.ToJson(new ProfilerExportSummaryResponse
                 {
                     ok            = true,
-                    message       = "Summary exported",
+                    message       = wrote ? "Summary exported" : "Dry-run: summary export skipped (no file written)",
                     path          = normalized,
-                    fileSizeBytes = ProfilerPathUtils.GetFileSize(normalized),
+                    fileSizeBytes = wrote ? ProfilerPathUtils.GetFileSize(normalized) : 0,
                 });
             }
             catch (Exception ex)
