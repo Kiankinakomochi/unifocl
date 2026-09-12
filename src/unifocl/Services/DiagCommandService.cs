@@ -84,6 +84,19 @@ internal sealed class DiagCommandService
 
         if (!response.Ok)
         {
+            // compile-errors reports ok:false when the project does not compile
+            // (or a compile is still running), with the diagnostic detail in the
+            // content payload. The leading "error:" line is load-bearing: the
+            // agentic issue classifier keys on it, so the exec envelope reports
+            // a non-success status even when the transport surfaced no failure
+            // line of its own.
+            if (op == "compile-errors" && !string.IsNullOrWhiteSpace(response.Content))
+            {
+                log($"[red]error[/]: compile-errors — {Markup.Escape(response.Message)}");
+                RenderCompileErrors(response.Content, log);
+                return;
+            }
+
             log($"[red]diag[/]: {Markup.Escape(op)} failed — {Markup.Escape(response.Message)}");
             return;
         }
@@ -136,12 +149,26 @@ internal sealed class DiagCommandService
         catch { log("[red]diag[/]: compile-errors — failed to parse response"); return; }
         if (result is null) return;
 
-        var statusColor = result.ErrorCount == 0 ? CliTheme.Success : CliTheme.Error;
-        var statusIcon = result.ErrorCount == 0 ? "✓" : "✗";
+        var failed = result.CompilationFailed || result.ErrorCount > 0;
+        var inProgress = !failed && result.CompilationInProgress;
+        var statusColor = failed ? CliTheme.Error : (inProgress ? CliTheme.Warning : CliTheme.Success);
+        var statusIcon = failed ? "✗" : (inProgress ? "…" : "✓");
         log($"[bold {statusColor}]{statusIcon}[/] [{CliTheme.TextPrimary}]compile-errors[/]  " +
             $"[{CliTheme.TextMuted}]{result.AssemblyCount} assembl(ies)[/]  " +
             $"[{CliTheme.Error}]{result.ErrorCount} error(s)[/]  " +
             $"[{CliTheme.Warning}]{result.WarningCount} warning(s)[/]");
+        if (failed)
+        {
+            var missingCount = result.MissingAssemblies?.Count ?? 0;
+            var detail = missingCount > 0
+                ? $"compilation failed — {missingCount} assembl(ies) missing compiled output"
+                : "compilation failed";
+            log($"  [{CliTheme.Error}]{Markup.Escape(detail)}[/]");
+        }
+        else if (inProgress)
+        {
+            log($"  [{CliTheme.Warning}]compilation in progress — results reflect the previous pass; retry when it finishes[/]");
+        }
 
         foreach (var msg in result.Messages)
         {
