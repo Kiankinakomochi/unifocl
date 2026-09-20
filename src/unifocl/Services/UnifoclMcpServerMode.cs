@@ -801,7 +801,8 @@ public static class UnifoclAgentWorkflowTools
           },
           "script_workflow": "When creating C# scripts: (1) write all .cs files first via asset.create_script, (2) run /validate scripts for offline Roslyn compile check (no editor needed), (3) fix errors before opening/restarting the project. This avoids costly /close + /open cycles for compile failures.",
           "modes_summary": "project (default, asset ops) | inspector (per-object mutations) | hierarchy (TUI-only, avoid in agentic)",
-          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, script_workflow, debug_artifact, or 'all'"
+          "long_running_note": "exec waits 30s, then detaches the command and returns status 'booting' (lifecycle) or 'running' (everything else). That is progress, not failure \u2014 call exec again to poll; the real result arrives automatically. See section 'long_running'.",
+          "more_detail": "Call get_agent_workflow_guide(section='<name>') for: exec_flags, modes, mutate, categories, session, discovery, script_workflow, debug_artifact, long_running, or 'all'"
         }
         """;
 
@@ -973,6 +974,12 @@ public static class UnifoclAgentWorkflowTools
             "why": "Each /close + /open cycle takes 30s+. Catching compile errors offline avoids wasted restarts."
           },
           "session_storage": ".unifocl-runtime/agentic/sessions/<seed>.json (relative to CWD or project root)",
+          "long_running_commands": {
+            "overview": "exec waits 30 seconds, then DETACHES the command instead of cancelling it. The unifocl process and the Editor-side work both keep going.",
+            "statuses": "booting = lifecycle command (/open, /new, /clone, /recent) still starting Unity; running = any other command still working (/build addressables, bulk /asset refresh, /test run).",
+            "how_to_poll": "Call exec again. While a run is in flight every exec call reports its progress instead of starting anything new, so polling cannot duplicate the work. The real result is returned automatically once the run finishes.",
+            "not_a_failure": "ok is false only because the result is not in yet. Do not retry as if the command had failed. Send /close to abort."
+          },
           "ansi_note": "Some responses prefix JSON with ANSI screen-clear codes. Strip with: sed 's/\\x1b\\[[0-9;]*[mJKH]//g' or find first '{' index before parsing.",
           "custom_commands": {
             "description": "Custom tools defined with [UnifoclCommand] on static C# methods in Unity editor scripts.",
@@ -1091,6 +1098,27 @@ public static class UnifoclAgentWorkflowTools
         }
         """;
 
+    private const string LongRunningJson = """
+        {
+          "long_running_commands": {
+            "overview": "A single exec call waits 30 seconds. A command still running at that point is DETACHED, never cancelled \u2014 the unifocl process keeps running and the Editor-side work keeps going. The call returns a progress report, not a failure.",
+            "statuses": {
+              "booting": "A project lifecycle command (/open, /new, /clone, /recent) is still starting Unity.",
+              "running": "Any other command is still working \u2014 for example /build addressables, a bulk /asset refresh, or /test run on a large suite."
+            },
+            "response_shape": "{ ok: false, status: 'running', data: { message, elapsedSeconds, inFlight: [<the detached commands>], projectPath, port, hint } }",
+            "how_to_poll": "Call exec again. While a run is in flight every exec call returns its progress instead of starting anything new, so polling is safe and cannot duplicate the work. The real result envelope is returned automatically on the first call after the run finishes.",
+            "do_not": [
+              "Do NOT treat status 'booting' or 'running' as an error \u2014 nothing failed.",
+              "Do NOT re-issue the command expecting a fresh run; it would only report the same in-flight run.",
+              "Do NOT assume the work was rolled back. It is still in progress inside the Editor."
+            ],
+            "abort": "Send /close to abort the detached run and shut the daemon down.",
+            "ceilings": "A detached run is force-terminated only after 10 minutes (lifecycle) or 30 minutes (everything else), and that termination is reported explicitly as an error."
+          }
+        }
+        """;
+
     private static readonly Dictionary<string, string> _sections = new(StringComparer.OrdinalIgnoreCase)
     {
         ["quick_start"] = QuickStartJson,
@@ -1102,12 +1130,13 @@ public static class UnifoclAgentWorkflowTools
         ["discovery"] = DiscoveryJson,
         ["script_workflow"] = ScriptWorkflowJson,
         ["debug_artifact"] = DebugArtifactJson,
+        ["long_running"] = LongRunningJson,
         ["all"] = WorkflowGuideJson
     };
 
     [McpServerTool, Description(
         "Returns unifocl agentic workflow guidance. Call with no section for a quick-start summary (~200 tokens). " +
-        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery, script_workflow, debug_artifact. " +
+        "Request specific sections for deeper detail: exec_flags, modes, mutate, categories, session, discovery, script_workflow, debug_artifact, long_running. " +
         "Replaces the need to read docs or call /help.")]
     public static string GetAgentWorkflowGuide(
         [Description("Section to retrieve: quick_start (default, minimal getting-started), " +
@@ -1116,6 +1145,7 @@ public static class UnifoclAgentWorkflowTools
                      "session (--session-seed patterns), discovery (list_commands/lookup_command usage), " +
                      "script_workflow (write-validate-open pattern for Host mode), " +
                      "debug_artifact (prep-playmode-collect workflow for debug reports), " +
+                     "long_running (what 'booting'/'running' mean and how to poll a detached command), " +
                      "or 'all' for the complete guide.")]
         string section = "quick_start")
     {
@@ -1140,16 +1170,33 @@ public static class McpExecTools
     private static string _implicitSessionSeed = $"mcp-{Guid.NewGuid():N}";
     private static string? _lastProject;
 
-    // Pending lifecycle boot — detached after the standard 30s timeout so the agent
-    // can poll for progress instead of waiting blind for minutes.
+    // Exec calls on this connection share one session seed, one remembered project and
+    // one pending-run slot, so they are serialized rather than run concurrently. Every
+    // path returns within the exec budget — a slow child is detached, not awaited — so
+    // the wait here is bounded even when a command runs for minutes.
+    private static readonly SemaphoreSlim _execGate = new(1, 1);
+
+    // Wall-clock budget for a single Exec call. A command that outlives it is never
+    // killed: the work it dispatched keeps running inside the Editor, so killing the
+    // CLI would orphan that work and report a failure for an operation that is still
+    // succeeding. The child is detached instead and a later Exec call harvests it.
+    private const int ExecTimeoutSeconds = 30;
+
+    // Pending detached run — at most one at a time, connection-scoped. Project
+    // lifecycle commands (/open, /new, /clone, /recent) boot Unity and can take
+    // minutes on a large project; so can /build addressables, a bulk /asset refresh,
+    // or /test run on a substantial suite. Both kinds are held in this slot.
     private static readonly TimeSpan BootCeiling = TimeSpan.FromMinutes(10);
-    private static Process? _pendingBootProcess;
-    private static Task? _pendingBootPumpStdout;
-    private static Task? _pendingBootPumpStderr;
-    private static string? _pendingBootStdoutPath;
-    private static string? _pendingBootStderrPath;
-    private static DateTime _pendingBootStartedAt;
-    private static string? _pendingBootProject;
+    private static readonly TimeSpan RunCeiling = TimeSpan.FromMinutes(30);
+    private static Process? _pendingRunProcess;
+    private static Task? _pendingRunPumpStdout;
+    private static Task? _pendingRunPumpStderr;
+    private static string? _pendingRunStdoutPath;
+    private static string? _pendingRunStderrPath;
+    private static DateTime _pendingRunStartedAt;
+    private static string? _pendingRunProject;
+    private static string[] _pendingRunCommands = [];
+    private static bool _pendingRunIsLifecycle;
 
     // Child stdout/stderr is streamed to disk so a multi-minute Unity boot does not
     // accumulate the whole log in the MCP host's RAM. The stdout reader scans the
@@ -1167,7 +1214,10 @@ public static class McpExecTools
     [McpServerTool, Description(
         "Executes one or more unifocl commands and returns structured JSON results. " +
         "Commands run sequentially with shared session state — no need for --session-seed or shell escaping. " +
-        "First call should include 'project' to open a Unity project. Subsequent calls reuse the session automatically.")]
+        "First call should include 'project' to open a Unity project. Subsequent calls reuse the session automatically. " +
+        "A command still running after 30s is detached, not cancelled: the call returns status 'booting' (project " +
+        "lifecycle) or 'running' (everything else). That is not a failure — re-issue the same command to poll, and " +
+        "the real result is returned automatically once the work completes.")]
     public static async Task<McpExecResult> Exec(
         [Description("Array of command strings to execute sequentially. State flows between commands. " +
                      "Examples: [\"/open /path/to/project\"], [\"inspect /Canvas\", \"set renderMode ScreenSpaceOverlay\"], " +
@@ -1191,8 +1241,22 @@ public static class McpExecTools
                 Mode: null);
         }
 
-        // ── Check for a pending lifecycle boot from a previous detached call ──
-        var pendingResult = await TryResolvePendingBootAsync(commands);
+        await _execGate.WaitAsync(ct);
+        try
+        {
+            return await ExecCoreAsync(commands, project, dryRun, ct);
+        }
+        finally
+        {
+            _execGate.Release();
+        }
+    }
+
+    private static async Task<McpExecResult> ExecCoreAsync(
+        string[] commands, string? project, bool dryRun, CancellationToken ct)
+    {
+        // ── Check for a pending run detached by a previous call ──
+        var pendingResult = await TryResolvePendingRunAsync(commands);
         if (pendingResult is not null)
             return pendingResult;
 
@@ -1268,9 +1332,9 @@ public static class McpExecTools
             stdoutPump = PumpToFileAsync(process.StandardOutput.BaseStream, stdoutPath);
             stderrPump = PumpToFileAsync(process.StandardError.BaseStream, stderrPath);
 
-            // Timeout: 30 seconds for all commands.
+            // Timeout: the same budget for every command.
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(ExecTimeoutSeconds));
 
             try
             {
@@ -1278,31 +1342,24 @@ public static class McpExecTools
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                // Lifecycle commands (/open, /new, /clone, /recent) launch Unity and wait
-                // for daemon readiness, which can take minutes for large projects. Instead
-                // of blocking, detach the process and let the agent poll for completion.
-                if (isLifecycle)
-                {
-                    detached = true;
-                    _pendingBootProcess = process;
-                    _pendingBootPumpStdout = stdoutPump;
-                    _pendingBootPumpStderr = stderrPump;
-                    _pendingBootStdoutPath = stdoutPath;
-                    _pendingBootStderrPath = stderrPath;
-                    _pendingBootStartedAt = DateTime.UtcNow.AddSeconds(-30);
-                    _pendingBootProject = resolvedProject;
-                    return MakeBootingResult(resolvedProject, 30);
-                }
-
-                try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return new McpExecResult(
-                    Ok: false,
-                    Status: "error",
-                    Data: null,
-                    Errors: ["Command execution timed out after 30 seconds."],
-                    Warnings: null,
-                    SessionSeed: _implicitSessionSeed,
-                    Mode: null);
+                // The command outlived the budget. Detach rather than kill — the
+                // criterion that matters is "can legitimately run longer than the
+                // budget", not "is a lifecycle command", and killing a CLI mid-operation
+                // leaves the Editor-side work running with no way to collect its result.
+                // The child keeps streaming to its temp files and the next Exec call
+                // harvests the real envelope.
+                detached = true;
+                _pendingRunProcess = process;
+                _pendingRunPumpStdout = stdoutPump;
+                _pendingRunPumpStderr = stderrPump;
+                _pendingRunStdoutPath = stdoutPath;
+                _pendingRunStderrPath = stderrPath;
+                _pendingRunStartedAt = DateTime.UtcNow.AddSeconds(-ExecTimeoutSeconds);
+                _pendingRunProject = resolvedProject;
+                _pendingRunCommands = [.. commands];
+                _pendingRunIsLifecycle = isLifecycle;
+                return MakePendingResult(
+                    isLifecycle, resolvedProject, _pendingRunCommands, ExecTimeoutSeconds);
             }
 
             // Process exited; wait briefly for pumps to flush before reading. Bound the
@@ -1357,94 +1414,109 @@ public static class McpExecTools
         }
     }
 
-    // ── Pending boot helpers ────────────────────────────────────────────────────
+    // ── Pending run helpers ─────────────────────────────────────────────────────
 
-    private static async Task<McpExecResult?> TryResolvePendingBootAsync(string[] commands)
+    private static async Task<McpExecResult?> TryResolvePendingRunAsync(string[] commands)
     {
-        if (_pendingBootProcess is null)
+        if (_pendingRunProcess is null)
             return null;
 
-        // Safety ceiling — kill runaway boots.
-        if (DateTime.UtcNow - _pendingBootStartedAt > BootCeiling)
-        {
-            await KillAndClearPendingBootAsync();
-            return null; // fall through to normal execution
-        }
-
-        // If the agent sends /close, abort the pending boot and let /close execute normally.
+        // /close tears the daemon down, so the detached CLI is moot — abort it and let
+        // /close execute normally. This is the agent's escape hatch from a wedged run.
         if (ContainsCloseCommand(commands))
         {
-            await KillAndClearPendingBootAsync();
+            await KillAndClearPendingRunAsync();
             return null;
         }
 
-        // Boot process finished — harvest its result.
-        if (_pendingBootProcess.HasExited)
+        // Run finished — harvest its result. Checked before the ceiling so a run that
+        // completed just past the ceiling still yields its envelope instead of being
+        // declared dead.
+        if (_pendingRunProcess.HasExited)
         {
             // Wait briefly for pumps to flush. If they're wedged, proceed with what's on disk.
             try
             {
-                await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask)
+                await Task.WhenAll(_pendingRunPumpStdout ?? Task.CompletedTask, _pendingRunPumpStderr ?? Task.CompletedTask)
                     .WaitAsync(PumpFinishBound);
             }
             catch { }
 
-            var stdout = StripAnsi(ReadAgenticEnvelope(_pendingBootStdoutPath));
-            var stderr = ReadStderrTail(_pendingBootStderrPath);
-            var exitCode = _pendingBootProcess.ExitCode;
-            var bootProject = _pendingBootProject;
-            ClearPendingBoot();
+            var stdout = StripAnsi(ReadAgenticEnvelope(_pendingRunStdoutPath));
+            var stderr = ReadStderrTail(_pendingRunStderrPath);
+            var exitCode = _pendingRunProcess.ExitCode;
+            var runProject = _pendingRunProject;
+            ClearPendingRun();
 
-            if (bootProject is not null && exitCode == 0)
-                _lastProject = bootProject;
+            if (runProject is not null && exitCode == 0)
+                _lastProject = runProject;
 
             return ParseEnvelope(stdout, stderr, exitCode);
         }
 
-        // Boot still running — if the agent is retrying a lifecycle command (or the same
-        // /open), report progress instead of spawning a competing subprocess.
-        if (ContainsLifecycleCommand(commands))
+        // Safety ceiling — reclaim the slot from a child that will never finish.
+        // Reported rather than swallowed: the agent must not mistake the abort for the
+        // result of whatever command it just sent.
+        var elapsed = DateTime.UtcNow - _pendingRunStartedAt;
+        var ceiling = _pendingRunIsLifecycle ? BootCeiling : RunCeiling;
+        if (elapsed > ceiling)
         {
-            var elapsed = (int)(DateTime.UtcNow - _pendingBootStartedAt).TotalSeconds;
-            return MakeBootingResult(_pendingBootProject, elapsed);
+            var abandoned = string.Join("; ", _pendingRunCommands);
+            await KillAndClearPendingRunAsync();
+            return new McpExecResult(
+                Ok: false,
+                Status: "error",
+                Data: null,
+                Errors: [$"Detached run [{abandoned}] passed the {ceiling.TotalMinutes:0}-minute ceiling and was terminated. Its result is unavailable — check the Editor state before retrying."],
+                Warnings: null,
+                SessionSeed: _implicitSessionSeed,
+                Mode: null);
         }
 
-        // Non-lifecycle command while boot is pending — let it through.
-        // It will likely fail because the daemon isn't ready, which is the expected signal.
-        return null;
+        // Still running. Report its progress instead of spawning a competing
+        // subprocess — whether this call polls the same command or asks for something
+        // else, only one run may be in flight at a time.
+        return MakePendingResult(
+            _pendingRunIsLifecycle, _pendingRunProject, _pendingRunCommands, (int)elapsed.TotalSeconds);
     }
 
-    private static void ClearPendingBoot()
+    private static void ClearPendingRun()
     {
-        _pendingBootProcess?.Dispose();
-        _pendingBootProcess = null;
-        _pendingBootPumpStdout = null;
-        _pendingBootPumpStderr = null;
-        TryDeleteFile(_pendingBootStdoutPath);
-        TryDeleteFile(_pendingBootStderrPath);
-        _pendingBootStdoutPath = null;
-        _pendingBootStderrPath = null;
-        _pendingBootProject = null;
+        _pendingRunProcess?.Dispose();
+        _pendingRunProcess = null;
+        _pendingRunPumpStdout = null;
+        _pendingRunPumpStderr = null;
+        TryDeleteFile(_pendingRunStdoutPath);
+        TryDeleteFile(_pendingRunStderrPath);
+        _pendingRunStdoutPath = null;
+        _pendingRunStderrPath = null;
+        _pendingRunProject = null;
+        _pendingRunCommands = [];
+        _pendingRunIsLifecycle = false;
     }
 
-    private static async Task KillAndClearPendingBootAsync()
+    private static async Task KillAndClearPendingRunAsync()
     {
-        if (_pendingBootProcess is not null)
+        if (_pendingRunProcess is not null)
         {
-            try { _pendingBootProcess.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            try { _pendingRunProcess.Kill(entireProcessTree: true); } catch { /* best-effort */ }
         }
         // Let pumps finish (they'll see EOF after the kill) before we delete the temp files.
         // Bound the wait — a wedged Kill must not hang the next Exec call.
         try
         {
-            await Task.WhenAll(_pendingBootPumpStdout ?? Task.CompletedTask, _pendingBootPumpStderr ?? Task.CompletedTask)
+            await Task.WhenAll(_pendingRunPumpStdout ?? Task.CompletedTask, _pendingRunPumpStderr ?? Task.CompletedTask)
                 .WaitAsync(PumpFinishBound);
         }
         catch { }
-        ClearPendingBoot();
+        ClearPendingRun();
     }
 
-    private static McpExecResult MakeBootingResult(string? projectPath, int elapsedSeconds)
+    // Progress report for a detached run. Ok is false because the command has not
+    // produced its result yet — but the status and hint say the work is in flight,
+    // never that it failed.
+    internal static McpExecResult MakePendingResult(
+        bool lifecycle, string? projectPath, string[] inFlight, int elapsedSeconds)
     {
         var port = projectPath is not null
             ? DaemonControlService.ResolveProjectDaemonPort(projectPath)
@@ -1452,16 +1524,21 @@ public static class McpExecTools
 
         var data = new Dictionary<string, object?>
         {
-            ["message"] = "Unity daemon is booting in the background.",
+            ["message"] = lifecycle
+                ? "Unity daemon is booting in the background."
+                : $"Command is still running after {ExecTimeoutSeconds}s and was detached, not cancelled. The work is still in progress.",
             ["port"] = port,
             ["projectPath"] = projectPath,
             ["elapsedSeconds"] = elapsedSeconds,
-            ["hint"] = "Retry the same /open command to check progress. The boot result is returned automatically when ready. Call /close to abort."
+            ["inFlight"] = inFlight,
+            ["hint"] = lifecycle
+                ? "Retry the same /open command to check progress. The boot result is returned automatically when ready. Call /close to abort."
+                : "Poll by calling exec again — the result is returned automatically once the run completes, and polling does not start a second run. This is progress, not an error. Call /close to abort."
         };
 
         return new McpExecResult(
             Ok: false,
-            Status: "booting",
+            Status: lifecycle ? "booting" : "running",
             Data: data,
             Errors: null,
             Warnings: null,
@@ -1471,16 +1548,22 @@ public static class McpExecTools
 
     // ── Command classification ───────────────────────────────────────────────────
 
-    private static bool ContainsLifecycleCommand(string[] commands)
+    // Matches a leading command token exactly: the trigger must be followed by end of
+    // input or whitespace, so "/opened-elsewhere" is not read as "/open".
+    private static bool StartsWithCommand(ReadOnlySpan<char> command, string trigger)
+        => command.StartsWith(trigger, StringComparison.OrdinalIgnoreCase)
+           && (command.Length == trigger.Length || char.IsWhiteSpace(command[trigger.Length]));
+
+    internal static bool ContainsLifecycleCommand(string[] commands)
     {
         foreach (var cmd in commands)
         {
             var trimmed = cmd.AsSpan().TrimStart();
-            if (trimmed.StartsWith("/open", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("/o ", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("/new", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("/clone", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("/recent", StringComparison.OrdinalIgnoreCase))
+            if (StartsWithCommand(trimmed, "/open")
+                || StartsWithCommand(trimmed, "/o")
+                || StartsWithCommand(trimmed, "/new")
+                || StartsWithCommand(trimmed, "/clone")
+                || StartsWithCommand(trimmed, "/recent"))
             {
                 return true;
             }
@@ -1489,12 +1572,11 @@ public static class McpExecTools
         return false;
     }
 
-    private static bool ContainsCloseCommand(string[] commands)
+    internal static bool ContainsCloseCommand(string[] commands)
     {
         foreach (var cmd in commands)
         {
-            var trimmed = cmd.AsSpan().TrimStart();
-            if (trimmed.StartsWith("/close", StringComparison.OrdinalIgnoreCase))
+            if (StartsWithCommand(cmd.AsSpan().TrimStart(), "/close"))
                 return true;
         }
 

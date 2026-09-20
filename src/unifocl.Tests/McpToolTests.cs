@@ -447,4 +447,87 @@ public class McpToolTests
         AssertRisk("recorder.stop", ExecRiskLevel.PrivilegedExec);
         AssertRisk("recorder.status", ExecRiskLevel.SafeRead);
     }
+
+    // ── Detached long-running commands (issue #221) ───────────────────────────
+
+    [Theory]
+    [InlineData("/open /path/to/project")]
+    [InlineData("/o /path/to/project")]
+    [InlineData("/new MyGame")]
+    [InlineData("/clone /src /dst")]
+    [InlineData("/recent")]
+    [InlineData("  /OPEN /path/to/project")]
+    public void ContainsLifecycleCommand_RecognizesProjectLifecycle(string command)
+    {
+        Assert.True(McpExecTools.ContainsLifecycleCommand([command]));
+    }
+
+    [Theory]
+    [InlineData("/asset refresh")]
+    [InlineData("/build addressables")]
+    [InlineData("/test run")]
+    [InlineData("/dump hierarchy --depth 2")]
+    [InlineData("/opened-elsewhere")]
+    [InlineData("/newsfeed")]
+    public void ContainsLifecycleCommand_RejectsNonLifecycle(string command)
+    {
+        Assert.False(McpExecTools.ContainsLifecycleCommand([command]));
+    }
+
+    [Fact]
+    public void ContainsCloseCommand_RecognizesClose()
+    {
+        Assert.True(McpExecTools.ContainsCloseCommand(["  /CLOSE"]));
+        Assert.False(McpExecTools.ContainsCloseCommand(["/open /p", "/asset refresh"]));
+    }
+
+    [Fact]
+    public void MakePendingResult_NonLifecycle_ReportsRunningNotFailure()
+    {
+        string[] inFlight = ["/asset refresh"];
+        var result = McpExecTools.MakePendingResult(
+            lifecycle: false, projectPath: null, inFlight: inFlight, elapsedSeconds: 74);
+
+        Assert.Equal("running", result.Status);
+        Assert.Null(result.Errors);
+
+        var data = Assert.IsType<Dictionary<string, object?>>(result.Data);
+        Assert.Equal(74, data["elapsedSeconds"]);
+        Assert.Same(inFlight, data["inFlight"]);
+
+        // The caller must be able to tell "still working" from "failed".
+        var message = Assert.IsType<string>(data["message"]);
+        Assert.Contains("still running", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not cancelled", message, StringComparison.OrdinalIgnoreCase);
+
+        var hint = Assert.IsType<string>(data["hint"]);
+        Assert.Contains("does not start a second run", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not an error", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/close", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MakePendingResult_Lifecycle_ReportsBootingWithPort()
+    {
+        var result = McpExecTools.MakePendingResult(
+            lifecycle: true, projectPath: "/tmp/unifocl-test-project", inFlight: ["/open /tmp/unifocl-test-project"], elapsedSeconds: 30);
+
+        Assert.Equal("booting", result.Status);
+        Assert.Null(result.Errors);
+
+        var data = Assert.IsType<Dictionary<string, object?>>(result.Data);
+        Assert.Equal("/tmp/unifocl-test-project", data["projectPath"]);
+        Assert.NotNull(data["port"]);
+    }
+
+    [Fact]
+    public void WorkflowGuide_LongRunningSection_ExplainsDetachAndPolling()
+    {
+        var section = UnifoclAgentWorkflowTools.GetAgentWorkflowGuide("long_running");
+
+        Assert.Contains("\"booting\"", section);
+        Assert.Contains("\"running\"", section);
+        Assert.Contains("DETACHED", section);
+        Assert.DoesNotContain("unknown section", section);
+    }
 }

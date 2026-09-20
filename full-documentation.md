@@ -2133,6 +2133,52 @@ Scopes:
 - `inspector`
 - `all` (default)
 
+## Long-Running Commands (`exec`)
+
+A single `exec` call waits **30 seconds** for the underlying CLI process. A command that is
+still running at that point is **detached, not cancelled** — the `unifocl` process keeps
+running and the work it dispatched keeps going inside the Editor. The call returns a
+progress report instead of an error:
+
+| **Status** | **Meaning** |
+| --- | --- |
+| `booting` | A project lifecycle command (`/open`, `/o`, `/new`, `/clone`, `/recent`) is still starting Unity. |
+| `running` | Any other command is still working — `/build addressables`, a bulk `/asset refresh`, `/test run` on a large suite. |
+
+```json
+{
+  "ok": false,
+  "status": "running",
+  "data": {
+    "message": "Command is still running after 30s and was detached, not cancelled. The work is still in progress.",
+    "port": 51873,
+    "projectPath": "/path/to/project",
+    "elapsedSeconds": 74,
+    "inFlight": ["/asset refresh"],
+    "hint": "Poll by calling exec again — ..."
+  }
+}
+```
+
+`ok` is `false` only because the result is not in yet. Nothing has gone wrong.
+
+Polling contract:
+
+- **At most one detached run exists at a time.** While one is in flight, every `exec` call
+  reports its progress instead of starting anything new — so polling can never duplicate the
+  work, and a second CLI process is never spawned alongside it. `exec` calls on a connection
+  are serialized to keep this invariant true: they share one session seed, one remembered
+  project, and one pending-run slot.
+- The real agentic envelope is returned automatically by the first `exec` call made after the
+  run finishes.
+- `/close` aborts the detached run and executes normally. This is the escape hatch.
+- A detached run is force-terminated only after **10 minutes** (lifecycle) or **30 minutes**
+  (everything else). That termination is reported explicitly as an error — it is never
+  silently swallowed into the result of a later command.
+
+Agents can retrieve the same contract at runtime via
+`get_agent_workflow_guide(section='long_running')`.
+
 ## Agent JSON Config
 
 Most MCP-capable clients use a JSON object where each MCP server entry defines:
