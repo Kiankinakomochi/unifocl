@@ -557,20 +557,21 @@ internal sealed partial class ProjectLifecycleService
             return started;
         }
 
-        if (!ShouldRetryAfterCompileFailure(daemonControlService, out var summary))
+        if (!ShouldRetryAfterStartupBuildFailure(daemonControlService, out var summary, out var isRecoverableBuildFailure))
         {
             return false;
         }
 
         for (var attempt = 1; attempt <= DefaultCompileRecoveryRetryCount; attempt++)
         {
+            var failureLabel = isRecoverableBuildFailure ? "recoverable build failure" : "compile errors";
             if (!string.IsNullOrWhiteSpace(summary))
             {
-                log($"[yellow]daemon[/]: compile errors detected during startup ({Markup.Escape(summary)}). waiting before retry {attempt}/{DefaultCompileRecoveryRetryCount}...");
+                log($"[yellow]daemon[/]: {failureLabel} detected during startup ({Markup.Escape(summary)}). waiting before retry {attempt}/{DefaultCompileRecoveryRetryCount}...");
             }
             else
             {
-                log($"[yellow]daemon[/]: compile errors detected during startup. waiting before retry {attempt}/{DefaultCompileRecoveryRetryCount}...");
+                log($"[yellow]daemon[/]: {failureLabel} detected during startup. waiting before retry {attempt}/{DefaultCompileRecoveryRetryCount}...");
             }
 
             await Task.Delay(CompileRecoveryRetryDelay);
@@ -590,7 +591,7 @@ internal sealed partial class ProjectLifecycleService
                 return true;
             }
 
-            if (!ShouldRetryAfterCompileFailure(daemonControlService, out summary))
+            if (!ShouldRetryAfterStartupBuildFailure(daemonControlService, out summary, out isRecoverableBuildFailure))
             {
                 return false;
             }
@@ -599,17 +600,27 @@ internal sealed partial class ProjectLifecycleService
         return false;
     }
 
-    private static bool ShouldRetryAfterCompileFailure(
+    private static bool ShouldRetryAfterStartupBuildFailure(
         DaemonControlService daemonControlService,
-        out string? summary)
+        out string? summary,
+        out bool isRecoverableBuildFailure)
     {
         summary = null;
-        if (!daemonControlService.TryGetLastStartupFailure(out var failure) || failure is null || !failure.IsCompileError)
+        isRecoverableBuildFailure = false;
+        if (!daemonControlService.TryGetLastStartupFailure(out var failure) || failure is null)
+        {
+            return false;
+        }
+
+        // Recoverable build failures (e.g. transient Tundra failures) are not compile errors but
+        // still deserve the same warmup retry, since a relaunch usually succeeds.
+        if (!failure.IsCompileError && failure.RecoverableBuildWarnings.Count == 0)
         {
             return false;
         }
 
         summary = failure.Summary;
+        isRecoverableBuildFailure = !failure.IsCompileError;
         return true;
     }
 
@@ -1106,9 +1117,19 @@ internal sealed partial class ProjectLifecycleService
             return false;
         }
 
+        foreach (var warning in failure.RecoverableBuildWarnings)
+        {
+            log($"[yellow]daemon[/]: recoverable build warning -> {Markup.Escape(warning)}");
+        }
+
         if (!failure.IsCompileError)
         {
             log($"[red]daemon[/]: startup failed ({Markup.Escape(failure.Summary)})");
+            if (failure.RecoverableBuildWarnings.Count > 0)
+            {
+                log("[yellow]hint[/]: build bootstrap failures like these are usually transient; retry /open");
+            }
+
             return false;
         }
 
