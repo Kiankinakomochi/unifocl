@@ -812,6 +812,15 @@ try
             continue;
         }
 
+        if (matched.Trigger.StartsWith("/probuilder", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleProBuilderCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
         if (matched.Trigger is "/keybinds" or "/shortcuts")
         {
             CliLogService.WriteKeybindsHelp(streamLog, session);

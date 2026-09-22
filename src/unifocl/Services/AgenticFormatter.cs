@@ -10,6 +10,8 @@ internal static class AgenticFormatter
     };
 
     private static readonly Regex MarkupTagRegex = new(@"\[(\/)?[^\]]+\]", RegexOptions.Compiled);
+    private const string EscapedOpenBracket = "\u0001";
+    private const string EscapedCloseBracket = "\u0002";
 
     public static string SerializeEnvelope(AgenticResponseEnvelope envelope, AgenticOutputFormat format)
     {
@@ -33,7 +35,16 @@ internal static class AgenticFormatter
             return string.Empty;
         }
 
-        return MarkupTagRegex.Replace(input, string.Empty).Trim();
+        // Spectre escapes literal brackets by doubling them (Markup.Escape). Shield those pairs before
+        // removing tags, otherwise "[[" ... "]]" is read as a tag and escaped JSON arrays lose their
+        // brackets in agentic logs.
+        var shielded = input
+            .Replace("[[", EscapedOpenBracket, StringComparison.Ordinal)
+            .Replace("]]", EscapedCloseBracket, StringComparison.Ordinal);
+        return MarkupTagRegex.Replace(shielded, string.Empty)
+            .Replace(EscapedOpenBracket, "[", StringComparison.Ordinal)
+            .Replace(EscapedCloseBracket, "]", StringComparison.Ordinal)
+            .Trim();
     }
 
     private static void WriteYamlElement(JsonElement element, StringBuilder sb, int indent, string? propertyName)

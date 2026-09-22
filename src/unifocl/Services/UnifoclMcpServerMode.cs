@@ -130,11 +130,11 @@ public static class UnifoclCommandLookupTools
     [McpServerTool, Description(
         "Lists unifocl commands. Defaults to 'core' category for a lean response. " +
         "Use category='all' to see everything, or filter by specific category: " +
-        "core, setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation.")]
+        "core, setup, build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation, probuilder.")]
     public static CommandLookupResult ListCommands(
         [Description("Command scope filter: root, project, inspector, or all.")] string scope = "all",
         [Description("Category filter: core (default, essential commands), or a specific domain: " +
-                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation, setup. " +
+                     "build, validate, diag, test, upm, addressable, asset, scene, compile, eval, profiling, prefab, animation, probuilder, setup. " +
                      "Use 'all' to list every command across all categories.")]
         string category = "core",
         [Description("Optional case-insensitive search across trigger/signature/description.")] string? query = null,
@@ -626,7 +626,10 @@ public static class UnifoclCategoryTools
 
             if (!exists)
             {
-                return new LoadCategoryResult(false, $"category '{categoryName}' not found in manifest", 0);
+                return new LoadCategoryResult(
+                    false,
+                    OptionalCategoryHints.AppendTo($"category '{categoryName}' not found in manifest", categoryName),
+                    0);
             }
 
             return new LoadCategoryResult(true, $"category '{categoryName}' was already loaded", 0);
@@ -715,7 +718,7 @@ public static class UnifoclCategoryTools
         {
             var available = infos.Select(i => i.Name).ToList();
             return new UseCategoryResult(false,
-                $"Category '{categoryName}' not found in manifest.",
+                OptionalCategoryHints.AppendTo($"Category '{categoryName}' not found in manifest.", categoryName),
                 0, [], available);
         }
 
@@ -769,6 +772,22 @@ public static class UnifoclCategoryTools
             $"Manifest reloaded: {infos.Count} category/categories, {totalTools} tool(s) available.",
             infos.Count, totalTools);
     }
+}
+
+internal static class OptionalCategoryHints
+{
+    // Built-in categories whose tools only compile when an optional Unity package is installed; a
+    // lookup miss for one of these is a setup problem, not a typo.
+    private static readonly Dictionary<string, string> Hints = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["probuilder"] =
+            "The 'probuilder' category needs com.unity.probuilder 5.0+ in the Unity project. Install it " +
+            "(exec '/upm install com.unity.probuilder'), re-run /init if unifocl was updated, wait for the " +
+            "editor to finish recompiling, then call reload_manifest and use_category('probuilder') again."
+    };
+
+    public static string AppendTo(string message, string categoryName)
+        => Hints.TryGetValue(categoryName.Trim(), out var hint) ? $"{message} {hint}" : message;
 }
 
 public sealed record CategoryInfo(string Name, int ToolCount, bool Active);
@@ -882,6 +901,23 @@ public static class UnifoclAgentWorkflowTools
                   "profiling.annotate_session / annotate_frame — emit metadata (SafeWrite)",
                   "profiling.gpu_capture_begin / gpu_capture_end — RenderDoc/PIX (PrivilegedExec, optional)"
                 ]
+              },
+              "probuilder": {
+                "description": "Optional level-geometry category backed by ProBuilder. Present only when the project has com.unity.probuilder 5.0+; otherwise use_category explains how to enable it.",
+                "load": "use_category('probuilder')",
+                "targeting": "target = hierarchy path (e.g. /Level/Floor; a unique suffix like Floor also works). faces = all | face indices from probuilder.mesh.info | up|down|left|right|forward|back (world directions) | a comma list mixing them. Vectors are 'x,y,z' strings.",
+                "tools": [
+                  "probuilder.shape.create — cube|stair|curved_stair|prism|cylinder|plane|door|pipe|cone|arch|sphere|torus with size/position/rotation/pivot/material (SafeWrite)",
+                  "probuilder.mesh.info — counts, bounds, materials, per-face normal/center/direction (SafeRead)",
+                  "probuilder.face.extrude / face.move / face.set_material / face.flip_normals / face.subdivide — face edits (SafeWrite)",
+                  "probuilder.edge.bevel — bevel the edges of selected faces (SafeWrite)",
+                  "probuilder.face.delete — remove faces (DestructiveWrite)",
+                  "probuilder.mesh.merge — merge meshes into the first target, deleting the rest (DestructiveWrite)",
+                  "probuilder.mesh.probuilderize — convert a regular mesh object to ProBuilder (SafeWrite)",
+                  "probuilder.mesh.export — save the compiled mesh as a .asset (SafeWrite)"
+                ],
+                "cli": "exec '/probuilder shape create cube --name Floor --size 10,0.2,10 --pivot bottom'",
+                "dry_run": "Every mutating probuilder tool accepts dryRun: true and returns a preview without touching the scene."
               }
             }
           }
@@ -1015,6 +1051,23 @@ public static class UnifoclAgentWorkflowTools
                   "profiling.annotate_session / annotate_frame — emit metadata (SafeWrite)",
                   "profiling.gpu_capture_begin / gpu_capture_end — RenderDoc/PIX (PrivilegedExec, optional)"
                 ]
+              },
+              "probuilder": {
+                "description": "Optional level-geometry category backed by ProBuilder. Present only when the project has com.unity.probuilder 5.0+; otherwise use_category explains how to enable it.",
+                "load": "use_category('probuilder')",
+                "targeting": "target = hierarchy path (e.g. /Level/Floor; a unique suffix like Floor also works). faces = all | face indices from probuilder.mesh.info | up|down|left|right|forward|back (world directions) | a comma list mixing them. Vectors are 'x,y,z' strings.",
+                "tools": [
+                  "probuilder.shape.create — cube|stair|curved_stair|prism|cylinder|plane|door|pipe|cone|arch|sphere|torus with size/position/rotation/pivot/material (SafeWrite)",
+                  "probuilder.mesh.info — counts, bounds, materials, per-face normal/center/direction (SafeRead)",
+                  "probuilder.face.extrude / face.move / face.set_material / face.flip_normals / face.subdivide — face edits (SafeWrite)",
+                  "probuilder.edge.bevel — bevel the edges of selected faces (SafeWrite)",
+                  "probuilder.face.delete — remove faces (DestructiveWrite)",
+                  "probuilder.mesh.merge — merge meshes into the first target, deleting the rest (DestructiveWrite)",
+                  "probuilder.mesh.probuilderize — convert a regular mesh object to ProBuilder (SafeWrite)",
+                  "probuilder.mesh.export — save the compiled mesh as a .asset (SafeWrite)"
+                ],
+                "cli": "exec '/probuilder shape create cube --name Floor --size 10,0.2,10 --pivot bottom'",
+                "dry_run": "Every mutating probuilder tool accepts dryRun: true and returns a preview without touching the scene."
               }
             }
           },

@@ -200,8 +200,12 @@ internal sealed partial class DaemonControlService
 
         if (Path.GetFileNameWithoutExtension(processPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
         {
-            var assemblyPath = Assembly.GetEntryAssembly()?.Location
-                               ?? throw new InvalidOperationException("Unable to resolve entry assembly path.");
+            // Under the dotnet host the entry assembly sits in AppContext.BaseDirectory. Assembly.Location
+            // is avoided because it is empty in single-file builds (IL3000), even though this branch
+            // only runs when launched through dotnet.
+            var entryAssemblyName = Assembly.GetEntryAssembly()?.GetName().Name
+                                    ?? throw new InvalidOperationException("Unable to resolve entry assembly path.");
+            var assemblyPath = Path.Combine(AppContext.BaseDirectory, entryAssemblyName + ".dll");
             var psi = new ProcessStartInfo(processPath)
             {
                 UseShellExecute = false,

@@ -705,6 +705,15 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger.StartsWith("/probuilder", StringComparison.Ordinal))
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandleProBuilderCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
         if (matched.Trigger == "/hierarchy")
         {
             if (session.Mode != CliMode.Project || string.IsNullOrWhiteSpace(session.CurrentProjectPath))
