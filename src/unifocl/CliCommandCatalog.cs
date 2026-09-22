@@ -214,6 +214,21 @@ internal static class CliCommandCatalog
             new("/timeline bind --director <path> --track <n> --target <path>", "Bind a track on a PlayableDirector to a scene object (SafeWrite)", "/timeline bind", "timeline"),
             new("/timeline marker add --asset <path> --time <t> [--signal <path>]", "Add a SignalEmitter marker to a TimelineAsset's marker track (SafeWrite)", "/timeline marker add", "timeline"),
 
+            // ── probuilder ───────────────────────────────────────────
+            new("/probuilder <shape|mesh|face|edge> ...", "ProBuilder level-geometry commands (optional: requires com.unity.probuilder 5.0+; agents can also use_category('probuilder'))", "/probuilder", "probuilder"),
+            new("/probuilder shape create <shape> [--name <n>] [--parent <path>] [--position x,y,z] [--rotation x,y,z] [--size x,y,z] [--pivot center|bottom] [--material <path>] [--segments <n>] [--steps <n>] [--no-collider]", "Create a ProBuilder primitive: cube|stair|curved_stair|prism|cylinder|plane|door|pipe|cone|arch|sphere|torus (SafeWrite)", "/probuilder shape create", "probuilder"),
+            new("/probuilder mesh info <target> [--max-faces <n>] [--no-include-faces]", "Mesh stats plus per-face index, normal, center and facing direction (SafeRead)", "/probuilder mesh info", "probuilder"),
+            new("/probuilder mesh merge <target> <other>... [--name <n>]", "Merge ProBuilder meshes into the first target and delete the others (DestructiveWrite)", "/probuilder mesh merge", "probuilder"),
+            new("/probuilder mesh probuilderize <target> [--no-quads] [--no-smoothing] [--smoothing-angle <deg>]", "Convert a regular MeshFilter object into an editable ProBuilder mesh (SafeWrite)", "/probuilder mesh probuilderize", "probuilder"),
+            new("/probuilder mesh export <target> <Assets/.../Name.asset> [--overwrite]", "Save the compiled mesh as a Mesh asset (SafeWrite)", "/probuilder mesh export", "probuilder"),
+            new("/probuilder face extrude <target> --faces <selector> [--distance <m>] [--method face_normal|vertex_normal|individual]", "Extrude faces; selector = all | indices | up|down|left|right|forward|back (SafeWrite)", "/probuilder face extrude", "probuilder"),
+            new("/probuilder face move <target> --faces <selector> --offset x,y,z [--space world|local]", "Translate faces (connected geometry stretches) (SafeWrite)", "/probuilder face move", "probuilder"),
+            new("/probuilder face material <target> <material-path> [--faces <selector>]", "Assign a material to faces (SafeWrite)", "/probuilder face material", "probuilder"),
+            new("/probuilder face delete <target> --faces <selector>", "Delete faces, leaving an opening (DestructiveWrite)", "/probuilder face delete", "probuilder"),
+            new("/probuilder face flip <target> [--faces <selector>]", "Flip face normals, e.g. to turn a box into a room (SafeWrite)", "/probuilder face flip", "probuilder"),
+            new("/probuilder face subdivide <target> [--faces <selector>]", "Subdivide faces through their centers (SafeWrite)", "/probuilder face subdivide", "probuilder"),
+            new("/probuilder edge bevel <target> [--faces <selector>] [--amount <0-1>]", "Bevel the edges of the selected faces (SafeWrite)", "/probuilder edge bevel", "probuilder"),
+
             // ── recorder ─────────────────────────────────────────────
             new("/recorder <start|stop|status|config|switch|snapshot>", "Unity Recorder capture commands (requires com.unity.recorder package, except snapshot)", "/recorder", "recorder"),
             new("/recorder start [--profile <name>]", "Start a Recorder capture session under the named profile (default: current). Errors if none configured (PrivilegedExec)", "/recorder start", "recorder"),

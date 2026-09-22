@@ -892,3 +892,66 @@ public static class GameplayCommands
 ```
 
 Custom runtime commands are discovered at player startup via reflection, packaged into categories, and exposed through the same lazy-loading manifest system used for editor tools.
+
+## 17. ProBuilder (Optional Lazy-Loaded Category)
+
+The `probuilder` category drives [ProBuilder](https://docs.unity3d.com/Packages/com.unity.probuilder@latest) for level blockout and simple geometry. It is **optional**: the tools compile into their own editor assembly (`UniFocl.EditorBridge.ProBuilder`) that Unity only builds when `com.unity.probuilder` 5.0 or newer is installed. Without the package the category is simply absent from `get_categories`, and nothing else in the bridge changes.
+
+**Enable it:**
+
+1. Install the package: `/upm install com.unity.probuilder` (skip if the project already has it).
+2. Re-run `/init` (or `/open`, which re-syncs the bridge) so the ProBuilder tool files are installed, and let the editor finish recompiling.
+3. Agents call `use_category('probuilder')` (call `reload_manifest` first if the category was just enabled mid-session). If the package is missing, `use_category` says so and explains how to fix it.
+
+**Addressing:**
+
+- `target` / `parent` are hierarchy paths such as `/Level/Floor`. A unique suffix (`Floor`, `Level/Floor`) also resolves; an ambiguous one is rejected with the matching paths listed. Paths resolve inside the open prefab when one is being edited.
+- `faces` selects faces: `all`, face indices from `probuilder.mesh.info` (`0,3,5`), or world directions `up|down|left|right|forward|back` (aliases `top|bottom|front|backward`) matching faces whose normal is less than 45° from that direction (a face at exactly 45°, like a bevel chamfer, matches neither neighbour). A comma list is the union.
+- Vectors are `x,y,z` strings (a JSON array or `{"x":..,"y":..,"z":..}` object also works).
+
+**CLI commands:**
+
+```
+/probuilder shape create <shape> [--name <n>] [--parent <path>] [--position x,y,z] [--rotation x,y,z] [--size x,y,z] [--pivot center|bottom] [--material <path>] [--segments <n>] [--steps <n>] [--no-collider]
+/probuilder mesh info <target> [--max-faces <n>] [--no-include-faces]
+/probuilder mesh merge <target> <other>... [--name <n>]
+/probuilder mesh probuilderize <target> [--no-quads] [--no-smoothing] [--smoothing-angle <deg>]
+/probuilder mesh export <target> <Assets/.../Name.asset> [--overwrite]
+/probuilder face extrude <target> --faces <selector> [--distance <m>] [--method face_normal|vertex_normal|individual]
+/probuilder face move <target> --faces <selector> --offset x,y,z [--space world|local]
+/probuilder face material <target> <material-path> [--faces <selector>]
+/probuilder face delete <target> --faces <selector>
+/probuilder face flip <target> [--faces <selector>]
+/probuilder face subdivide <target> [--faces <selector>]
+/probuilder edge bevel <target> [--faces <selector>] [--amount <0-1>]
+```
+
+Every subcommand accepts `--dry-run`, which validates the request and returns a preview without touching the scene.
+
+**Agent / MCP operations (after `use_category('probuilder')`):**
+
+| Operation | Risk | Description |
+| --- | --- | --- |
+| `probuilder.shape.create` | SafeWrite | Create a primitive: `cube\|stair\|curved_stair\|prism\|cylinder\|plane\|door\|pipe\|cone\|arch\|sphere\|torus`. `size` is the bounding box in meters (one number = uniform); `position`/`rotation` are local to `parent`; `pivot: bottom` puts the pivot at the bottom center for floor placement; `segments`/`steps` control topology. Adds a `MeshCollider` unless `collider: false`. Names are made unique among siblings. |
+| `probuilder.mesh.info` | SafeRead | Vertex/face/edge/triangle counts, world bounds, materials, and per-face index, world normal, world center, facing direction, material, and smoothing group. |
+| `probuilder.face.extrude` | SafeWrite | Extrude selected faces by `distance` (negative = inward) using `face_normal` (default), `vertex_normal`, or `individual`. Returns the cap face indices. |
+| `probuilder.face.move` | SafeWrite | Translate selected faces by `offset` in `world` (default) or `local` space; connected geometry stretches. |
+| `probuilder.face.set_material` | SafeWrite | Assign a Material asset to selected faces (default all). |
+| `probuilder.face.flip_normals` | SafeWrite | Reverse face winding, e.g. to turn a box into a room viewed from inside. |
+| `probuilder.face.subdivide` | SafeWrite | Split selected faces through their centers. Returns the new face indices. |
+| `probuilder.edge.bevel` | SafeWrite | Bevel every edge of the selected faces; `amount` is a fraction (0–1] of the adjacent faces. |
+| `probuilder.face.delete` | DestructiveWrite | Delete selected faces (refuses to delete every face). Face indices shift afterwards. |
+| `probuilder.mesh.merge` | DestructiveWrite | Merge meshes into the first path of `targets` (`;`-separated or a JSON array) and delete the other source objects. |
+| `probuilder.mesh.probuilderize` | SafeWrite | Convert a regular `MeshFilter` object into an editable ProBuilder mesh; the source mesh asset is untouched. |
+| `probuilder.mesh.export` | SafeWrite | Save the compiled mesh as a `.asset` in an existing folder (`overwrite` to replace). |
+
+Mutations register Undo and save the owning scene like other unifocl hierarchy mutations. Under `dryRun: true` the ProBuilder tools never modify the mesh; they validate and return a preview instead, because reverting a ProBuilder edit through Undo would leave the compiled mesh out of sync with the ProBuilder data.
+
+**Example blockout (MCP):**
+
+```json
+{"shape": "plane", "name": "Floor", "size": "20,0,20"}
+{"shape": "cube", "name": "Wall", "size": "20,3,0.2", "position": "0,0,10", "pivot": "bottom"}
+{"target": "/Wall", "faces": "up", "offset": "0,1,0"}
+{"target": "/Floor", "material": "Assets/Materials/Concrete.mat"}
+```

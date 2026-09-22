@@ -11,10 +11,17 @@ using Spectre.Console;
 /// - Console, playmode, time, compile: dispatched via POST /project/command
 /// - Profiler, recorder: dispatched via POST /mcp/unifocl_project_command (custom tool)
 /// </summary>
-internal sealed class RuntimeCommandService
+internal sealed partial class RuntimeCommandService
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
+
+    // Display only: keep non-ASCII names and quotes readable instead of \uXXXX escapes.
+    private static readonly JsonSerializerOptions PrettyJsonOpts = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     private readonly HierarchyDaemonClient _daemonClient = new();
 
@@ -826,7 +833,10 @@ internal sealed class RuntimeCommandService
         string toolName,
         string argsJson,
         string label,
-        Action<string> log)
+        Action<string> log,
+        bool dryRun = false,
+        string? unavailableHint = null,
+        bool showPayload = false)
     {
         if (DaemonControlService.GetPort(session) is not int port)
         {
@@ -834,7 +844,7 @@ internal sealed class RuntimeCommandService
             return;
         }
 
-        log($"[grey]{label}[/]: dispatching {Markup.Escape(toolName)}...");
+        log($"[grey]{label}[/]: dispatching {Markup.Escape(toolName)}{(dryRun ? " (dry-run)" : string.Empty)}...");
 
         try
         {
@@ -843,7 +853,7 @@ internal sealed class RuntimeCommandService
                 operation = "execute_custom_tool",
                 tool = toolName,
                 args = argsJson,
-                dryRun = false
+                dryRun
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOpts);
@@ -878,14 +888,25 @@ internal sealed class RuntimeCommandService
             if (result.TryGetProperty("ok", out var okProp) && okProp.ValueKind == JsonValueKind.False)
             {
                 var msg = result.TryGetProperty("message", out var msgProp) ? msgProp.GetString() : "failed";
-                log($"[red]{label}[/]: {Markup.Escape(msg ?? "failed")}");
+                // The leading "error" is what the agentic issue parser keys on; without it a rejected
+                // tool call reads as success to exec callers.
+                log($"[red]error[/]: {label}: {Markup.Escape(msg ?? "failed")}");
+                // The daemon only knows tools whose assembly compiled; for optional-package categories a
+                // missing tool almost always means the package (or a re-run of /init) is missing.
+                if (unavailableHint is not null
+                    && msg is not null
+                    && msg.StartsWith("no method found for tool", StringComparison.Ordinal))
+                {
+                    log($"[yellow]{label}[/]: {Markup.Escape(unavailableHint)}");
+                }
+
                 return;
             }
 
             // In interactive TUI mode, prefer the human-friendly message when there is no embedded
             // content payload. In agentic/exec surfaces SuppressConsoleOutput is true, so the full
             // JSON is preserved for structured consumption.
-            if (!CliRuntimeState.SuppressConsoleOutput)
+            if (!CliRuntimeState.SuppressConsoleOutput && !showPayload)
             {
                 var hasContent = result.TryGetProperty("content", out var contentEl)
                     && contentEl.ValueKind == JsonValueKind.String
@@ -927,8 +948,7 @@ internal sealed class RuntimeCommandService
 
     private static void RenderJsonElement(JsonElement element, string label, Action<string> log)
     {
-        var pretty = JsonSerializer.Serialize(element,
-            new JsonSerializerOptions { WriteIndented = true });
+        var pretty = JsonSerializer.Serialize(element, PrettyJsonOpts);
         foreach (var line in pretty.Split('\n'))
         {
             log($"[{CliTheme.TextMuted}]{Markup.Escape(line)}[/]");

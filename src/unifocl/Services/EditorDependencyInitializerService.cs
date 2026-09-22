@@ -76,6 +76,11 @@ internal sealed class EditorDependencyInitializerService
     private const string ProfilerRuntimeApiAdapterResource = "Payload/EditorScripts/Services/Profiling/ProfilerRuntimeApiAdapter.cs";
     // Recorder service
     private const string DaemonRecorderServiceResource = "Payload/EditorScripts/Services/Recorder/DaemonRecorderService.cs";
+    // ProBuilder tools — ship into their own assembly, see ProBuilderAsmdef below.
+    private const string DaemonProBuilderServiceResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.cs";
+    private const string DaemonProBuilderServiceFacesResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.Faces.cs";
+    private const string DaemonProBuilderServiceSupportResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.Support.cs";
+    private const string AddonAssemblyAccessResource = "Payload/EditorScripts/AddonAssemblyAccess.cs";
     // Runtime scripts (player-side)
     private const string RuntimeChunkAccumulatorResource = "Payload/RuntimeScripts/ChunkAccumulator.cs";
     private const string RuntimeCommandRegistryResource = "Payload/RuntimeScripts/RuntimeCommandRegistry.cs";
@@ -242,6 +247,12 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs"),
             // Recorder service
             Path.Combine(packagePath, "Editor", "Services", "Recorder", "DaemonRecorderService.cs"),
+            // ProBuilder tools (optional category)
+            Path.Combine(packagePath, "Editor", "AddonAssemblyAccess.cs"),
+            Path.Combine(packagePath, "Editor", "ProBuilder", "UniFocl.EditorBridge.ProBuilder.asmdef"),
+            Path.Combine(packagePath, "Editor", "ProBuilder", "DaemonProBuilderService.cs"),
+            Path.Combine(packagePath, "Editor", "ProBuilder", "DaemonProBuilderService.Faces.cs"),
+            Path.Combine(packagePath, "Editor", "ProBuilder", "DaemonProBuilderService.Support.cs"),
             // Runtime scripts (player-side)
             Path.Combine(packagePath, "Runtime", "ChunkAccumulator.cs"),
             Path.Combine(packagePath, "Runtime", "RuntimeCommandRegistry.cs"),
@@ -308,6 +319,7 @@ internal sealed class EditorDependencyInitializerService
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Profiling"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Recorder"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "TestRunner"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "ProBuilder"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Runtime"));
 
             var packageJson =
@@ -381,6 +393,43 @@ internal sealed class EditorDependencyInitializerService
                 }
                 """;
 
+            // Same shape as the test runner assembly: UniFocl.EditorBridge cannot reference ProBuilder
+            // without breaking projects that lack it, so the ProBuilder tools compile separately. The
+            // versionDefine only fires for com.unity.probuilder 5.0+ (the API floor the tools use); below
+            // that, or with the package absent, Unity skips the assembly and the "probuilder" category
+            // simply never appears in the tool manifest.
+            var proBuilderAsmdef =
+                """
+                {
+                  "name": "UniFocl.EditorBridge.ProBuilder",
+                  "rootNamespace": "UniFocl.EditorBridge.ProBuilder",
+                  "references": [
+                    "UniFocl.EditorBridge",
+                    "Unity.ProBuilder",
+                    "Unity.ProBuilder.Editor"
+                  ],
+                  "includePlatforms": [
+                    "Editor"
+                  ],
+                  "excludePlatforms": [],
+                  "allowUnsafeCode": false,
+                  "overrideReferences": false,
+                  "precompiledReferences": [],
+                  "autoReferenced": false,
+                  "defineConstraints": [
+                    "UNIFOCL_PROBUILDER"
+                  ],
+                  "versionDefines": [
+                    {
+                      "name": "com.unity.probuilder",
+                      "expression": "5.0.0",
+                      "define": "UNIFOCL_PROBUILDER"
+                    }
+                  ],
+                  "noEngineReferences": false
+                }
+                """;
+
             var runtimeAsmdef =
                 """
                 {
@@ -401,6 +450,7 @@ internal sealed class EditorDependencyInitializerService
             File.WriteAllText(Path.Combine(payloadPath, "package.json"), packageJson + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "UniFocl.EditorBridge.asmdef"), asmdef + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "TestRunner", "UniFocl.EditorBridge.TestRunner.asmdef"), testRunnerAsmdef + Environment.NewLine, Encoding.UTF8);
+            File.WriteAllText(Path.Combine(payloadPath, "Editor", "ProBuilder", "UniFocl.EditorBridge.ProBuilder.asmdef"), proBuilderAsmdef + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Runtime", "UniFocl.Runtime.asmdef"), runtimeAsmdef + Environment.NewLine, Encoding.UTF8);
 
             var resourceToTarget = new (string Resource, string RelativePath)[]
@@ -472,6 +522,11 @@ internal sealed class EditorDependencyInitializerService
                 (ProfilerRuntimeApiAdapterResource,      Path.Combine("Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs")),
                 // Recorder service
                 (DaemonRecorderServiceResource,          Path.Combine("Editor", "Services", "Recorder", "DaemonRecorderService.cs")),
+                // ProBuilder tools (optional category, own assembly)
+                (AddonAssemblyAccessResource,            Path.Combine("Editor", "AddonAssemblyAccess.cs")),
+                (DaemonProBuilderServiceResource,        Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.cs")),
+                (DaemonProBuilderServiceFacesResource,   Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.Faces.cs")),
+                (DaemonProBuilderServiceSupportResource, Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.Support.cs")),
                 // Runtime scripts (player-side)
                 (RuntimeChunkAccumulatorResource,        Path.Combine("Runtime", "ChunkAccumulator.cs")),
                 (RuntimeCommandRegistryResource,         Path.Combine("Runtime", "RuntimeCommandRegistry.cs")),

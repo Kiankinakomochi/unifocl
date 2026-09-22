@@ -65,9 +65,11 @@ namespace UniFocl.EditorBridge
         /// </summary>
         private static string InvokeWithDryRun(MethodInfo method, object?[] args, string toolName)
         {
-            // Capture the current Undo group index before execution.
-            var undoGroupBefore = Undo.GetCurrentGroup();
+            // Open a fresh group first and revert only that one. The editor advances the current group
+            // on user input, not for daemon requests, so the group that was current before this call
+            // still holds every earlier daemon mutation; reverting down to it would undo that work too.
             Undo.IncrementCurrentGroup();
+            var dryRunGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName($"[unifocl dry-run] {toolName}");
 
             // Capture scene dirty states before the dry-run so we can restore them afterwards.
@@ -89,7 +91,7 @@ namespace UniFocl.EditorBridge
                 Debug.LogWarning($"[unifocl] custom tool '{toolName}' dry-run threw: {msg}");
 
                 // Still revert whatever Unity recorded before the exception.
-                Undo.RevertAllDownToGroup(undoGroupBefore);
+                Undo.RevertAllDownToGroup(dryRunGroup);
                 AssetDatabase.Refresh();
                 dryRunScope.Dispose();
                 // IsActive is now false — safe to restore scene dirty state.
@@ -106,7 +108,7 @@ namespace UniFocl.EditorBridge
             // Revert all Unity Undo-tracked changes made inside the group.
             // At this point IsActive is already false (finally ran above), so scene saves
             // are no longer blocked by DaemonDryRunAssetModificationProcessor.
-            Undo.RevertAllDownToGroup(undoGroupBefore);
+            Undo.RevertAllDownToGroup(dryRunGroup);
 
             // Resync the asset database to a clean state after the undo.
             AssetDatabase.Refresh();
@@ -212,7 +214,8 @@ namespace UniFocl.EditorBridge
 
         /// <summary>
         /// Extracts the raw value string for <paramref name="key"/> from a flat JSON object.
-        /// Returns null if the key is not found.
+        /// String values are unescaped; arrays and objects are returned as raw JSON text; a JSON
+        /// <c>null</c> counts as absent. Returns null if the key is not found.
         /// </summary>
         private static string? ExtractField(string json, string key)
         {
@@ -229,21 +232,17 @@ namespace UniFocl.EditorBridge
             }
 
             var pos = idx + search.Length;
-            while (pos < json.Length && json[pos] == ' ') pos++;
+            while (pos < json.Length && char.IsWhiteSpace(json[pos])) pos++;
             if (pos >= json.Length) return null;
 
             if (json[pos] == '"')
             {
-                // String value — handle simple escapes
-                var end = pos + 1;
-                while (end < json.Length)
-                {
-                    if (json[end] == '\\') { end += 2; continue; }
-                    if (json[end] == '"') break;
-                    end++;
-                }
+                return ReadJsonString(json, pos);
+            }
 
-                return end < json.Length ? json.Substring(pos + 1, end - pos - 1).Replace("\\\"", "\"").Replace("\\\\", "\\").Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\t", "\t") : null;
+            if (json[pos] == '[' || json[pos] == '{')
+            {
+                return ReadJsonContainer(json, pos);
             }
 
             // Non-string value: read until delimiter
@@ -254,7 +253,84 @@ namespace UniFocl.EditorBridge
             }
 
             var token = json.Substring(pos, end2 - pos).Trim();
-            return token.Length > 0 ? token : null;
+            return token.Length > 0 && token != "null" ? token : null;
+        }
+
+        /// <summary>
+        /// Reads the JSON string literal starting at <paramref name="start"/> (the opening quote) and
+        /// decodes its escapes, including <c>\uXXXX</c>: System.Text.Json escapes every non-ASCII
+        /// character that way, so names in other scripts arrive encoded.
+        /// </summary>
+        private static string? ReadJsonString(string json, int start)
+        {
+            var builder = new System.Text.StringBuilder();
+            for (var i = start + 1; i < json.Length; i++)
+            {
+                var ch = json[i];
+                if (ch == '"')
+                {
+                    return builder.ToString();
+                }
+
+                if (ch != '\\' || i + 1 >= json.Length)
+                {
+                    builder.Append(ch);
+                    continue;
+                }
+
+                var escape = json[++i];
+                switch (escape)
+                {
+                    case 'n': builder.Append('\n'); break;
+                    case 'r': builder.Append('\r'); break;
+                    case 't': builder.Append('\t'); break;
+                    case 'b': builder.Append('\b'); break;
+                    case 'f': builder.Append('\f'); break;
+                    case 'u' when i + 4 < json.Length
+                        && int.TryParse(json.Substring(i + 1, 4), System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out var code):
+                        builder.Append((char)code);
+                        i += 4;
+                        break;
+                    default: builder.Append(escape); break;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Returns the raw text of the array or object starting at <paramref name="start"/>.</summary>
+        private static string? ReadJsonContainer(string json, int start)
+        {
+            var depth = 0;
+            var inString = false;
+            for (var i = start; i < json.Length; i++)
+            {
+                var ch = json[i];
+                if (inString)
+                {
+                    if (ch == '\\') i++;
+                    else if (ch == '"') inString = false;
+                    continue;
+                }
+
+                switch (ch)
+                {
+                    case '"': inString = true; break;
+                    case '[':
+                    case '{': depth++; break;
+                    case ']':
+                    case '}':
+                        if (--depth == 0)
+                        {
+                            return json.Substring(start, i - start + 1);
+                        }
+
+                        break;
+                }
+            }
+
+            return null;
         }
 
         private static string ErrorResponse(string message)
