@@ -86,7 +86,7 @@ namespace UniFocl.EditorBridge.Timeline
 
                 return OkResponse(
                     $"created {payload.type} track '{trackName}'",
-                    $"{{\"id\":{track.GetInstanceID()},\"name\":\"{EscapeJson(trackName)}\",\"type\":\"{payload.type}\"}}");
+                    $"{{\"id\":{DaemonObjectIds.GetId(track)},\"name\":\"{EscapeJson(trackName)}\",\"type\":\"{payload.type}\"}}");
             }
             catch (Exception ex)
             {

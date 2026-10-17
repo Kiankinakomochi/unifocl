@@ -20,11 +20,7 @@ namespace UniFocl.EditorBridge
         {
             if (int.TryParse(nodeSelector, out var instanceId))
             {
-                // InstanceIDToObject(int) deprecated in Unity 6; EntityIdToObject replacement
-                // unavailable in Unity 2021–2022 LTS — suppress until minimum version is raised.
-#pragma warning disable CS0618
-                return EditorUtility.InstanceIDToObject(instanceId) as GameObject;
-#pragma warning restore CS0618
+                return DaemonObjectIds.FromId(instanceId) as GameObject;
             }
 
             return GameObject.Find(nodeSelector);

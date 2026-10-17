@@ -13,6 +13,8 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonAssetIndexServiceResource = "Payload/EditorScripts/Services/DaemonAssetIndexService.cs";
     private const string DaemonDryRunServicesResource = "Payload/EditorScripts/Services/DaemonDryRunServices.cs";
     private const string DaemonDryRunAssetModificationProcessorResource = "Payload/EditorScripts/Services/DaemonDryRunAssetModificationProcessor.cs";
+    private const string DaemonDryRunFileIoResource = "Payload/EditorScripts/Services/DaemonDryRunFileIo.cs";
+    private const string DaemonObjectIdsResource = "Payload/EditorScripts/Services/DaemonObjectIds.cs";
     private const string DaemonHierarchyServiceResource = "Payload/EditorScripts/Services/DaemonHierarchyService.cs";
     private const string DaemonInspectorServiceResource = "Payload/EditorScripts/Services/DaemonInspectorService.cs";
     private const string DaemonMutationCommandDispatcherResource = "Payload/EditorScripts/Services/DaemonMutationCommandDispatcher.cs";
@@ -74,6 +76,8 @@ internal sealed class EditorDependencyInitializerService
     private const string ProfilerEditorApiAdapterResource = "Payload/EditorScripts/Services/Profiling/ProfilerEditorApiAdapter.cs";
     private const string ProfilerPathUtilsResource = "Payload/EditorScripts/Services/Profiling/ProfilerPathUtils.cs";
     private const string ProfilerRuntimeApiAdapterResource = "Payload/EditorScripts/Services/Profiling/ProfilerRuntimeApiAdapter.cs";
+    // Timeline service
+    private const string DaemonTimelineServiceResource = "Payload/EditorScripts/Services/Timeline/DaemonTimelineService.cs";
     // Recorder service
     private const string DaemonRecorderServiceResource = "Payload/EditorScripts/Services/Recorder/DaemonRecorderService.cs";
     // ProBuilder tools — ship into their own assembly, see ProBuilderAsmdef below.
@@ -185,6 +189,8 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "DaemonAssetIndexService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunServices.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunAssetModificationProcessor.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunFileIo.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonObjectIds.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonHierarchyService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonMutationCommandDispatcher.cs"),
@@ -247,6 +253,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs"),
             // Recorder service
             Path.Combine(packagePath, "Editor", "Services", "Recorder", "DaemonRecorderService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Timeline", "DaemonTimelineService.cs"),
             // ProBuilder tools (optional category)
             Path.Combine(packagePath, "Editor", "AddonAssemblyAccess.cs"),
             Path.Combine(packagePath, "Editor", "ProBuilder", "UniFocl.EditorBridge.ProBuilder.asmdef"),
@@ -461,6 +468,8 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonAssetIndexServiceResource, Path.Combine("Editor", "Services", "DaemonAssetIndexService.cs")),
                 (DaemonDryRunServicesResource, Path.Combine("Editor", "Services", "DaemonDryRunServices.cs")),
                 (DaemonDryRunAssetModificationProcessorResource, Path.Combine("Editor", "Services", "DaemonDryRunAssetModificationProcessor.cs")),
+                (DaemonDryRunFileIoResource, Path.Combine("Editor", "Services", "DaemonDryRunFileIo.cs")),
+                (DaemonObjectIdsResource, Path.Combine("Editor", "Services", "DaemonObjectIds.cs")),
                 (DaemonHierarchyServiceResource, Path.Combine("Editor", "Services", "DaemonHierarchyService.cs")),
                 (DaemonInspectorServiceResource, Path.Combine("Editor", "Services", "DaemonInspectorService.cs")),
                 (DaemonMutationCommandDispatcherResource, Path.Combine("Editor", "Services", "DaemonMutationCommandDispatcher.cs")),
@@ -520,6 +529,8 @@ internal sealed class EditorDependencyInitializerService
                 (ProfilerEditorApiAdapterResource,       Path.Combine("Editor", "Services", "Profiling", "ProfilerEditorApiAdapter.cs")),
                 (ProfilerPathUtilsResource,              Path.Combine("Editor", "Services", "Profiling", "ProfilerPathUtils.cs")),
                 (ProfilerRuntimeApiAdapterResource,      Path.Combine("Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs")),
+                // Timeline service
+                (DaemonTimelineServiceResource,          Path.Combine("Editor", "Services", "Timeline", "DaemonTimelineService.cs")),
                 // Recorder service
                 (DaemonRecorderServiceResource,          Path.Combine("Editor", "Services", "Recorder", "DaemonRecorderService.cs")),
                 // ProBuilder tools (optional category, own assembly)
