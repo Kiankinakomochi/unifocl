@@ -61,7 +61,7 @@ namespace UniFocl.EditorBridge
 
             DaemonHierarchyService.PersistLoadedPrefabSnapshotRootIfAny(source, markDirty);
 
-            var seen = new HashSet<int>();
+            var seen = new HashSet<Scene>();
             foreach (var scene in scenes)
             {
                 if (!DaemonSceneManager.TryResolveSceneForPersistence(scene, out var sceneToSave))
@@ -70,11 +70,9 @@ namespace UniFocl.EditorBridge
                     continue;
                 }
 
-                // SceneHandle implicit int conversion deprecated in Unity 6; GetRawData() replacement
-                // unavailable in Unity 2021–2022 LTS — suppress until minimum version is raised.
-#pragma warning disable CS0618
-                if (!seen.Add(sceneToSave.handle))
-#pragma warning restore CS0618
+                // Scene equality is handle equality; keying on Scene avoids the SceneHandle -> int
+                // conversion, which is a hard error from Unity 6.5.
+                if (!seen.Add(sceneToSave))
                 {
                     continue;
                 }

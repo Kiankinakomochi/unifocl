@@ -1,8 +1,4 @@
 #if UNITY_EDITOR
-// GetInstanceID() and InstanceIDToObject(int) are deprecated in Unity 6 in favour of EntityId-based
-// APIs, but those APIs are unavailable in Unity 2021–2022 LTS. Suppress until minimum supported
-// version is raised to Unity 6.
-#pragma warning disable CS0618
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -418,7 +414,7 @@ namespace UniFocl.EditorBridge
                 return null;
             }
 
-            return EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            return DaemonObjectIds.FromId(request.targetId) as GameObject;
         }
 
         public static string ExecuteSearch(string payload)
@@ -512,7 +508,7 @@ namespace UniFocl.EditorBridge
             Scene parentScene = activeScene;
             if (parentId != SceneRootNodeId)
             {
-                var parentObject = EditorUtility.InstanceIDToObject(parentId) as GameObject;
+                var parentObject = DaemonObjectIds.FromId(parentId) as GameObject;
                 if (parentObject is null)
                 {
                     return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {parentId}" });
@@ -561,7 +557,7 @@ namespace UniFocl.EditorBridge
             {
                 ok = true,
                 message = count <= 1 ? $"created {normalizedType}" : $"created {normalizedType} x{count}",
-                nodeId = lastCreated.GetInstanceID(),
+                nodeId = DaemonObjectIds.GetId(lastCreated),
                 isActive = lastCreated.activeSelf,
                 assignedName = lastCreated.name
             });
@@ -703,7 +699,7 @@ namespace UniFocl.EditorBridge
                 return fallback;
             }
 
-            var targetObject = EditorUtility.InstanceIDToObject(targetId) as GameObject;
+            var targetObject = DaemonObjectIds.FromId(targetId) as GameObject;
             if (targetObject is null)
             {
                 error = $"target id not found: {targetId}";
@@ -845,7 +841,9 @@ namespace UniFocl.EditorBridge
 
         private static GameObject EnsureSceneCanvas(Scene scene)
         {
-#if UNITY_2022_1_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+            foreach (var canvas in UnityEngine.Object.FindObjectsByType<Canvas>())
+#elif UNITY_2022_1_OR_NEWER
             foreach (var canvas in UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None))
 #else
 #pragma warning disable CS0618 // FindObjectsOfType is obsolete; fallback for pre-2022.1
@@ -872,7 +870,9 @@ namespace UniFocl.EditorBridge
 
         private static void EnsureEventSystemExists(Scene scene)
         {
-#if UNITY_2022_1_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+            foreach (var eventSystem in UnityEngine.Object.FindObjectsByType<EventSystem>())
+#elif UNITY_2022_1_OR_NEWER
             foreach (var eventSystem in UnityEngine.Object.FindObjectsByType<EventSystem>(FindObjectsSortMode.None))
 #else
 #pragma warning disable CS0618 // FindObjectsOfType is obsolete; fallback for pre-2022.1
@@ -899,7 +899,7 @@ namespace UniFocl.EditorBridge
                 return null;
             }
 
-            var target = EditorUtility.InstanceIDToObject(targetId) as GameObject;
+            var target = DaemonObjectIds.FromId(targetId) as GameObject;
             if (target is null)
             {
                 error = $"target id not found: {targetId}";
@@ -933,7 +933,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "toggle requires target id" });
             }
 
-            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            var target = DaemonObjectIds.FromId(request.targetId) as GameObject;
             if (target is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
@@ -951,7 +951,7 @@ namespace UniFocl.EditorBridge
                 {
                     ok = true,
                     message = "unchanged",
-                    nodeId = target.GetInstanceID(),
+                    nodeId = DaemonObjectIds.GetId(target),
                     isActive = target.activeSelf
                 });
             }
@@ -963,7 +963,7 @@ namespace UniFocl.EditorBridge
             {
                 ok = true,
                 message = "toggled",
-                nodeId = target.GetInstanceID(),
+                nodeId = DaemonObjectIds.GetId(target),
                 isActive = target.activeSelf
             });
         }
@@ -975,7 +975,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "rm requires target id" });
             }
 
-            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            var target = DaemonObjectIds.FromId(request.targetId) as GameObject;
             if (target is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
@@ -1023,7 +1023,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "rename requires a name" });
             }
 
-            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            var target = DaemonObjectIds.FromId(request.targetId) as GameObject;
             if (target is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
@@ -1040,7 +1040,7 @@ namespace UniFocl.EditorBridge
                 {
                     ok = true,
                     message = "unchanged",
-                    nodeId = target.GetInstanceID(),
+                    nodeId = DaemonObjectIds.GetId(target),
                     isActive = target.activeSelf,
                     assignedName = target.name
                 });
@@ -1053,7 +1053,7 @@ namespace UniFocl.EditorBridge
             {
                 ok = true,
                 message = "renamed",
-                nodeId = target.GetInstanceID(),
+                nodeId = DaemonObjectIds.GetId(target),
                 isActive = target.activeSelf,
                 assignedName = target.name
             });
@@ -1066,7 +1066,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "mv requires target id" });
             }
 
-            var target = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            var target = DaemonObjectIds.FromId(request.targetId) as GameObject;
             if (target is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
@@ -1095,13 +1095,13 @@ namespace UniFocl.EditorBridge
                 {
                     ok = true,
                     message = "moved",
-                    nodeId = target.GetInstanceID(),
+                    nodeId = DaemonObjectIds.GetId(target),
                     isActive = target.activeSelf,
                     assignedName = target.name
                 });
             }
 
-            var parentObject = EditorUtility.InstanceIDToObject(nextParentId) as GameObject;
+            var parentObject = DaemonObjectIds.FromId(nextParentId) as GameObject;
             if (parentObject is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {nextParentId}" });
@@ -1129,7 +1129,7 @@ namespace UniFocl.EditorBridge
             {
                 ok = true,
                 message = "moved",
-                nodeId = target.GetInstanceID(),
+                nodeId = DaemonObjectIds.GetId(target),
                 isActive = target.activeSelf,
                 assignedName = target.name
             });
@@ -1142,7 +1142,7 @@ namespace UniFocl.EditorBridge
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = "duplicate requires target id" });
             }
 
-            var source = EditorUtility.InstanceIDToObject(request.targetId) as GameObject;
+            var source = DaemonObjectIds.FromId(request.targetId) as GameObject;
             if (source is null)
             {
                 return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"target id not found: {request.targetId}" });
@@ -1152,7 +1152,7 @@ namespace UniFocl.EditorBridge
             Scene destinationScene = source.scene;
             if (request.parentId != 0)
             {
-                var parent = EditorUtility.InstanceIDToObject(request.parentId) as GameObject;
+                var parent = DaemonObjectIds.FromId(request.parentId) as GameObject;
                 if (parent is null)
                 {
                     return JsonUtility.ToJson(new HierarchyCommandResponse { ok = false, message = $"parent id not found: {request.parentId}" });
@@ -1198,7 +1198,7 @@ namespace UniFocl.EditorBridge
                 {
                     ok = true,
                     message = "duplicated",
-                    nodeId = clone.GetInstanceID(),
+                    nodeId = DaemonObjectIds.GetId(clone),
                     isActive = clone.activeSelf,
                     assignedName = clone.name
                 });
@@ -1335,7 +1335,7 @@ namespace UniFocl.EditorBridge
 
             return new HierarchyNodeDto
             {
-                id = gameObject.GetInstanceID(),
+                id = DaemonObjectIds.GetId(gameObject),
                 name = gameObject.name,
                 active = gameObject.activeSelf,
                 children = children
@@ -1422,7 +1422,7 @@ namespace UniFocl.EditorBridge
                 return false;
             }
 
-            var go = EditorUtility.InstanceIDToObject(node.id) as GameObject;
+            var go = DaemonObjectIds.FromId(node.id) as GameObject;
             if (go is null)
             {
                 return false;
