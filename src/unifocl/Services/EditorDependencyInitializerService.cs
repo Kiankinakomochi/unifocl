@@ -189,6 +189,8 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "DaemonAssetIndexService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunServices.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunAssetModificationProcessor.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonDryRunFileIo.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonObjectIds.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonHierarchyService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonInspectorService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonMutationCommandDispatcher.cs"),
@@ -251,6 +253,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "Profiling", "ProfilerRuntimeApiAdapter.cs"),
             // Recorder service
             Path.Combine(packagePath, "Editor", "Services", "Recorder", "DaemonRecorderService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "Timeline", "DaemonTimelineService.cs"),
             // ProBuilder tools (optional category)
             Path.Combine(packagePath, "Editor", "AddonAssemblyAccess.cs"),
             Path.Combine(packagePath, "Editor", "ProBuilder", "UniFocl.EditorBridge.ProBuilder.asmdef"),
