@@ -867,5 +867,6 @@ internal sealed partial class DaemonControlService
     internal sealed record DaemonStartupFailure(
         bool IsCompileError,
         string Summary,
-        IReadOnlyList<string> Lines);
+        IReadOnlyList<string> Lines,
+        IReadOnlyList<string> RecoverableBuildWarnings);
 }
