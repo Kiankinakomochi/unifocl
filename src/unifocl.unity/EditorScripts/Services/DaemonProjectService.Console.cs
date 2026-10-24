@@ -179,10 +179,26 @@ namespace UniFocl.EditorBridge
 
         private static string ClassifyLogMode(int mode)
         {
-            // Unity LogEntry mode flags: bit 0 = error, bit 1 = warning, bit 8 = error
-            // Simplified classification
-            if ((mode & 0x101) != 0) return "error";
-            if ((mode & 0x102) != 0) return "warning";
+            // Unity's internal LogMessageFlags (ConsoleWindow.Mode). Debug.LogWarning sets
+            // ScriptingWarning (bit 9), not bit 1 (Assert), so warnings must be matched explicitly.
+            const int ErrorMask =
+                (1 << 0)    // Error
+                | (1 << 1)  // Assert
+                | (1 << 4)  // Fatal
+                | (1 << 6)  // AssetImportError
+                | (1 << 8)  // ScriptingError
+                | (1 << 11) // ScriptCompileError
+                | (1 << 17) // ScriptingException
+                | (1 << 20) // GraphCompileError
+                | (1 << 21) // ScriptingAssertion
+                | (1 << 22); // VisualScriptingError
+            const int WarningMask =
+                (1 << 7)    // AssetImportWarning
+                | (1 << 9)  // ScriptingWarning
+                | (1 << 12); // ScriptCompileWarning
+
+            if ((mode & ErrorMask) != 0) return "error";
+            if ((mode & WarningMask) != 0) return "warning";
             return "log";
         }
 

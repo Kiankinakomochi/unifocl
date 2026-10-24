@@ -318,14 +318,56 @@ internal static class CliOneShotExecutionService
             return [];
         }
 
-        var lines = input
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Split('\n')
+        var lines = SplitOnUnquotedNewlines(input.Replace("\r\n", "\n", StringComparison.Ordinal))
             .Select(line => line.Trim())
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .ToList();
 
         return lines.Count == 0 ? [input.Trim()] : lines;
+    }
+
+    /// <summary>
+    /// Splits on newlines outside a quoted span, so a multi-line quoted argument
+    /// (e.g. an /eval snippet) stays one command. A quote opened with ' or " closes
+    /// only on the same character. If a quote is still open at the end, falls back
+    /// to a plain per-line split rather than swallowing the remaining commands.
+    /// </summary>
+    internal static List<string> SplitOnUnquotedNewlines(string input)
+    {
+        var parts = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quote = '\0';
+        foreach (var ch in input)
+        {
+            if (quote == '\0')
+            {
+                if (ch == '\n')
+                {
+                    parts.Add(current.ToString());
+                    current.Clear();
+                    continue;
+                }
+
+                if (ch == '\'' || ch == '"')
+                {
+                    quote = ch;
+                }
+            }
+            else if (ch == quote)
+            {
+                quote = '\0';
+            }
+
+            current.Append(ch);
+        }
+
+        if (quote != '\0')
+        {
+            return input.Split('\n').ToList();
+        }
+
+        parts.Add(current.ToString());
+        return parts;
     }
 
     private static async Task TryAutoOpenProjectForEndpointAsync(
