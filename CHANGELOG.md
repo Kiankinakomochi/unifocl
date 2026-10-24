@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.18.2 - 2026-10-24
+### Fixed
+- `/console dump --type warning` now returns `Debug.LogWarning` entries. The log-mode classifier used the wrong Unity flag bits, so script warnings (ScriptingWarning, bit 9) were reported as `log`. Exceptions, compile errors/warnings, asset-import errors/warnings and assertions are now classified correctly too.
+- Multi-line quoted arguments in `exec` input (e.g. a multi-line `/eval '...'` snippet) are no longer split into separate commands at each newline. Newlines inside a `'...'` or `"..."` span stay part of the command.
+
 ## 3.18.1 - 2026-10-17
 ### Fixed
 - Editor bridge now compiles on Unity 6.5+ (verified on 6000.5.2f1 and 6000.6.6f1), where `GetInstanceID`, `InstanceIDToObject`, `IsLoadingAssetPreview(int)` and the `SceneHandle`/`EntityId` int conversions are hard errors (CS0619). Object ids keep their int wire format via a new `DaemonObjectIds` helper: instance ids before 6.5, the low 32 bits of the `EntityId` from 6.5 on. Older Unity versions keep the original code paths.
