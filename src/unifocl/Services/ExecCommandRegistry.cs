@@ -156,6 +156,7 @@ internal sealed class ExecCommandRegistry
         ["recorder.config"]   = ExecRiskLevel.SafeWrite,
         ["recorder.switch"]   = ExecRiskLevel.SafeWrite,
         ["recorder.snapshot"] = ExecRiskLevel.PrivilegedExec,
+        ["recorder.sceneview"] = ExecRiskLevel.SafeWrite,
         // timeline operations (lazy-loaded category)
         ["timeline.track.add"]   = ExecRiskLevel.SafeWrite,
         ["timeline.clip.add"]    = ExecRiskLevel.SafeWrite,
