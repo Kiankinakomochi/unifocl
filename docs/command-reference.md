@@ -336,6 +336,8 @@ The `recorder` category provides capture control for the Unity Recorder package 
 /recorder status
 /recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]
 /recorder switch <profile-name>
+/recorder snapshot [--output <path>] [--super-size <n>]
+/recorder sceneview [--output <path>] [--width <n>] [--height <n>] [--frame <path|selection>]
 ```
 
 **Agent / MCP operations (after `load_category('recorder')`):**
@@ -347,8 +349,10 @@ The `recorder` category provides capture control for the Unity Recorder package 
 | `recorder.status` | SafeRead | Return current state (recording/idle), active profile name, and list of all configured profiles |
 | `recorder.config` | SafeWrite | Configure a recorder profile. Pass `{"profile":"<name>", "outputFile":"path", "captureFrameRate":30, "capFrameRate":true, "imageWidth":1920, "imageHeight":1080}`. Only provided fields are updated. |
 | `recorder.switch` | SafeWrite | Switch the active profile by name — enables the named profile and disables all others. Pass `{"profile":"<name>"}`. |
+| `recorder.snapshot` | PrivilegedExec | Capture a Game View frame via `ScreenCapture` (Play mode only). Pass `{"outputPath":"path", "superSize":2}`. |
+| `recorder.sceneview` | SafeWrite | Capture the Scene View camera to a PNG in Edit or Play mode. Pass `{"outputPath":"path", "width":1280, "height":720, "frame":"/Root/Child"}` (all optional). `frame` accepts a hierarchy path or `selection` and fits that object using a hidden clone of the Scene View camera (same viewing angle; geometry in front of the target's bounds is clipped away), so the user's view is never moved. Output defaults to `Captures/sceneview_<timestamp>.png`; size defaults to the current Scene View. Renders scene content only — no gizmos, grid, or overlays. |
 
-**Important:** Requires the `com.unity.recorder` package to be installed in the Unity project. If the package is not present, operations return an error message.
+**Important:** `recorder.start/stop/status/config/switch` require the `com.unity.recorder` package to be installed in the Unity project; if it is not present, they return an error message. `recorder.snapshot` and `recorder.sceneview` work without it.
 
 ## 7. Timeline (Lazy-Loaded Category)
 

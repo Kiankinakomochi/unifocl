@@ -35,6 +35,17 @@ namespace UniFocl.EditorBridge
             return true;
         }
 
+        public static bool WriteAllBytes(string path, byte[] bytes)
+        {
+            if (DaemonDryRunContext.IsActive)
+            {
+                return false;
+            }
+
+            File.WriteAllBytes(path, bytes);
+            return true;
+        }
+
         public static bool DeleteFileIfExists(string path)
         {
             if (DaemonDryRunContext.IsActive)

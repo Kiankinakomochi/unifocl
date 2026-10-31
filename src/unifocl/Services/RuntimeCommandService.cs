@@ -556,7 +556,7 @@ internal sealed partial class RuntimeCommandService
         var tokens = Tokenize(input);
         if (tokens.Count < 2)
         {
-            log("[x] usage: /recorder <start|stop|status|config|switch|snapshot>");
+            log("[x] usage: /recorder <start|stop|status|config|switch|snapshot|sceneview>");
             return;
         }
 
@@ -619,6 +619,22 @@ internal sealed partial class RuntimeCommandService
                 {
                     outputPath = outputPath ?? string.Empty,
                     superSize = superSize >= 1 ? superSize : 1
+                });
+                break;
+            }
+            case "sceneview":
+            {
+                var outputPath = ParseStringArg(tokens, "--output");
+                var width = ParseIntArg(tokens, "--width");
+                var height = ParseIntArg(tokens, "--height");
+                var frame = ParseStringArg(tokens, "--frame");
+                toolName = "recorder.sceneview";
+                argsJson = JsonSerializer.Serialize(new
+                {
+                    outputPath = outputPath ?? string.Empty,
+                    width = width >= 1 ? width : 0,
+                    height = height >= 1 ? height : 0,
+                    frame = frame ?? string.Empty
                 });
                 break;
             }

@@ -237,6 +237,7 @@ internal static class CliCommandCatalog
             new("/recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile's output, frame rate, and resolution (SafeWrite)", "/recorder config", "recorder"),
             new("/recorder switch <profile-name>", "Switch the active recorder profile (enables named profile, disables all others) (SafeWrite)", "/recorder switch", "recorder"),
             new("/recorder snapshot [--output <path>] [--super-size <n>]", "Capture a single screenshot frame via ScreenCapture. No Unity Recorder package required (PrivilegedExec)", "/recorder snapshot", "recorder"),
+            new("/recorder sceneview [--output <path>] [--width <n>] [--height <n>] [--frame <path|selection>]", "Capture the Scene View camera to a PNG in Edit or Play mode; --frame fits an object without moving the user's view (SafeWrite)", "/recorder sceneview", "recorder"),
 
             // ── debug-artifact ──────────────────────────────────────────
             new("/debug-artifact prep [--tier 0|1|2|3]", "Prepare for debug artifact collection: clears console, starts profiler (T2+), starts recorder (T3). Run before playmode.", "/debug-artifact prep", "diag"),
@@ -417,6 +418,7 @@ internal static class CliCommandCatalog
             new("recorder config <profile-name> [--output <path>] [--fps <n>] [--cap-frame-rate] [--width <n>] [--height <n>]", "Configure a recorder profile", "recorder config", "recorder"),
             new("recorder switch <profile-name>", "Switch the active recorder profile", "recorder switch", "recorder"),
             new("recorder snapshot [--output <path>] [--super-size <n>]", "Capture a single screenshot frame via ScreenCapture (no Unity Recorder package required)", "recorder snapshot", "recorder"),
+            new("recorder sceneview [--output <path>] [--width <n>] [--height <n>] [--frame <path|selection>]", "Capture the Scene View camera to a PNG in Edit or Play mode (no Unity Recorder package required)", "recorder sceneview", "recorder"),
 
             // ── compile ───────────────────────────────────────────────────
             new("compile request", "Trigger a Unity script recompilation (Bridge mode only — returns unsupported route in Host/batch mode)", "compile request", "compile"),

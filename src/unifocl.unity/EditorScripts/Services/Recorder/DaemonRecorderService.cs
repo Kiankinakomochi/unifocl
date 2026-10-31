@@ -467,6 +467,246 @@ namespace UniFocl.EditorBridge.Recorder
             }
         }
 
+        // ── recorder.sceneview ───────────────────────────────────────
+
+        private const int SceneViewCaptureMaxDimension = 8192;
+
+        [UnifoclCommand(
+            "recorder.sceneview",
+            "Capture the Scene View camera to a PNG. Works in Edit mode and Play mode. " +
+            "outputPath: relative to project root (default: Captures/sceneview_<timestamp>.png). " +
+            "width/height: pixels (default: current Scene View size). " +
+            "frame: hierarchy path or 'selection' to fit that object without moving the user's Scene View. " +
+            "Renders scene content only (no gizmos, grid, or overlays). " +
+            "Does not require the com.unity.recorder package.",
+            "recorder")]
+        // Flat primitive params: DaemonCustomToolService binds tool arguments by parameter name.
+        public static string CaptureSceneView(string outputPath = "", int width = 0, int height = 0, string frame = "")
+        {
+            try
+            {
+                var sceneView = UnityEditor.SceneView.lastActiveSceneView;
+                if (sceneView == null && UnityEditor.SceneView.sceneViews.Count > 0)
+                    sceneView = UnityEditor.SceneView.sceneViews[0] as UnityEditor.SceneView;
+                if (sceneView == null || sceneView.camera == null)
+                    return ErrorResponse("no Scene View is open — open Window > General > Scene first");
+
+                var source = sceneView.camera;
+                if (width <= 0) width = source.pixelWidth;
+                if (height <= 0) height = source.pixelHeight;
+                if (width <= 0 || height <= 0)
+                {
+                    width = 1280;
+                    height = 720;
+                }
+
+                if (width > SceneViewCaptureMaxDimension || height > SceneViewCaptureMaxDimension)
+                {
+                    return ErrorResponse(
+                        $"recorder.sceneview: width/height must be <= {SceneViewCaptureMaxDimension} (got {width}x{height})");
+                }
+
+                if (string.IsNullOrWhiteSpace(outputPath))
+                {
+                    var timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                    outputPath = $"Captures/sceneview_{timestamp}.png";
+                }
+
+                var projectRoot = System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath) ?? "";
+                var fullPath = System.IO.Path.IsPathRooted(outputPath)
+                    ? outputPath
+                    : System.IO.Path.Combine(projectRoot, outputPath);
+
+                GameObject? frameTarget = null;
+                if (!string.IsNullOrWhiteSpace(frame))
+                {
+                    frameTarget = ResolveFrameTarget(frame);
+                    if (frameTarget == null)
+                        return ErrorResponse($"recorder.sceneview: frame target not found: {frame}");
+                }
+
+                if (DaemonDryRunContext.IsActive)
+                {
+                    return JsonUtility.ToJson(new SceneViewCaptureResponse
+                    {
+                        ok = true,
+                        message = $"Dry-run: scene view capture skipped (no file written): {outputPath}",
+                        outputPath = fullPath,
+                        width = width,
+                        height = height,
+                        framed = frameTarget != null ? frameTarget.name : string.Empty
+                    });
+                }
+
+                var png = RenderSceneViewPng(source, width, height, frameTarget);
+
+                var dir = System.IO.Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrWhiteSpace(dir) && !System.IO.Directory.Exists(dir))
+                    DaemonDryRunFileIo.CreateDirectory(dir);
+                DaemonDryRunFileIo.WriteAllBytes(fullPath, png);
+
+                return JsonUtility.ToJson(new SceneViewCaptureResponse
+                {
+                    ok = true,
+                    message = $"scene view captured: {outputPath} ({width}x{height})",
+                    outputPath = fullPath,
+                    width = width,
+                    height = height,
+                    framed = frameTarget != null ? frameTarget.name : string.Empty
+                });
+            }
+            catch (Exception ex)
+            {
+                return ErrorResponse($"recorder sceneview failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Renders through a hidden clone of the Scene View camera so framing never moves
+        /// the user's view and the Scene View's own render target is left untouched.
+        /// </summary>
+        private static byte[] RenderSceneViewPng(Camera source, int width, int height, GameObject? frameTarget)
+        {
+            var cameraObject = new GameObject("unifocl_SceneViewCapture")
+            {
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            RenderTexture? renderTexture = null;
+            Texture2D? texture = null;
+            var previousActive = RenderTexture.active;
+
+            try
+            {
+                var camera = cameraObject.AddComponent<Camera>();
+                camera.CopyFrom(source);
+                camera.enabled = false;
+                camera.aspect = (float)width / height;
+
+                if (frameTarget != null)
+                    FrameCamera(camera, frameTarget);
+
+                renderTexture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
+                {
+                    antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing)
+                };
+                camera.targetTexture = renderTexture;
+                camera.Render();
+
+                RenderTexture.active = renderTexture;
+                texture = new Texture2D(width, height, TextureFormat.RGB24, false);
+                texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                texture.Apply();
+                camera.targetTexture = null;
+                return texture.EncodeToPNG();
+            }
+            finally
+            {
+                RenderTexture.active = previousActive;
+                if (renderTexture != null) UnityEngine.Object.DestroyImmediate(renderTexture);
+                if (texture != null) UnityEngine.Object.DestroyImmediate(texture);
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+            }
+        }
+
+        private static GameObject? ResolveFrameTarget(string frame)
+        {
+            var trimmed = frame.Trim();
+            if (trimmed.Equals("selection", StringComparison.OrdinalIgnoreCase))
+                return UnityEditor.Selection.activeGameObject;
+
+            // GameObject.Find accepts '/'-separated hierarchy paths; a leading '/' anchors at a root.
+            return GameObject.Find(trimmed);
+        }
+
+        /// <summary>
+        /// Keeps the camera's current orientation, centres it on the target's bounds, backs it
+        /// off along its forward axis until every bounds corner fits inside the frustum, and moves
+        /// the near clip plane up to the bounds' front face.
+        /// </summary>
+        private static void FrameCamera(Camera camera, GameObject target)
+        {
+            const float margin = 1.1f;
+            var bounds = CalculateWorldBounds(target);
+            var transform = camera.transform;
+            var right = transform.right;
+            var up = transform.up;
+            var forward = transform.forward;
+
+            var maxX = 0.01f;
+            var maxY = 0.01f;
+            var maxDistance = 0.01f;
+            var minDepth = 0f;
+            var extents = bounds.extents;
+            for (var i = 0; i < 8; i++)
+            {
+                var offset = new Vector3(
+                    (i & 1) == 0 ? -extents.x : extents.x,
+                    (i & 2) == 0 ? -extents.y : extents.y,
+                    (i & 4) == 0 ? -extents.z : extents.z);
+                var x = Mathf.Abs(Vector3.Dot(offset, right)) * margin;
+                var y = Mathf.Abs(Vector3.Dot(offset, up)) * margin;
+                var z = Vector3.Dot(offset, forward);
+                maxX = Mathf.Max(maxX, x);
+                maxY = Mathf.Max(maxY, y);
+                minDepth = Mathf.Min(minDepth, z);
+
+                if (!camera.orthographic)
+                {
+                    var tanV = Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+                    var tanH = tanV * camera.aspect;
+                    maxDistance = Mathf.Max(maxDistance, x / tanH - z, y / tanV - z);
+                }
+            }
+
+            if (camera.orthographic)
+            {
+                camera.orthographicSize = Mathf.Max(maxY, maxX / camera.aspect);
+                maxDistance = -minDepth + extents.magnitude;
+            }
+
+            maxDistance = Mathf.Max(maxDistance, -minDepth + camera.nearClipPlane);
+            transform.position = bounds.center - forward * maxDistance;
+
+            // Clip everything in front of the target's bounds so foreground geometry
+            // between the Scene View angle and the target cannot hide it.
+            var radius = Mathf.Max(extents.magnitude, 0.01f);
+            var frontDepth = maxDistance + minDepth;
+            camera.nearClipPlane = Mathf.Max(frontDepth - radius * 0.05f, 0.001f);
+            camera.farClipPlane = Mathf.Max(camera.farClipPlane, maxDistance + radius * 2f);
+        }
+
+        private static Bounds CalculateWorldBounds(GameObject target)
+        {
+            var hasBounds = false;
+            var bounds = new Bounds(target.transform.position, Vector3.zero);
+
+            foreach (var renderer in target.GetComponentsInChildren<Renderer>())
+            {
+                if (!renderer.enabled || renderer is ParticleSystemRenderer) continue;
+                if (!hasBounds) { bounds = renderer.bounds; hasBounds = true; }
+                else bounds.Encapsulate(renderer.bounds);
+            }
+
+            if (!hasBounds)
+            {
+                foreach (var rectTransform in target.GetComponentsInChildren<RectTransform>())
+                {
+                    var corners = new Vector3[4];
+                    rectTransform.GetWorldCorners(corners);
+                    foreach (var corner in corners)
+                    {
+                        if (!hasBounds) { bounds = new Bounds(corner, Vector3.zero); hasBounds = true; }
+                        else bounds.Encapsulate(corner);
+                    }
+                }
+            }
+
+            if (!hasBounds)
+                bounds = new Bounds(target.transform.position, Vector3.one);
+
+            return bounds;
+        }
+
         // ── Helpers ──────────────────────────────────────────────────
 
         private static ResolvedTypes ResolveRecorderTypes()
@@ -687,6 +927,17 @@ namespace UniFocl.EditorBridge.Recorder
         {
             public string outputPath = string.Empty;
             public int superSize;
+        }
+
+        [Serializable]
+        private sealed class SceneViewCaptureResponse
+        {
+            public bool ok;
+            public string message = string.Empty;
+            public string outputPath = string.Empty;
+            public int width;
+            public int height;
+            public string framed = string.Empty;
         }
 
         [Serializable]
