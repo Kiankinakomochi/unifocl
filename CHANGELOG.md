@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.19.0 - 2026-10-31
+### Added
+- `recorder.sceneview` / `/recorder sceneview`: capture the Scene View camera to a PNG in Edit or Play mode, with optional `--width`/`--height` and `--frame <path|selection>` to fit an object (clipping foreground occluders) without moving the user's Scene View.
+
 ## 3.18.2 - 2026-10-24
 ### Fixed
 - `/console dump --type warning` now returns `Debug.LogWarning` entries. The log-mode classifier used the wrong Unity flag bits, so script warnings (ScriptingWarning, bit 9) were reported as `log`. Exceptions, compile errors/warnings, asset-import errors/warnings and assertions are now classified correctly too.
