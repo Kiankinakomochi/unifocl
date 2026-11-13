@@ -105,7 +105,17 @@ internal static class CliAgenticIssueService
     private static bool IsRecoverableUnityCompileBootstrapLine(string normalizedLine)
     {
         return normalizedLine.Contains("unity:")
-               && normalizedLine.Contains("tundra build failed");
+               && IsRecoverableBuildFailureLine(normalizedLine);
+    }
+
+    /// <summary>
+    /// Recoverable build-bootstrap failure marker shared with daemon startup classification
+    /// (<c>DaemonControlService</c>), so one-shot agentic parsing and daemon startup diagnostics
+    /// agree on which build failures are transient rather than compile errors.
+    /// </summary>
+    internal static bool IsRecoverableBuildFailureLine(string line)
+    {
+        return line.Contains("Tundra build failed", StringComparison.OrdinalIgnoreCase);
     }
 
     public static int ResolveExitCode(List<AgenticError> errors)

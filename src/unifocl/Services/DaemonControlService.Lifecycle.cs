@@ -42,7 +42,8 @@ internal sealed partial class DaemonControlService
                         _lastStartupFailure = new DaemonStartupFailure(
                             IsCompileError: false,
                             Summary: $"Unity editor bridge endpoint is reachable but project commands are not ready on port {port} ({bridgeWait.DiagnosticSummary})",
-                            Lines: []);
+                            Lines: [],
+                            RecoverableBuildWarnings: []);
                         log($"[red]daemon[/]: Unity editor bridge is not ready on [white]127.0.0.1:{port}[/] ({Markup.Escape(bridgeWait.DiagnosticSummary)})");
                         return false;
                     }
@@ -98,7 +99,8 @@ internal sealed partial class DaemonControlService
                 _lastStartupFailure = new DaemonStartupFailure(
                     IsCompileError: false,
                     Summary: $"Unity editor lock detected for project, but bridge endpoint 127.0.0.1:{port} is not attachable ({bridgeWait.DiagnosticSummary})",
-                    Lines: []);
+                    Lines: [],
+                    RecoverableBuildWarnings: []);
                 log($"[red]daemon[/]: Unity editor is already running for this project, but Bridge mode endpoint [white]127.0.0.1:{port}[/] is not attachable");
                 log($"[yellow]daemon[/]: bridge diagnostics -> {Markup.Escape(bridgeWait.DiagnosticSummary)}");
                 log("[yellow]daemon[/]: Host mode launch is skipped while Unity lock is active to avoid Unity file-lock startup failure");
@@ -167,7 +169,8 @@ internal sealed partial class DaemonControlService
             _lastStartupFailure = new DaemonStartupFailure(
                 IsCompileError: false,
                 Summary: $"project command endpoint is not ready on port {port} ({probe.Detail})",
-                Lines: []);
+                Lines: [],
+                RecoverableBuildWarnings: []);
             log($"[red]daemon[/]: project command endpoint is not ready on [white]127.0.0.1:{port}[/] ({Markup.Escape(probe.Detail)})");
             await TrySendControlAsync(port, "STOP", "STOPPING");
             var launched = runtime.GetByPort(port);
