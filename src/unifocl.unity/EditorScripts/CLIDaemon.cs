@@ -1582,6 +1582,8 @@ namespace UniFocl.EditorBridge
             return false;
         }
 
+        internal static DateTime LastActivityUtc => _lastActivityUtc;
+
         internal static void MarkActivity()
         {
             _lastActivityUtc = DateTime.UtcNow;

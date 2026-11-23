@@ -143,6 +143,8 @@ namespace UniFocl.EditorBridge.Pipeline
 
         private static ExitCode Reply(CommandContext cmd, string json)
         {
+            // Any command from the CLI keeps a CLI-started Editor alive (see UnifoclHostSession).
+            CLIDaemon.MarkActivity();
             cmd.Result.Write(Parse(json));
             return ExitCode.Success;
         }

@@ -881,7 +881,7 @@ internal sealed partial class ProjectLifecycleService
         }
 
         SaveDaemonSession(projectPath, new DaemonSessionInfo(daemonPort, DateTimeOffset.UtcNow, true));
-        log($"[grey]daemon[/]: managed daemon ready on [white]127.0.0.1:{daemonPort}[/]");
+        log("[grey]daemon[/]: Unity Editor ready for unifocl commands (through the Unity CLI)");
         session.SafeModeEnabled = false;
         session.LastCompileError = null;
 

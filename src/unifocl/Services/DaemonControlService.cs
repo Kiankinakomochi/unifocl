@@ -7,7 +7,6 @@ using System.Text.Json;
 internal sealed partial class DaemonControlService
 {
     private const int DefaultInactivityTimeoutSeconds = 600;
-    private const int ProcessOutputTailMaxLines = 40;
     private static readonly TimeSpan MinimumDaemonStartupTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ProjectCommandReadyTimeout = MinimumDaemonStartupTimeout;
     private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
@@ -147,29 +146,8 @@ internal sealed partial class DaemonControlService
 
         if (startOptions.Headless && !string.IsNullOrWhiteSpace(startOptions.ProjectPath))
         {
-            var projectPath = startOptions.ProjectPath;
-            if (IsUnityClientActiveForProject(projectPath))
-            {
-                var projectPort = ResolveProjectDaemonPort(projectPath);
-                if (await TryAttachProjectDaemonAsync(projectPath, session, log, attemptCount: 2, attemptDelayMs: 250))
-                {
-                    var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(projectPort, TimeSpan.FromSeconds(3));
-                    if (projectCommandReady)
-                    {
-                        log($"[green]daemon[/]: Unity editor is already running for project; attached in Bridge mode on [white]127.0.0.1:{projectPort}[/]");
-                        return;
-                    }
-
-                    log($"[yellow]daemon[/]: existing Bridge mode endpoint on port {projectPort} responds to ping but project commands are unresponsive; restarting");
-                    await TrySendControlAsync(projectPort, "STOP", "STOPPING");
-                    ClearAttachedPort(session);
-                    await Task.Delay(200);
-                }
-                else
-                {
-                    log("[yellow]daemon[/]: Unity lock detected, but Bridge mode endpoint is not attachable; starting a new Host mode daemon");
-                }
-            }
+            await EnsureProjectDaemonAsync(startOptions.ProjectPath, runtime, session, log, allowUnsafe: startOptions.AllowUnsafe);
+            return;
         }
 
         await StartDaemonAsync(startOptions, runtime, log);
@@ -251,25 +229,12 @@ internal sealed partial class DaemonControlService
             return options;
         }
 
-        var unityPath = options.UnityPath;
-        if (string.IsNullOrWhiteSpace(unityPath))
-        {
-            unityPath = ResolveDefaultUnityPath(projectPath, log);
-        }
-
-        if (string.IsNullOrWhiteSpace(unityPath))
-        {
-            log("[yellow]daemon[/]: project context found but Unity path is unresolved; starting daemon without Host mode");
-            return options with { ProjectPath = projectPath };
-        }
-
         var promotedPort = options.Port == 8080 ? ResolveProjectDaemonPort(projectPath) : options.Port;
         log($"[grey]daemon[/]: defaulting to Host mode for project [white]{Markup.Escape(projectPath)}[/]");
         return options with
         {
             Port = promotedPort,
             ProjectPath = projectPath,
-            UnityPath = unityPath,
             Headless = true
         };
     }
