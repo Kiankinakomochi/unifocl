@@ -90,11 +90,7 @@ namespace UniFocl.EditorBridge
         /// </summary>
         private static async Task<string> InvokeWithDryRunAsync(MethodInfo method, CancellationToken ct)
         {
-            // Increment before capturing: reverting down to the group that was current before the
-            // dry-run would also revert earlier daemon requests that share it (#223).
-            Undo.IncrementCurrentGroup();
-            var dryRunGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("[unifocl dry-run] eval");
+            var dryRunGroup = DaemonUndo.BeginIsolatedGroup("[unifocl dry-run] eval");
 
             IDisposable dryRunScope = DaemonDryRunContext.Enter();
             string serialized = "null";

@@ -68,9 +68,7 @@ namespace UniFocl.EditorBridge
             // Open a fresh group first and revert only that one. The editor advances the current group
             // on user input, not for daemon requests, so the group that was current before this call
             // still holds every earlier daemon mutation; reverting down to it would undo that work too.
-            Undo.IncrementCurrentGroup();
-            var dryRunGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName($"[unifocl dry-run] {toolName}");
+            var dryRunGroup = DaemonUndo.BeginIsolatedGroup($"[unifocl dry-run] {toolName}");
 
             // Capture scene dirty states before the dry-run so we can restore them afterwards.
             var (preDryRunScenes, preDryRunDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();

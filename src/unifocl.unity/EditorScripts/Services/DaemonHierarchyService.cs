@@ -246,12 +246,7 @@ namespace UniFocl.EditorBridge
                 var beforeJson = snapshotTarget is null
                     ? BuildSnapshotPayload()
                     : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
-                // Open a fresh Undo group first: the Editor only advances the group on user input, so
-                // without this the captured group also holds earlier daemon requests, and reverting or
-                // collapsing it would take that unrelated work with it (#223).
-                Undo.IncrementCurrentGroup();
-                var undoGroup = Undo.GetCurrentGroup();
-                Undo.SetCurrentGroupName("unifocl hierarchy dry-run");
+                var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy dry-run");
 
                 // Capture which scenes were already dirty before the dry-run so we can
                 // restore clean scenes that Undo.RevertAllDownToGroup leaves dirty.
@@ -522,12 +517,7 @@ namespace UniFocl.EditorBridge
                 parentScene = parentObject.scene;
             }
 
-            // Open a fresh Undo group first: the Editor only advances the group on user input, so
-            // without this the captured group also holds earlier daemon requests, and reverting or
-            // collapsing it would take that unrelated work with it (#223).
-            Undo.IncrementCurrentGroup();
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl hierarchy create");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy create");
             GameObject? lastCreated = null;
             try
             {
@@ -990,12 +980,7 @@ namespace UniFocl.EditorBridge
             }
 
             var scene = target.scene;
-            // Open a fresh Undo group first: the Editor only advances the group on user input, so
-            // without this the captured group also holds earlier daemon requests, and reverting or
-            // collapsing it would take that unrelated work with it (#223).
-            Undo.IncrementCurrentGroup();
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl hierarchy remove");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy remove");
             try
             {
                 Undo.DestroyObjectImmediate(target);
@@ -1174,12 +1159,7 @@ namespace UniFocl.EditorBridge
                 destinationScene = parent.scene;
             }
 
-            // Open a fresh Undo group first: the Editor only advances the group on user input, so
-            // without this the captured group also holds earlier daemon requests, and reverting or
-            // collapsing it would take that unrelated work with it (#223).
-            Undo.IncrementCurrentGroup();
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl hierarchy duplicate");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy duplicate");
 
             try
             {

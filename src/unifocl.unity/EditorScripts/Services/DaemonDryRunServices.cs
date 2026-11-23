@@ -12,6 +12,22 @@ using UnityEngine.SceneManagement;
 
 namespace UniFocl.EditorBridge
 {
+    internal static class DaemonUndo
+    {
+        /// <summary>
+        /// Starts a new Undo group for one daemon request and returns its index, for
+        /// <see cref="Undo.RevertAllDownToGroup"/> or <see cref="Undo.CollapseUndoOperations"/>.
+        /// The Editor only advances the group on user input, so the current group may already hold
+        /// earlier requests; capturing it without starting a new one would revert or merge them too.
+        /// </summary>
+        public static int BeginIsolatedGroup(string name)
+        {
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName(name);
+            return Undo.GetCurrentGroup();
+        }
+    }
+
     internal static class DaemonDryRunContext
     {
         private static readonly AsyncLocal<int> Depth = new();
