@@ -446,8 +446,9 @@ internal sealed class EditorDependencyInitializerService
             // Exposes unifocl operations as Unity Pipeline [CliCommand]s, reachable through the official
             // `unity command` CLI and `unity mcp`. Same optional-assembly shape as ProBuilder: without
             // com.unity.pipeline the define never fires and Unity skips the assembly. The attributes live
-            // in the auto-referenced Unity.Pipeline.Attributes assembly; Newtonsoft (a Pipeline
-            // dependency) is referenced explicitly so results embed as JSON objects.
+            // in Unity.Pipeline.Attributes; Unity.Pipeline supplies CommandRegistry, used to register one
+            // command per [UnifoclCommand] tool. Newtonsoft (a Pipeline dependency) is referenced
+            // explicitly so results embed as JSON objects.
             var pipelineAsmdef =
                 """
                 {
@@ -455,7 +456,8 @@ internal sealed class EditorDependencyInitializerService
                   "rootNamespace": "UniFocl.EditorBridge.Pipeline",
                   "references": [
                     "UniFocl.EditorBridge",
-                    "Unity.Pipeline.Attributes"
+                    "Unity.Pipeline.Attributes",
+                    "Unity.Pipeline"
                   ],
                   "includePlatforms": [
                     "Editor"
