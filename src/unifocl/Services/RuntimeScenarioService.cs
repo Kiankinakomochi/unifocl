@@ -10,7 +10,7 @@ using System.Text.RegularExpressions;
 /// </summary>
 internal sealed class RuntimeScenarioService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(30));
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
     /// <summary>Run a scenario file end-to-end. Returns aggregated results.</summary>

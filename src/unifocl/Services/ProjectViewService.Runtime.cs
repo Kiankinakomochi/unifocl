@@ -4,7 +4,7 @@ using System.Text.Json;
 
 internal sealed partial class ProjectViewService
 {
-    private static readonly HttpClient RuntimeHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient RuntimeHttp = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(15));
     private static readonly JsonSerializerOptions RuntimeJsonOpts =
         new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 

@@ -6,6 +6,7 @@ using System.Text.Json;
 
 internal sealed partial class ProjectLifecycleService
 {
+    private static readonly HttpClient EditorHttp = EditorLinkHandler.CreateClient();
     private static readonly HttpClient UnityRegistryHttpClient = new()
     {
         Timeout = TimeSpan.FromSeconds(12)
@@ -1053,7 +1054,7 @@ internal sealed partial class ProjectLifecycleService
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            using var response = await UnityRegistryHttpClient.GetAsync(
+            using var response = await EditorHttp.GetAsync(
                 $"http://127.0.0.1:{port}/ping", cts.Token);
             return response.IsSuccessStatusCode;
         }

@@ -4,7 +4,7 @@ using System.Text.Json;
 
 internal sealed class HierarchyDaemonClient
 {
-    private static readonly HttpClient Http = new();
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ProjectCommandTimeout = TimeSpan.FromSeconds(8);

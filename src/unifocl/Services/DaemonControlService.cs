@@ -11,7 +11,7 @@ internal sealed partial class DaemonControlService
     private static readonly TimeSpan MinimumDaemonStartupTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ProjectCommandReadyTimeout = MinimumDaemonStartupTimeout;
     private static readonly TimeSpan UnityBridgeAttachWaitTimeout = TimeSpan.FromMinutes(3);
-    private static readonly HttpClient Http = new();
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient();
     private DaemonStartupFailure? _lastStartupFailure;
     private static readonly ExecSessionService _sessionService = new();
 
@@ -421,6 +421,7 @@ internal sealed partial class DaemonControlService
     {
         var s = _sessionService.OpenForPort(port, projectPath);
         session.SessionId = s.SessionId;
+        EditorLinkHandler.RegisterProject(port, projectPath);
     }
 
     /// <summary>

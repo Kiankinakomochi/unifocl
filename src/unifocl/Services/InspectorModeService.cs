@@ -16,7 +16,7 @@ internal sealed partial class InspectorModeService
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
-    private static readonly HttpClient Http = new();
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient();
 
     public async Task<bool> TryHandleInspectorCommandAsync(
         string input,
