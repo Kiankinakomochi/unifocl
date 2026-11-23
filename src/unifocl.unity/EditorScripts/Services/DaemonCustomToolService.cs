@@ -130,6 +130,17 @@ namespace UniFocl.EditorBridge
             });
         }
 
+        /// <summary>Every discovered [UnifoclCommand] tool, keyed by its name.</summary>
+        internal static IReadOnlyDictionary<string, MethodInfo> ListTools()
+        {
+            if (_methodCache is null)
+            {
+                ScanAssemblies();
+            }
+
+            return _methodCache!;
+        }
+
         private static MethodInfo? FindMethod(string toolName)
         {
             if (_methodCache is null)
