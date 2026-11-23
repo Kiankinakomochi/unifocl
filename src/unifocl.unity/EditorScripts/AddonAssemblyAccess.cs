@@ -8,4 +8,5 @@
 // the grant out of any file an older CLI ships means it survives that re-sync, and the add-on
 // assembly keeps compiling instead of breaking the project's script compilation.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("UniFocl.EditorBridge.ProBuilder")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("UniFocl.EditorBridge.Pipeline")]
 #endif

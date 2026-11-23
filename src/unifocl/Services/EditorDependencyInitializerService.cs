@@ -84,6 +84,8 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonProBuilderServiceResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.cs";
     private const string DaemonProBuilderServiceFacesResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.Faces.cs";
     private const string DaemonProBuilderServiceSupportResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.Support.cs";
+    // Unity Pipeline commands — ship into their own assembly, see pipelineAsmdef below.
+    private const string UnifoclPipelineCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclPipelineCommands.cs";
     private const string AddonAssemblyAccessResource = "Payload/EditorScripts/AddonAssemblyAccess.cs";
     // Runtime scripts (player-side)
     private const string RuntimeChunkAccumulatorResource = "Payload/RuntimeScripts/ChunkAccumulator.cs";
@@ -260,6 +262,9 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "ProBuilder", "DaemonProBuilderService.cs"),
             Path.Combine(packagePath, "Editor", "ProBuilder", "DaemonProBuilderService.Faces.cs"),
             Path.Combine(packagePath, "Editor", "ProBuilder", "DaemonProBuilderService.Support.cs"),
+            // Unity Pipeline commands (optional, own assembly)
+            Path.Combine(packagePath, "Editor", "Pipeline", "UniFocl.EditorBridge.Pipeline.asmdef"),
+            Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclPipelineCommands.cs"),
             // Runtime scripts (player-side)
             Path.Combine(packagePath, "Runtime", "ChunkAccumulator.cs"),
             Path.Combine(packagePath, "Runtime", "RuntimeCommandRegistry.cs"),
@@ -327,6 +332,7 @@ internal sealed class EditorDependencyInitializerService
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Services", "Recorder"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "TestRunner"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "ProBuilder"));
+            Directory.CreateDirectory(Path.Combine(payloadPath, "Editor", "Pipeline"));
             Directory.CreateDirectory(Path.Combine(payloadPath, "Runtime"));
 
             var packageJson =
@@ -437,6 +443,44 @@ internal sealed class EditorDependencyInitializerService
                 }
                 """;
 
+            // Exposes unifocl operations as Unity Pipeline [CliCommand]s, reachable through the official
+            // `unity command` CLI and `unity mcp`. Same optional-assembly shape as ProBuilder: without
+            // com.unity.pipeline the define never fires and Unity skips the assembly. The attributes live
+            // in the auto-referenced Unity.Pipeline.Attributes assembly; Newtonsoft (a Pipeline
+            // dependency) is referenced explicitly so results embed as JSON objects.
+            var pipelineAsmdef =
+                """
+                {
+                  "name": "UniFocl.EditorBridge.Pipeline",
+                  "rootNamespace": "UniFocl.EditorBridge.Pipeline",
+                  "references": [
+                    "UniFocl.EditorBridge",
+                    "Unity.Pipeline.Attributes"
+                  ],
+                  "includePlatforms": [
+                    "Editor"
+                  ],
+                  "excludePlatforms": [],
+                  "allowUnsafeCode": false,
+                  "overrideReferences": true,
+                  "precompiledReferences": [
+                    "Newtonsoft.Json.dll"
+                  ],
+                  "autoReferenced": false,
+                  "defineConstraints": [
+                    "UNIFOCL_PIPELINE"
+                  ],
+                  "versionDefines": [
+                    {
+                      "name": "com.unity.pipeline",
+                      "expression": "1.0.0",
+                      "define": "UNIFOCL_PIPELINE"
+                    }
+                  ],
+                  "noEngineReferences": false
+                }
+                """;
+
             var runtimeAsmdef =
                 """
                 {
@@ -458,6 +502,7 @@ internal sealed class EditorDependencyInitializerService
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "UniFocl.EditorBridge.asmdef"), asmdef + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "TestRunner", "UniFocl.EditorBridge.TestRunner.asmdef"), testRunnerAsmdef + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Editor", "ProBuilder", "UniFocl.EditorBridge.ProBuilder.asmdef"), proBuilderAsmdef + Environment.NewLine, Encoding.UTF8);
+            File.WriteAllText(Path.Combine(payloadPath, "Editor", "Pipeline", "UniFocl.EditorBridge.Pipeline.asmdef"), pipelineAsmdef + Environment.NewLine, Encoding.UTF8);
             File.WriteAllText(Path.Combine(payloadPath, "Runtime", "UniFocl.Runtime.asmdef"), runtimeAsmdef + Environment.NewLine, Encoding.UTF8);
 
             var resourceToTarget = new (string Resource, string RelativePath)[]
@@ -538,6 +583,8 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonProBuilderServiceResource,        Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.cs")),
                 (DaemonProBuilderServiceFacesResource,   Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.Faces.cs")),
                 (DaemonProBuilderServiceSupportResource, Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.Support.cs")),
+                // Unity Pipeline commands (optional, own assembly)
+                (UnifoclPipelineCommandsResource,        Path.Combine("Editor", "Pipeline", "UnifoclPipelineCommands.cs")),
                 // Runtime scripts (player-side)
                 (RuntimeChunkAccumulatorResource,        Path.Combine("Runtime", "ChunkAccumulator.cs")),
                 (RuntimeCommandRegistryResource,         Path.Combine("Runtime", "RuntimeCommandRegistry.cs")),
