@@ -22,10 +22,7 @@ using System.Text.Json;
 /// </summary>
 internal sealed class CompileCompletionWaiter
 {
-    private static readonly HttpClient HealthClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(3),
-    };
+    private static readonly HttpClient HealthClient = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(3));
 
     private const int DefaultPollIntervalMs = 200;
     private const int LockGracePeriodMs = 500;

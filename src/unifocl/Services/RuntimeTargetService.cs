@@ -9,7 +9,7 @@ using System.Text.Json;
 /// </summary>
 internal sealed class RuntimeTargetService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(15));
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ExecSessionService _sessions;

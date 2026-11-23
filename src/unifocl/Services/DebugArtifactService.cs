@@ -26,7 +26,7 @@ internal sealed class DebugArtifactService
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(30));
 
     /// <summary>
     /// Collect a debug artifact at the requested tier level via daemon HTTP endpoints.

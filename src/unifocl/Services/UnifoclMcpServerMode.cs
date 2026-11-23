@@ -12,7 +12,7 @@ using System.Text.RegularExpressions;
 
 internal static class UnifoclMcpServerMode
 {
-    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient _http = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(30));
     internal static readonly JsonSerializerOptions _jsonOpts = new(JsonSerializerDefaults.Web);
 
     /// <summary>
@@ -61,6 +61,8 @@ internal static class UnifoclMcpServerMode
         {
             return $"{{\"ok\":false,\"message\":\"no active unifocl daemon found\"}}";
         }
+
+        EditorLinkHandler.RegisterProject(daemon.Port, daemon.ProjectPath);
 
         var payload = new
         {

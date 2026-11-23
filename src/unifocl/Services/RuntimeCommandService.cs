@@ -13,7 +13,7 @@ using Spectre.Console;
 /// </summary>
 internal sealed partial class RuntimeCommandService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(30));
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
     // Display only: keep non-ASCII names and quotes readable instead of \uXXXX escapes.

@@ -546,6 +546,7 @@ internal sealed partial class DaemonControlService
                     && portElement.TryGetInt32(out var configuredPort)
                     && configuredPort is > 0 and <= 65535)
                 {
+                    EditorLinkHandler.RegisterProject(configuredPort, projectPath);
                     return configuredPort;
                 }
             }
@@ -555,6 +556,8 @@ internal sealed partial class DaemonControlService
             // Ignore malformed local bridge config and fall back to deterministic port.
         }
 
-        return ComputeProjectDaemonPort(projectPath);
+        var port = ComputeProjectDaemonPort(projectPath);
+        EditorLinkHandler.RegisterProject(port, projectPath);
+        return port;
     }
 }

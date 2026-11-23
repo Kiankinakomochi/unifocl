@@ -211,7 +211,7 @@ internal static class CliDumpService
             var targetPath = session.Inspector?.PromptPath
                              ?? session.FocusPath
                              ?? "/";
-            using var http = new HttpClient();
+            using var http = EditorLinkHandler.CreateClient();
             using var cts = new CancellationTokenSource(InspectorDumpRequestTimeout);
             var listPayload = JsonSerializer.Serialize(new
             {

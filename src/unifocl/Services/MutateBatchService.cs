@@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
 /// </summary>
 internal sealed class MutateBatchService
 {
-    private static readonly HttpClient Http = new();
+    private static readonly HttpClient Http = EditorLinkHandler.CreateClient();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const int SceneRootNodeId = int.MaxValue;
 
