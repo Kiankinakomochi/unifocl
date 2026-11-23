@@ -35,6 +35,7 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonValidateServiceResource = "Payload/EditorScripts/Services/DaemonValidateService.cs";
     private const string DaemonSceneManagerResource = "Payload/EditorScripts/Services/DaemonSceneManager.cs";
     private const string DaemonScenePersistenceServiceResource = "Payload/EditorScripts/Services/DaemonScenePersistenceService.cs";
+    private const string DaemonSandboxSessionResource = "Payload/EditorScripts/Services/DaemonSandboxSession.cs";
     private const string UnifoclCommandAttributeResource = "Payload/EditorScripts/UnifoclCommandAttribute.cs";
     private const string UnifoclManifestGeneratorResource = "Payload/EditorScripts/UnifoclManifestGenerator.cs";
     private const string UnifoclEditorConfigResource = "Payload/EditorScripts/Models/UnifoclEditorConfig.cs";
@@ -89,6 +90,7 @@ internal sealed class EditorDependencyInitializerService
     private const string UnifoclBridgeCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclBridgeCommands.cs";
     private const string UnifoclHostSessionResource = "Payload/EditorScripts/Pipeline/UnifoclHostSession.cs";
     private const string UnifoclRuntimeCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclRuntimeCommands.cs";
+    private const string UnifoclSandboxCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclSandboxCommands.cs";
     private const string AddonAssemblyAccessResource = "Payload/EditorScripts/AddonAssemblyAccess.cs";
     // Runtime scripts (player-side)
     private const string RuntimeChunkAccumulatorResource = "Payload/RuntimeScripts/ChunkAccumulator.cs";
@@ -233,6 +235,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Services", "DaemonValidateService.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonSceneManager.cs"),
             Path.Combine(packagePath, "Editor", "Services", "DaemonScenePersistenceService.cs"),
+            Path.Combine(packagePath, "Editor", "Services", "DaemonSandboxSession.cs"),
             Path.Combine(packagePath, "Editor", "UnifoclCommandAttribute.cs"),
             Path.Combine(packagePath, "Editor", "UnifoclManifestGenerator.cs"),
             Path.Combine(packagePath, "Editor", "Models", "UnifoclEditorConfig.cs"),
@@ -289,6 +292,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclBridgeCommands.cs"),
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclHostSession.cs"),
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclRuntimeCommands.cs"),
+            Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclSandboxCommands.cs"),
             // Runtime scripts (player-side)
             Path.Combine(packagePath, "Runtime", "ChunkAccumulator.cs"),
             Path.Combine(packagePath, "Runtime", "RuntimeCommandRegistry.cs"),
@@ -590,6 +594,7 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonValidateServiceResource, Path.Combine("Editor", "Services", "DaemonValidateService.cs")),
                 (DaemonSceneManagerResource, Path.Combine("Editor", "Services", "DaemonSceneManager.cs")),
                 (DaemonScenePersistenceServiceResource, Path.Combine("Editor", "Services", "DaemonScenePersistenceService.cs")),
+                (DaemonSandboxSessionResource,          Path.Combine("Editor", "Services", "DaemonSandboxSession.cs")),
                 (UnifoclCommandAttributeResource,        Path.Combine("Editor", "UnifoclCommandAttribute.cs")),
                 (UnifoclManifestGeneratorResource,      Path.Combine("Editor", "UnifoclManifestGenerator.cs")),
                 (UnifoclEditorConfigResource,           Path.Combine("Editor", "Models", "UnifoclEditorConfig.cs")),
@@ -643,6 +648,7 @@ internal sealed class EditorDependencyInitializerService
                 (UnifoclBridgeCommandsResource,          Path.Combine("Editor", "Pipeline", "UnifoclBridgeCommands.cs")),
                 (UnifoclHostSessionResource,             Path.Combine("Editor", "Pipeline", "UnifoclHostSession.cs")),
                 (UnifoclRuntimeCommandsResource,         Path.Combine("Editor", "Pipeline", "UnifoclRuntimeCommands.cs")),
+                (UnifoclSandboxCommandsResource,         Path.Combine("Editor", "Pipeline", "UnifoclSandboxCommands.cs")),
                 // Runtime scripts (player-side)
                 (RuntimeChunkAccumulatorResource,        Path.Combine("Runtime", "ChunkAccumulator.cs")),
                 (RuntimeCommandRegistryResource,         Path.Combine("Runtime", "RuntimeCommandRegistry.cs")),

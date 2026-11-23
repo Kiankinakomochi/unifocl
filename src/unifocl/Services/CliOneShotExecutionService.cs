@@ -711,6 +711,15 @@ internal static class CliOneShotExecutionService
             return;
         }
 
+        if (matched.Trigger == "/preview")
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandlePreviewCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                cancellationToken);
+            return;
+        }
+
         if (matched.Trigger.StartsWith("/compile", StringComparison.Ordinal))
         {
             await AwaitWithCancellationAsync(

@@ -91,6 +91,8 @@ internal sealed class ExecCommandRegistry
         ["addressable.bulk.add"]       = ExecRiskLevel.SafeWrite,
         ["addressable.bulk.label"]     = ExecRiskLevel.SafeWrite,
         ["addressable.analyze"]        = ExecRiskLevel.SafeRead,
+        // sandbox preview of any Pipeline command; its changes are undone, and what can't be is reported
+        ["preview.run"] = ExecRiskLevel.SafeWrite,
         // runtime operations
         ["runtime.target.list"] = ExecRiskLevel.SafeRead,
         ["runtime.attach"]      = ExecRiskLevel.SafeWrite,

@@ -1223,6 +1223,40 @@ rename 3 PlayerController --dry-run
 rm 7 --dry-run
 ```
 
+### Previewing any Unity Pipeline command: `/preview`
+
+`--dry-run` covers unifocl's own commands. `/preview` covers every other command the Editor offers through the Unity CLI: Unity's built-in Pipeline commands (`gameobject`, `asset`, `scene`, `script`, `component`, `prefab`, …) and Pipeline commands from third-party packages. Most of these have no dry-run of their own.
+
+```
+/preview <group> <command> [argsJson]
+
+/preview gameobject create {"name":"Probe","primitive":"cube"}
+/preview asset create_folder {"path":"Gameplay/Enemies"}
+/preview script create {"name":"PlayerController"}
+```
+
+The command runs for real inside a **sandbox session** in the Editor. Ending the session undoes it, and unifocl reports what it did:
+
+- **What changed:** scene objects added, removed or modified (by component), plus files created.
+- **Writes refused:** while the session is open, AssetDatabase saves, moves and deletes are refused, so a command that saves a scene or deletes an asset reports it instead of doing it.
+- **What was undone:** Unity's Undo comes first. Next, a scene that was saved before the session but still differs is reloaded from disk; this catches changes made without Undo. Then files the command created are deleted, and `ProjectSettings/` and the package manifests are restored from a backup.
+- **What is still in place:** any change these layers could not take back, for example a file edited on disk outside those folders, is listed as not reverted. The preview then ends with a warning.
+
+A command that asks for `confirm` before changing anything gets `confirm: true`, so the preview shows the real change; pass `confirm` or `dry-run` yourself to override that. The exit code follows the previewed command, so a command that would fail fails its preview.
+
+Some groups are refused because their work outlives the session or leaves the project: `build`, `build.target`, `package`, `editor`, `editor.playmode`, `test`, `job`, `lighting`, `navmesh`, `occlusion`, `multiplayer.role`, and the write commands of `settings.*`, which the Editor saves on quit.
+
+The session lives in `Library/unifocl/sandbox/`, so it survives a domain reload (for example, after a command adds a script). If it is never ended, it ends by itself after five minutes and logs a warning. Agents can drive it in steps, which lets them preview a sequence of commands as one unit:
+
+```
+unity command unifocl.sandbox begin --command "gameobject create"
+unity command gameobject create --name Root
+unity command gameobject create --name Probe --parent /Root
+unity command unifocl.sandbox end          # undo both, and report
+```
+
+Over ExecV2, the operation is `preview.run`, with `args: {"command": "gameobject create", "args": {...}, "ttl": 300}`.
+
 ## 10. Dynamic C# Eval
 
 The `/eval` command compiles and executes arbitrary C# code directly in the Unity Editor context. It provides a fast, interactive way for both developers and agents to run queries, introspect scene state, and execute one-off editor utilities — all without creating script files.
