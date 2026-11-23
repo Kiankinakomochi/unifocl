@@ -13,3 +13,4 @@ bump: minor
 - The Editor-side HTTP bridge: the InitializeOnLoad listener, host-mode `StartServer`, and the `/touch`, `/stop` and `/agent/exec` endpoints. The batchmode idle timeout added in the previous phase replaces host mode's inactivity TTL.
 - The `UNIFOCL_EDITOR_LINK=http` switch. Requests to an Editor never fall back to HTTP; a path with no Pipeline command gets a 404.
 - The Editor-side UPM batch installer (`InstallRequiredMcpPackageBatch`), which nothing called.
+- The prompt and TUI headers say `unifocl` instead of `UnityCLI`, which now reads as Unity's own CLI.

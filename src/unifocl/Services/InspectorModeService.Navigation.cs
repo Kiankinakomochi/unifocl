@@ -116,7 +116,7 @@ internal sealed partial class InspectorModeService
         context.StreamScrollOffset = int.MaxValue;
         context.LastReferenceSearchResults.Clear();
         await PopulateFieldsAsync(context, session, componentIndex, forceRefresh: true);
-        AddStream(context, $"UnityCLI:{context.TargetPath} [[inspect]] > {rawCommand}");
+        AddStream(context, $"unifocl:{context.TargetPath} [[inspect]] > {rawCommand}");
         AddStream(context, $"[i] inspecting component: {component.Name}");
         if (context.Fields.Count == 0)
         {

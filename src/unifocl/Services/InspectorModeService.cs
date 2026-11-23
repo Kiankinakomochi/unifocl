@@ -1852,7 +1852,7 @@ internal sealed partial class InspectorModeService
     {
         var contentWidth = Math.Max(1, ResolveInnerWidth() - 1);
         return context.CommandStream
-            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("unifocl:", StringComparison.OrdinalIgnoreCase))
             .SelectMany(line => TuiTextWrap.WrapPlainText(line, contentWidth))
             .ToList();
     }

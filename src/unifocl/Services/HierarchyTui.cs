@@ -938,7 +938,7 @@ internal sealed partial class HierarchyTui
             : $" | Focus Key: {FocusModeKey}";
 
         WriteFrameLine(borderTop);
-        WriteFrameLine(ToFrameLine($" UnityCLI v{CliVersion.SemVer} | MODE: HIERARCHY | Editor: via Unity CLI | Scene: {scene}{focusLabel}", frameWidth));
+        WriteFrameLine(ToFrameLine($" unifocl v{CliVersion.SemVer} | MODE: HIERARCHY | Editor: via Unity CLI | Scene: {scene}{focusLabel}", frameWidth));
         WriteFrameLine(borderMid);
 
         foreach (var line in visibleTree)
@@ -1592,7 +1592,7 @@ internal sealed partial class HierarchyTui
     {
         _ = contentWidth;
         return commandLog
-            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("unifocl:", StringComparison.OrdinalIgnoreCase))
             .ToList();
     }
 

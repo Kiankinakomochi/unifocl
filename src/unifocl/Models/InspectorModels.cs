@@ -36,8 +36,8 @@ internal sealed class InspectorContext
 
     public string PromptLabel =>
         Depth == InspectorDepth.ComponentList
-            ? $"UnityCLI:{TargetPath} [inspect]"
-            : $"UnityCLI:{PromptPath}";
+            ? $"unifocl:{TargetPath} [inspect]"
+            : $"unifocl:{PromptPath}";
 }
 
 internal sealed record InspectorComponentEntry(int Index, string Name, bool Enabled);

@@ -57,7 +57,7 @@ internal sealed partial class HierarchyTui
                 if (IsHierarchyCatalogCommandInput(input.ToString()))
                 {
                     ClearPromptFrame(renderedLines);
-                    Console.WriteLine($"UnityCLI:{cwdPath} > {input}");
+                    Console.WriteLine($"unifocl:{cwdPath} > {input}");
                     return input.ToString().Trim();
                 }
 
@@ -75,7 +75,7 @@ internal sealed partial class HierarchyTui
                 else
                 {
                     ClearPromptFrame(renderedLines);
-                    Console.WriteLine($"UnityCLI:{cwdPath} > {input}");
+                    Console.WriteLine($"unifocl:{cwdPath} > {input}");
                     return input.ToString().Trim();
                 }
             }
@@ -159,7 +159,7 @@ internal sealed partial class HierarchyTui
     {
         var lines = new List<string>
         {
-            $"UnityCLI:{Markup.Escape(cwdPath)} > [bold white]{Markup.Escape(input)}[/]"
+            $"unifocl:{Markup.Escape(cwdPath)} > [bold white]{Markup.Escape(input)}[/]"
         };
 
         if (suppressIntellisense)

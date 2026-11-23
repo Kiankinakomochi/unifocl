@@ -529,8 +529,8 @@ internal static class CliComposerService
         {
             var escapedPromptPath = Markup.Escape(context.PromptPath);
             return context.Depth == InspectorDepth.ComponentList
-                ? $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/] [grey][[inspect]][/]"
-                : $"[bold deepskyblue1]UnityCLI[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/]";
+                ? $"[bold deepskyblue1]unifocl[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/] [grey][[inspect]][/]"
+                : $"[bold deepskyblue1]unifocl[/][grey]:[/][{CliTheme.Info}]{escapedPromptPath}[/]";
         }
 
         if (session.ContextMode == CliContextMode.Project && !string.IsNullOrWhiteSpace(session.CurrentProjectPath))
