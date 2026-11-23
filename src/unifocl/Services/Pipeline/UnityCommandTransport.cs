@@ -136,9 +136,9 @@ internal sealed class UnityCommandTransport : IPipelineTransport
     private static int GetInt(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.TryGetInt32(out var number) ? number : 0;
 
-    private readonly record struct ProcessRun(int ExitCode, string Stdout, string Stderr, bool TimedOut);
+    internal readonly record struct ProcessRun(int ExitCode, string Stdout, string Stderr, bool TimedOut);
 
-    private static async Task<ProcessRun> RunAsync(
+    internal static async Task<ProcessRun> RunAsync(
         string fileName,
         IReadOnlyList<string> argv,
         TimeSpan limit,

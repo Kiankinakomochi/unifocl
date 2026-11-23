@@ -4,6 +4,18 @@ using System.Text.Json;
 
 internal sealed partial class DaemonControlService
 {
+    private static readonly TimeSpan EditorPingTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Makes sure an Editor with unifocl's Pipeline commands has the project open, and attaches the
+    /// session to it. An Editor that is already running, GUI or batchmode, is used as it is; otherwise
+    /// <c>unity open --batchmode</c> starts one, which plays the part of the old Host mode.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="requireBridgeMode"/> and <paramref name="preferHostMode"/> are kept for callers:
+    /// every Editor now serves the same Pipeline commands, and a second Editor cannot open a project that
+    /// one already has open, so neither changes what happens.
+    /// </remarks>
     public async Task<bool> EnsureProjectDaemonAsync(
         string projectPath,
         DaemonRuntime runtime,
@@ -14,231 +26,134 @@ internal sealed partial class DaemonControlService
         bool allowUnsafe = false,
         TimeSpan? startupTimeout = null)
     {
+        _ = requireBridgeMode;
+        _ = preferHostMode;
         var port = ResolveProjectDaemonPort(projectPath);
-        var existing = runtime.GetByPort(port);
-        var unityEditorActive = IsUnityClientActiveForProject(projectPath);
+        var timeout = ResolveStartupTimeout(startupTimeout);
 
-        // Unity's InitializeOnLoad Bridge mode endpoint can already be serving this port even when it's not in runtime registry.
-        if (await TryAttachProjectDaemonAsync(projectPath, session, attemptCount: 1))
+        if (UnityCliLocator.Locate() is null)
         {
-            var projectCommandReady = await IsProjectCommandEndpointResponsiveAsync(port, TimeSpan.FromSeconds(3));
-            if (!projectCommandReady)
-            {
-                if (unityEditorActive)
-                {
-                    log($"[grey]daemon[/]: endpoint 127.0.0.1:{port} is reachable; waiting for Unity editor bridge command readiness");
-                    var bridgeWait = await WaitForUnityBridgeAttachWithDiagnosticsAsync(projectPath, port, session, log, UnityBridgeAttachWaitTimeout);
-                    if (bridgeWait.Attached)
-                    {
-                        return true;
-                    }
-
-                    if (bridgeWait.EditorClosedDuringWait)
-                    {
-                        log("[yellow]daemon[/]: Unity editor closed while waiting for Bridge mode; continuing with Host mode startup");
-                    }
-                    else
-                    {
-                        _lastStartupFailure = new DaemonStartupFailure(
-                            IsCompileError: false,
-                            Summary: $"Unity editor bridge endpoint is reachable but project commands are not ready on port {port} ({bridgeWait.DiagnosticSummary})",
-                            Lines: []);
-                        log($"[red]daemon[/]: Unity editor bridge is not ready on [white]127.0.0.1:{port}[/] ({Markup.Escape(bridgeWait.DiagnosticSummary)})");
-                        return false;
-                    }
-                }
-                else
-                {
-                    log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} responds to ping but project commands are unresponsive; restarting bridge");
-                    await TrySendControlAsync(port, "STOP", "STOPPING");
-                    ClearAttachedPort(session);
-                    await Task.Delay(200);
-                }
-            }
-            else
-            {
-                var bridgeSatisfied = !requireBridgeMode || SupportsBridgeMode(existing);
-                var hostModeSatisfied = !preferHostMode || (existing?.Headless ?? false);
-                var managedRuntimePresent = existing is not null;
-
-                if (managedRuntimePresent && bridgeSatisfied && hostModeSatisfied)
-                {
-                    WarnIfProjectSourceStale(existing!, log);
-                    return true;
-                }
-
-                if (!preferHostMode && bridgeSatisfied)
-                {
-                    if (existing is not null) WarnIfProjectSourceStale(existing, log);
-                    return true;
-                }
-
-                log($"[yellow]daemon[/]: endpoint 127.0.0.1:{port} is attachable but unmanaged; restarting in managed Host mode");
-                await TrySendControlAsync(port, "STOP", "STOPPING");
-                ClearAttachedPort(session);
-                await Task.Delay(200);
-            }
+            Fail(UnityCliLocator.InstallHint);
+            log($"[red]daemon[/]: {Markup.Escape(UnityCliLocator.InstallHint)}");
+            return false;
         }
 
-        if (unityEditorActive)
+        var running = await UnityEditorLifecycle.FindAsync(projectPath);
+        if (running is not null || IsUnityClientActiveForProject(projectPath))
         {
-            log($"[grey]daemon[/]: Unity editor lock detected for project; waiting for Bridge mode endpoint on [white]127.0.0.1:{port}[/]");
-            var bridgeWait = await WaitForUnityBridgeAttachWithDiagnosticsAsync(projectPath, port, session, log, UnityBridgeAttachWaitTimeout);
-            if (bridgeWait.Attached)
+            var description = running is null
+                ? "a Unity Editor holds the project lock"
+                : $"Unity Editor pid={running.Pid} ({(running.Batchmode ? "batchmode" : "GUI")}, {running.State})";
+            log($"[grey]daemon[/]: {Markup.Escape(description)}; waiting for unifocl's Pipeline commands");
+            if (!await WaitForEditorLinkAsync(projectPath, UnityBridgeAttachWaitTimeout, log))
+            {
+                Fail($"{description}, but it does not answer unifocl.bridge commands. {PipelineSetupHint}");
+                log($"[red]daemon[/]: {Markup.Escape(description)}, but it does not answer unifocl.bridge commands");
+                log($"[yellow]daemon[/]: {Markup.Escape(PipelineSetupHint)}");
+                return false;
+            }
+
+            if (runtime.GetByPort(port) is { } known)
+            {
+                WarnIfProjectSourceStale(known, log);
+            }
+
+            AttachEditor(session, runtime, port, projectPath, running);
+            log($"[green]daemon[/]: attached to the running Unity Editor{(running is null ? string.Empty : $" [white]pid={running.Pid}[/]")}");
+            return true;
+        }
+
+        var mode = allowUnsafe ? "unsafe (ignore compile errors)" : "safe";
+        log($"[grey]daemon[/]: starting Unity in batchmode through the Unity CLI ({mode})");
+        var open = await UnityEditorLifecycle.OpenAsync(projectPath, ignoreCompileErrors: allowUnsafe, timeout);
+        if (!open.Ok)
+        {
+            Fail(open.Error ?? "unity open failed", open.CompileErrors);
+            log($"[red]daemon[/]: {Markup.Escape(open.Error ?? "unity open failed")}");
+            foreach (var line in open.CompileErrors.Take(5))
+            {
+                log($"[red]unity[/]: {Markup.Escape(line)}");
+            }
+
+            return false;
+        }
+
+        if (!await WaitForEditorLinkAsync(projectPath, ProjectCommandReadyTimeout, log))
+        {
+            Fail($"the Editor started (pid={open.Pid}) but does not answer unifocl.bridge commands. {PipelineSetupHint}");
+            log($"[red]daemon[/]: the Editor started but does not answer unifocl.bridge commands; closing it");
+            log($"[yellow]daemon[/]: {Markup.Escape(PipelineSetupHint)}");
+            if (!open.AlreadyOpen)
+            {
+                await UnityEditorLifecycle.CloseAsync(projectPath, TimeSpan.FromSeconds(30));
+            }
+
+            return false;
+        }
+
+        var started = await UnityEditorLifecycle.FindAsync(projectPath);
+        AttachEditor(session, runtime, port, projectPath, started ?? new PipelineEditorInstance(projectPath, 0, open.Pid, "ready", string.Empty, Batchmode: !open.AlreadyOpen));
+        _lastStartupFailure = null;
+        log($"[green]daemon[/]: started Unity [white]pid={open.Pid}[/] in batchmode");
+        return true;
+    }
+
+    private const string PipelineSetupHint =
+        "The project needs the com.unity.pipeline package and the unifocl Editor package (run /init), on Unity 6000.0 or later.";
+
+    private void Fail(string summary, IReadOnlyList<string>? compileErrors = null)
+    {
+        _lastStartupFailure = new DaemonStartupFailure(
+            IsCompileError: compileErrors is { Count: > 0 },
+            Summary: summary,
+            Lines: compileErrors?.ToList() ?? []);
+    }
+
+    private static void AttachEditor(
+        CliSessionState session,
+        DaemonRuntime runtime,
+        int port,
+        string projectPath,
+        PipelineEditorInstance? editor)
+    {
+        SetAttachedPort(session, port, projectPath);
+        if (editor is { Batchmode: true })
+        {
+            // Batchmode Editors are the ones /close and /daemon stop shut down, so they are listed.
+            var now = DateTime.UtcNow;
+            var startedAt = runtime.GetByPort(port) is { } known && known.Pid == editor.Pid ? known.StartedAtUtc : now;
+            runtime.Upsert(new DaemonInstance(port, editor.Pid, startedAt, UnityCliLocator.Locate(), Headless: true, projectPath, now));
+        }
+    }
+
+    /// <summary>Polls the bridge ping until the Editor answers, logging progress every 10 s.</summary>
+    private static async Task<bool> WaitForEditorLinkAsync(string projectPath, TimeSpan timeout, Action<string> log)
+    {
+        var startedAt = DateTime.UtcNow;
+        var deadline = startedAt + timeout;
+        var nextProgressAt = startedAt.AddSeconds(10);
+        while (true)
+        {
+            if (await UnityEditorLifecycle.PingAsync(projectPath, EditorPingTimeout))
             {
                 return true;
             }
 
-            if (bridgeWait.EditorClosedDuringWait)
-            {
-                log("[yellow]daemon[/]: Unity editor closed while waiting for Bridge mode; continuing with Host mode startup");
-            }
-            else
-            {
-                _lastStartupFailure = new DaemonStartupFailure(
-                    IsCompileError: false,
-                    Summary: $"Unity editor lock detected for project, but bridge endpoint 127.0.0.1:{port} is not attachable ({bridgeWait.DiagnosticSummary})",
-                    Lines: []);
-                log($"[red]daemon[/]: Unity editor is already running for this project, but Bridge mode endpoint [white]127.0.0.1:{port}[/] is not attachable");
-                log($"[yellow]daemon[/]: bridge diagnostics -> {Markup.Escape(bridgeWait.DiagnosticSummary)}");
-                log("[yellow]daemon[/]: Host mode launch is skipped while Unity lock is active to avoid Unity file-lock startup failure");
-                return false;
-            }
-        }
-
-        if (existing is not null)
-        {
-            var stopped = await TrySendControlAsync(port, "STOP", "STOPPING");
-            if (stopped)
-            {
-                var deadline = DateTime.UtcNow.AddSeconds(4);
-                while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(existing.Pid))
-                {
-                    await Task.Delay(120);
-                }
-            }
-
-            runtime.Remove(port);
-        }
-
-        var unityPath = ResolveDefaultUnityPath(projectPath, log);
-        if (requireBridgeMode && string.IsNullOrWhiteSpace(unityPath))
-        {
-            log("[red]daemon[/]: hierarchy asset load requires Bridge mode, but no matching Unity editor path is configured");
-            return false;
-        }
-
-        var startOptions = new DaemonStartOptions(
-            port,
-            unityPath,
-            projectPath,
-            Headless: true,
-            AllowUnsafe: allowUnsafe);
-
-        var started = await StartDaemonAsync(startOptions, runtime, log, startupTimeout);
-        if (!started)
-        {
-            if (ShouldRetryAfterRecoverableStartupFailure(_lastStartupFailure))
-            {
-                log("[yellow]daemon[/]: detected recoverable startup failure; attempting one cleanup + restart");
-                await CleanupRecoverableStartupFailureAsync(projectPath, runtime, session, log);
-                started = await StartDaemonAsync(startOptions, runtime, log, startupTimeout);
-                if (!started)
-                {
-                    return false;
-                }
-            }
-            else
+            var now = DateTime.UtcNow;
+            if (now >= deadline)
             {
                 return false;
             }
-        }
 
-        SetAttachedPort(session, port, projectPath);
-        await TrySendControlAsync(port, "TOUCH", "OK");
-        var projectCommandReadyTimeout = ResolveStartupTimeout(startupTimeout);
-        var projectCommandReadyAfterStart = await WaitForProjectCommandReadyAsync(
-            port,
-            projectCommandReadyTimeout,
-            elapsed => log($"[grey]daemon[/]: waiting for project command endpoint... {elapsed.TotalSeconds:0}s elapsed"));
-        if (!projectCommandReadyAfterStart)
-        {
-            var probe = await ProbeProjectCommandEndpointAsync(port, TimeSpan.FromSeconds(8));
-            _lastStartupFailure = new DaemonStartupFailure(
-                IsCompileError: false,
-                Summary: $"project command endpoint is not ready on port {port} ({probe.Detail})",
-                Lines: []);
-            log($"[red]daemon[/]: project command endpoint is not ready on [white]127.0.0.1:{port}[/] ({Markup.Escape(probe.Detail)})");
-            await TrySendControlAsync(port, "STOP", "STOPPING");
-            var launched = runtime.GetByPort(port);
-            if (launched is not null)
+            if (now >= nextProgressAt)
             {
-                var deadline = DateTime.UtcNow.AddSeconds(4);
-                while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(launched.Pid))
-                {
-                    await Task.Delay(120);
-                }
+                var state = (await UnityEditorLifecycle.FindAsync(projectPath))?.State ?? "not registered with the Unity CLI";
+                log($"[grey]daemon[/]: still waiting for the Editor ({Markup.Escape(state)}; {(deadline - now).TotalSeconds:0}s left)");
+                nextProgressAt = now.AddSeconds(10);
             }
 
-            runtime.Remove(port);
-            ClearAttachedPort(session);
-            return false;
+            await Task.Delay(1000);
         }
-
-        return true;
-    }
-
-    private static bool ShouldRetryAfterRecoverableStartupFailure(DaemonStartupFailure? failure)
-    {
-        if (failure is null)
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(failure.Summary) && IsRecoverableStartupFailureLine(failure.Summary))
-        {
-            return true;
-        }
-
-        return failure.Lines.Any(IsRecoverableStartupFailureLine);
-    }
-
-    private static bool IsRecoverableStartupFailureLine(string line)
-    {
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            return false;
-        }
-
-        return line.Contains("Failed to start primary listening socket", StringComparison.OrdinalIgnoreCase)
-               || line.Contains("Failed to start secondary listening socket", StringComparison.OrdinalIgnoreCase)
-               || line.Contains("Failed to start the Unity Package Manager local server process", StringComparison.OrdinalIgnoreCase)
-               || line.Contains("Error: listen EPERM", StringComparison.OrdinalIgnoreCase)
-               || line.Contains("Licensing initialization failed", StringComparison.OrdinalIgnoreCase)
-               || line.Contains("another Unity instance is running", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private async Task CleanupRecoverableStartupFailureAsync(
-        string projectPath,
-        DaemonRuntime runtime,
-        CliSessionState session,
-        Action<string> log)
-    {
-        runtime.CleanStaleEntries();
-        var matchingInstances = runtime.GetAll()
-            .Where(instance =>
-                !string.IsNullOrWhiteSpace(instance.ProjectPath)
-                && Path.GetFullPath(instance.ProjectPath).Equals(Path.GetFullPath(projectPath), StringComparison.Ordinal))
-            .OrderBy(instance => instance.Port)
-            .ToList();
-
-        foreach (var instance in matchingInstances)
-        {
-            await StopDaemonByPortAsync(instance.Port, runtime, session, log);
-        }
-
-        StopUnityLicensingClients(log);
-        await Task.Delay(500);
     }
 
     public async Task<bool> HasStableProjectDaemonAsync(
@@ -253,37 +168,17 @@ internal sealed partial class DaemonControlService
             return false;
         }
 
-        if (requireManagedRuntime)
-        {
-            var instance = runtime.GetByPort(port);
-            if (instance is null || string.IsNullOrWhiteSpace(instance.UnityPath))
-            {
-                return false;
-            }
-        }
-
-        if (!await TrySendControlAsync(port, "PING", "PONG"))
+        if (requireManagedRuntime && runtime.GetByPort(port) is null)
         {
             return false;
         }
 
-        return await WaitForProjectCommandReadyAsync(port, TimeSpan.FromSeconds(8));
+        return await UnityEditorLifecycle.PingAsync(projectPath, EditorPingTimeout);
     }
 
     public async Task<bool> HasStableManagedProjectDaemonAsync(string projectPath, DaemonRuntime runtime, CliSessionState session)
     {
         return await HasStableProjectDaemonAsync(projectPath, runtime, session, requireManagedRuntime: true);
-    }
-
-    private static bool SupportsBridgeMode(DaemonInstance? instance)
-    {
-        if (instance is null)
-        {
-            // Port is serving but not from runtime registry (likely InitializeOnLoad Bridge mode).
-            return true;
-        }
-
-        return !string.IsNullOrWhiteSpace(instance.UnityPath);
     }
 
     public async Task<bool> TryAttachProjectDaemonAsync(
@@ -299,10 +194,14 @@ internal sealed partial class DaemonControlService
 
         for (var attempt = 1; attempt <= normalizedAttemptCount; attempt++)
         {
-            if (await TrySendControlAsync(port, "PING", "PONG"))
+            if (await UnityEditorLifecycle.FindAsync(projectPath) is null)
+            {
+                break;
+            }
+
+            if (await UnityEditorLifecycle.PingAsync(projectPath, EditorPingTimeout))
             {
                 SetAttachedPort(session, port, projectPath);
-                await TrySendControlAsync(port, "TOUCH", "OK");
                 return true;
             }
 
@@ -312,7 +211,7 @@ internal sealed partial class DaemonControlService
             }
         }
 
-        log?.Invoke($"[yellow]daemon[/]: project daemon endpoint 127.0.0.1:{port} is not ready for attachment");
+        log?.Invoke("[yellow]daemon[/]: no Unity Editor with unifocl's Pipeline commands has the project open");
         return false;
     }
 
@@ -326,6 +225,10 @@ internal sealed partial class DaemonControlService
         return await TrySendControlAsync(touchPort, "TOUCH", "OK");
     }
 
+    /// <summary>
+    /// Detaches from the Editor behind <paramref name="port"/>, and shuts it down when it is a batchmode
+    /// Editor. A GUI Editor belongs to the user and stays open, as it did with the old Bridge mode.
+    /// </summary>
     public async Task<bool> StopDaemonByPortAsync(
         int port,
         DaemonRuntime runtime,
@@ -333,62 +236,87 @@ internal sealed partial class DaemonControlService
         Action<string> log)
     {
         runtime.CleanStaleEntries();
-        var target = runtime.GetByPort(port);
-        if (target is null)
+        var projectPath = EditorLinkHandler.TryGetProject(port) ?? runtime.GetByPort(port)?.ProjectPath;
+        if (projectPath is null)
         {
-            var pingOk = await TrySendControlAsync(port, "PING", "PONG");
-            if (pingOk)
-            {
-                var stopAttachedOnly = await TrySendControlAsync(port, "STOP", "STOPPING");
-                if (!stopAttachedOnly)
-                {
-                    log($"[red]daemon[/]: failed to stop live endpoint on port {port}");
-                    return false;
-                }
-            }
+            return await StopCliServiceByPortAsync(port, runtime, session, log);
+        }
 
-            runtime.Remove(port);
-            if (GetPort(session) == port)
-            {
-                ClearAttachedPort(session);
-            }
+        if (!await StopEditorAsync(projectPath, log))
+        {
+            return false;
+        }
 
+        runtime.Remove(port);
+        if (GetPort(session) == port)
+        {
+            ClearAttachedPort(session);
+        }
+
+        return true;
+    }
+
+    private static async Task<bool> StopEditorAsync(string projectPath, Action<string> log)
+    {
+        var editor = await UnityEditorLifecycle.FindAsync(projectPath);
+        if (editor is null)
+        {
             return true;
         }
 
-        var stopOk = await TrySendControlAsync(target.Port, "STOP", "STOPPING");
-        if (!stopOk)
+        if (!editor.Batchmode)
         {
-            log($"[red]daemon[/]: failed to stop daemon on port {target.Port} via control socket");
+            log($"[grey]daemon[/]: detached; the Unity Editor (pid={editor.Pid}) stays open");
+            return true;
+        }
+
+        var close = await UnityEditorLifecycle.CloseAsync(projectPath, TimeSpan.FromSeconds(30));
+        if (!close.Ok)
+        {
+            log($"[red]daemon[/]: could not close the batchmode Editor pid={editor.Pid} ({Markup.Escape(close.Error ?? "unknown error")})");
             return false;
         }
 
-        var deadline = DateTime.UtcNow.AddSeconds(4);
-        while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(target.Pid))
+        if (close.Unsaved.Count > 0)
         {
-            await Task.Delay(120);
+            log($"[yellow]daemon[/]: the Editor discarded unsaved changes in {Markup.Escape(string.Join(", ", close.Unsaved))}");
         }
 
-        if (ProcessUtil.IsAlive(target.Pid))
-        {
-            if (target.Headless)
-            {
-                TryTerminateHostModeByPid(target.Pid, log);
-            }
-            else
-            {
-                log($"[yellow]daemon[/]: process pid={target.Pid} is still alive after stop request; skipped force-kill because daemon is not running in Host mode");
-            }
-        }
+        return true;
+    }
 
-        if (ProcessUtil.IsAlive(target.Pid))
+    /// <summary>Stops a unifocl CLI daemon service (<c>--daemon-service</c>), which is not an Editor.</summary>
+    private static async Task<bool> StopCliServiceByPortAsync(
+        int port,
+        DaemonRuntime runtime,
+        CliSessionState session,
+        Action<string> log)
+    {
+        var target = runtime.GetByPort(port);
+        var stopOk = await TrySendControlAsync(port, "STOP", "STOPPING");
+        if (!stopOk && target is not null)
         {
-            log($"[red]daemon[/]: daemon process pid={target.Pid} is still alive after shutdown");
+            log($"[red]daemon[/]: failed to stop daemon on port {port} via control socket");
             return false;
         }
 
-        runtime.Remove(target.Port);
-        if (GetPort(session) == target.Port)
+        if (target is not null)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(4);
+            while (DateTime.UtcNow < deadline && ProcessUtil.IsAlive(target.Pid))
+            {
+                await Task.Delay(120);
+            }
+
+            if (ProcessUtil.IsAlive(target.Pid))
+            {
+                log($"[red]daemon[/]: daemon process pid={target.Pid} is still alive after shutdown");
+                return false;
+            }
+        }
+
+        runtime.Remove(port);
+        if (GetPort(session) == port)
         {
             ClearAttachedPort(session);
         }
