@@ -45,11 +45,10 @@ internal sealed partial class DaemonControlService
                 ? "a Unity Editor holds the project lock"
                 : $"Unity Editor pid={running.Pid} ({(running.Batchmode ? "batchmode" : "GUI")}, {running.State})";
             log($"[grey]daemon[/]: {Markup.Escape(description)}; waiting for unifocl's Pipeline commands");
+            var waitStartedAt = DateTime.UtcNow;
             if (!await WaitForEditorLinkAsync(projectPath, UnityBridgeAttachWaitTimeout, log))
             {
-                Fail($"{description}, but it does not answer unifocl.bridge commands. {PipelineSetupHint}");
-                log($"[red]daemon[/]: {Markup.Escape(description)}, but it does not answer unifocl.bridge commands");
-                log($"[yellow]daemon[/]: {Markup.Escape(PipelineSetupHint)}");
+                FailUnanswered(projectPath, $"{description}, but it does not answer unifocl.bridge commands", waitStartedAt, log);
                 return false;
             }
 
@@ -65,6 +64,7 @@ internal sealed partial class DaemonControlService
 
         var mode = allowUnsafe ? "unsafe (ignore compile errors)" : "safe";
         log($"[grey]daemon[/]: starting Unity in batchmode through the Unity CLI ({mode})");
+        var openStartedAt = DateTime.UtcNow;
         var open = await UnityEditorLifecycle.OpenAsync(projectPath, ignoreCompileErrors: allowUnsafe, timeout);
         if (!open.Ok)
         {
@@ -80,9 +80,7 @@ internal sealed partial class DaemonControlService
 
         if (!await WaitForEditorLinkAsync(projectPath, ProjectCommandReadyTimeout, log))
         {
-            Fail($"the Editor started (pid={open.Pid}) but does not answer unifocl.bridge commands. {PipelineSetupHint}");
-            log($"[red]daemon[/]: the Editor started but does not answer unifocl.bridge commands; closing it");
-            log($"[yellow]daemon[/]: {Markup.Escape(PipelineSetupHint)}");
+            FailUnanswered(projectPath, $"the Editor started (pid={open.Pid}) but does not answer unifocl.bridge commands", openStartedAt, log);
             if (!open.AlreadyOpen)
             {
                 await UnityEditorLifecycle.CloseAsync(projectPath, TimeSpan.FromSeconds(30));
@@ -100,6 +98,29 @@ internal sealed partial class DaemonControlService
 
     private const string PipelineSetupHint =
         "The project needs the com.unity.pipeline package and the unifocl Editor package (run /init), on Unity 6000.0 or later.";
+
+    /// <summary>
+    /// Records an Editor that runs but never answers. Compile errors in its log, such as in unifocl's own
+    /// Editor package, explain that better than the setup hint, so they are reported when present.
+    /// </summary>
+    private void FailUnanswered(string projectPath, string summary, DateTime sinceUtc, Action<string> log)
+    {
+        var compileErrors = UnityEditorLifecycle.ReadCompileErrors(projectPath, sinceUtc);
+        log($"[red]daemon[/]: {Markup.Escape(summary)}");
+        if (compileErrors.Count > 0)
+        {
+            Fail($"{summary}: its scripts do not compile", compileErrors);
+            foreach (var line in compileErrors.Take(5))
+            {
+                log($"[red]unity[/]: {Markup.Escape(line)}");
+            }
+
+            return;
+        }
+
+        Fail($"{summary}. {PipelineSetupHint}");
+        log($"[yellow]daemon[/]: {Markup.Escape(PipelineSetupHint)}");
+    }
 
     private void Fail(string summary, IReadOnlyList<string>? compileErrors = null)
     {
@@ -459,31 +480,13 @@ internal sealed partial class DaemonControlService
         }
     }
 
+    /// <summary>
+    /// The id of <paramref name="projectPath"/>'s Editor link: a port number derived from the path, which
+    /// the session and daemon records key on. Nothing listens on it; requests to it go through the
+    /// Unity CLI (<see cref="EditorLinkHandler"/>).
+    /// </summary>
     public static int ResolveProjectDaemonPort(string projectPath)
     {
-        var bridgePath = Path.Combine(projectPath, ".unifocl", "bridge.json");
-        try
-        {
-            if (File.Exists(bridgePath))
-            {
-                using var document = JsonDocument.Parse(File.ReadAllText(bridgePath));
-                if (document.RootElement.ValueKind == JsonValueKind.Object
-                    && document.RootElement.TryGetProperty("daemon", out var daemonElement)
-                    && daemonElement.ValueKind == JsonValueKind.Object
-                    && daemonElement.TryGetProperty("port", out var portElement)
-                    && portElement.TryGetInt32(out var configuredPort)
-                    && configuredPort is > 0 and <= 65535)
-                {
-                    EditorLinkHandler.RegisterProject(configuredPort, projectPath);
-                    return configuredPort;
-                }
-            }
-        }
-        catch
-        {
-            // Ignore malformed local bridge config and fall back to deterministic port.
-        }
-
         var port = ComputeProjectDaemonPort(projectPath);
         EditorLinkHandler.RegisterProject(port, projectPath);
         return port;

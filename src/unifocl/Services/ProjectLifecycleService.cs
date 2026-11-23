@@ -1503,7 +1503,6 @@ internal sealed partial class ProjectLifecycleService
             var bridge = JsonSerializer.Serialize(new
             {
                 projectPath,
-                daemon = new { host = "127.0.0.1", port = DaemonControlService.ResolveProjectDaemonPort(projectPath) },
                 protocol = CliVersion.Protocol,
                 updatedAtUtc = DateTimeOffset.UtcNow
             }, new JsonSerializerOptions { WriteIndented = true });

@@ -88,6 +88,7 @@ internal sealed class EditorDependencyInitializerService
     private const string UnifoclPipelineCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclPipelineCommands.cs";
     private const string UnifoclBridgeCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclBridgeCommands.cs";
     private const string UnifoclHostSessionResource = "Payload/EditorScripts/Pipeline/UnifoclHostSession.cs";
+    private const string UnifoclRuntimeCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclRuntimeCommands.cs";
     private const string AddonAssemblyAccessResource = "Payload/EditorScripts/AddonAssemblyAccess.cs";
     // Runtime scripts (player-side)
     private const string RuntimeChunkAccumulatorResource = "Payload/RuntimeScripts/ChunkAccumulator.cs";
@@ -95,6 +96,8 @@ internal sealed class EditorDependencyInitializerService
     private const string RuntimeEnvelopeResource = "Payload/RuntimeScripts/RuntimeEnvelope.cs";
     private const string RuntimeClientResource = "Payload/RuntimeScripts/UnifoclRuntimeClient.cs";
     private const string RuntimeCommandAttributeResource = "Payload/RuntimeScripts/UnifoclRuntimeCommandAttribute.cs";
+
+    private const string PipelinePackageName = "com.unity.pipeline";
 
     public OperationResult InitializeProject(string projectPath, Action<string> log)
     {
@@ -108,21 +111,31 @@ internal sealed class EditorDependencyInitializerService
             return OperationResult.Fail("target is not a Unity project (missing Packages/)");
         }
 
-        log("[grey]init[/]: step 1/3 ensure global editor payload");
+        log("[grey]init[/]: step 1/4 ensure global editor payload");
         var globalPayloadResult = EnsureGlobalPayload();
         if (!globalPayloadResult.Ok)
         {
             return globalPayloadResult;
         }
 
-        log("[grey]init[/]: step 2/3 install embedded editor package");
+        log("[grey]init[/]: step 2/4 install embedded editor package");
         var installResult = EnsureEmbeddedPackage(projectPath);
         if (!installResult.Ok)
         {
             return installResult;
         }
 
-        log("[grey]init[/]: step 3/3 update local git exclude (if repository)");
+        log("[grey]init[/]: step 3/4 add com.unity.pipeline (unity pipeline install)");
+        if (!HasPipelinePackage(projectPath))
+        {
+            var pipelineError = UnityEditorLifecycle.InstallPipelinePackageAsync(projectPath).GetAwaiter().GetResult();
+            if (pipelineError is not null)
+            {
+                return OperationResult.Fail($"could not add com.unity.pipeline: {pipelineError}");
+            }
+        }
+
+        log("[grey]init[/]: step 4/4 update local git exclude (if repository)");
         var excludeResult = EnsureGitExclude(projectPath);
         if (!excludeResult.Ok)
         {
@@ -135,7 +148,7 @@ internal sealed class EditorDependencyInitializerService
 
     public bool PromptForInitialization(Action<string> log)
     {
-        log("[grey]init[/]: initialization installs a local Bridge mode package so CLI commands can talk to the editor without modifying manifest.json.");
+        log("[grey]init[/]: initialization installs the unifocl Editor package and adds com.unity.pipeline, so CLI commands can reach the Editor through the Unity CLI.");
         if (Console.IsInputRedirected)
         {
             log("[yellow]init[/]: prompt skipped in redirected input mode; run /init to install editor dependencies");
@@ -147,6 +160,12 @@ internal sealed class EditorDependencyInitializerService
 
     public bool NeedsInitialization(string projectPath, out string reason)
     {
+        if (!HasPipelinePackage(projectPath))
+        {
+            reason = "com.unity.pipeline is not in Packages/manifest.json";
+            return true;
+        }
+
         var packagePath = Path.Combine(projectPath, "Packages", EmbeddedPackageName);
         if (!Directory.Exists(packagePath))
         {
@@ -269,6 +288,7 @@ internal sealed class EditorDependencyInitializerService
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclPipelineCommands.cs"),
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclBridgeCommands.cs"),
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclHostSession.cs"),
+            Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclRuntimeCommands.cs"),
             // Runtime scripts (player-side)
             Path.Combine(packagePath, "Runtime", "ChunkAccumulator.cs"),
             Path.Combine(packagePath, "Runtime", "RuntimeCommandRegistry.cs"),
@@ -301,6 +321,33 @@ internal sealed class EditorDependencyInitializerService
 
         reason = string.Empty;
         return false;
+    }
+
+    /// <summary>Whether <c>Packages/manifest.json</c> lists <c>com.unity.pipeline</c>.</summary>
+    internal static bool HasPipelinePackage(string projectPath)
+    {
+        try
+        {
+            var manifestPath = Path.Combine(projectPath, "Packages", "manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                return false;
+            }
+
+            using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            return manifest.RootElement.ValueKind == JsonValueKind.Object
+                   && manifest.RootElement.TryGetProperty("dependencies", out var dependencies)
+                   && dependencies.ValueKind == JsonValueKind.Object
+                   && dependencies.TryGetProperty(PipelinePackageName, out _);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private static OperationResult EnsureEmbeddedPackage(string projectPath)
@@ -452,7 +499,8 @@ internal sealed class EditorDependencyInitializerService
             // com.unity.pipeline the define never fires and Unity skips the assembly. The attributes live
             // in Unity.Pipeline.Attributes; Unity.Pipeline supplies CommandRegistry, used to register one
             // command per [UnifoclCommand] tool. Newtonsoft (a Pipeline dependency) is referenced
-            // explicitly so results embed as JSON objects.
+            // explicitly so results embed as JSON objects. UniFocl.Runtime holds the player-link types the
+            // runtime relay commands use.
             var pipelineAsmdef =
                 """
                 {
@@ -460,6 +508,7 @@ internal sealed class EditorDependencyInitializerService
                   "rootNamespace": "UniFocl.EditorBridge.Pipeline",
                   "references": [
                     "UniFocl.EditorBridge",
+                    "UniFocl.Runtime",
                     "Unity.Pipeline.Attributes",
                     "Unity.Pipeline"
                   ],
@@ -593,6 +642,7 @@ internal sealed class EditorDependencyInitializerService
                 (UnifoclPipelineCommandsResource,        Path.Combine("Editor", "Pipeline", "UnifoclPipelineCommands.cs")),
                 (UnifoclBridgeCommandsResource,          Path.Combine("Editor", "Pipeline", "UnifoclBridgeCommands.cs")),
                 (UnifoclHostSessionResource,             Path.Combine("Editor", "Pipeline", "UnifoclHostSession.cs")),
+                (UnifoclRuntimeCommandsResource,         Path.Combine("Editor", "Pipeline", "UnifoclRuntimeCommands.cs")),
                 // Runtime scripts (player-side)
                 (RuntimeChunkAccumulatorResource,        Path.Combine("Runtime", "ChunkAccumulator.cs")),
                 (RuntimeCommandRegistryResource,         Path.Combine("Runtime", "RuntimeCommandRegistry.cs")),

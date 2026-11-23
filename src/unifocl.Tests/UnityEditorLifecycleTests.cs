@@ -92,4 +92,39 @@ public class UnityEditorLifecycleTests
         Assert.Equal(1, UnityEditorLifecycle.Match(editors, "/p/Game")?.Pid);
         Assert.Null(UnityEditorLifecycle.Match(editors, "/p/Missing"));
     }
+
+    [Fact]
+    public void PipelineInstallReportsSuccessAndFailure()
+    {
+        Assert.Null(UnityEditorLifecycle.ParseInstall(
+            "{\"success\":true,\"data\":{\"packageId\":\"com.unity.pipeline\",\"alreadyInstalled\":true},\"errors\":[]}", string.Empty));
+        Assert.Equal("no manifest", UnityEditorLifecycle.ParseInstall(
+            "{\"success\":false,\"errors\":[{\"code\":\"X\",\"message\":\"no manifest\"}]}", string.Empty));
+        Assert.NotNull(UnityEditorLifecycle.ParseInstall(string.Empty, string.Empty));
+    }
+
+    [Fact]
+    public void InitChecksTheManifestForThePipelinePackage()
+    {
+        var project = Directory.CreateTempSubdirectory("unifocl-init-");
+        try
+        {
+            var packages = Directory.CreateDirectory(Path.Combine(project.FullName, "Packages"));
+            var manifest = Path.Combine(packages.FullName, "manifest.json");
+            Assert.False(EditorDependencyInitializerService.HasPipelinePackage(project.FullName));
+
+            File.WriteAllText(manifest, "{\"dependencies\":{\"com.unity.ugui\":\"2.0.0\"}}");
+            Assert.False(EditorDependencyInitializerService.HasPipelinePackage(project.FullName));
+
+            File.WriteAllText(manifest, "{\"dependencies\":{\"com.unity.pipeline\":\"1.0.1\"}}");
+            Assert.True(EditorDependencyInitializerService.HasPipelinePackage(project.FullName));
+
+            File.WriteAllText(manifest, "{ not json");
+            Assert.False(EditorDependencyInitializerService.HasPipelinePackage(project.FullName));
+        }
+        finally
+        {
+            project.Delete(recursive: true);
+        }
+    }
 }

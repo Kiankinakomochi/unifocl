@@ -1,9 +1,6 @@
 /// <summary>
-/// IExecTransportClient backed by HTTP, connecting to the Unity daemon's
-/// loopback HttpListener (CLIDaemon) via the durable mutation protocol.
-///
-/// Promoted from the private HttpProjectMutationTransport in HierarchyDaemonClient (Sprint 3 leftover).
-/// A future UdsExecTransportClient can replace this when CLIDaemon gains UDS support.
+/// IExecTransportClient that runs project commands through the durable mutation protocol, on an
+/// <see cref="EditorLinkHandler"/> client that reaches the Editor through the Unity CLI.
 /// </summary>
 internal sealed class HttpExecTransportClient : IExecTransportClient
 {

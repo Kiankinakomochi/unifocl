@@ -634,7 +634,7 @@ internal sealed class TestCommandService
         }
         catch (Exception ex)
         {
-            return (null, $"could not reach the editor bridge on port {port}: {ex.Message}");
+            return (null, $"could not reach the Editor through the Unity CLI: {ex.Message}");
         }
 
         // Reported rather than thrown: callers of this method promise ExecV2 a structured

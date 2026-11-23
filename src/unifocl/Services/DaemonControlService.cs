@@ -270,7 +270,7 @@ internal sealed partial class DaemonControlService
             log("[grey]daemon[/]: no running daemon instances");
             if (!string.IsNullOrWhiteSpace(session.CurrentProjectPath) && IsUnityClientActiveForProject(session.CurrentProjectPath))
             {
-                log("[yellow]daemon[/]: Unity editor lock exists for current project, but bridge endpoint is not responding yet");
+                log("[yellow]daemon[/]: Unity editor lock exists for current project, but the Editor is not answering unifocl commands yet");
             }
             return;
         }

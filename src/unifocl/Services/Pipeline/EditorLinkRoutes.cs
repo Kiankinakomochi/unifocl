@@ -31,8 +31,8 @@ internal enum EditorLinkReply
 
 /// <summary>
 /// Maps each endpoint of the old Editor HTTP bridge to its <c>unifocl.bridge</c> Pipeline command
-/// (see <c>UnifoclBridgeCommands</c> in the Editor package). Paths not listed here, such as
-/// <c>/runtime/*</c> and <c>/stop</c>, have no Pipeline command yet.
+/// (see <c>UnifoclBridgeCommands</c> and <c>UnifoclRuntimeCommands</c> in the Editor package). The
+/// Editor no longer listens on HTTP, so a path not listed here has no Editor endpoint.
 /// </summary>
 internal static class EditorLinkRoutes
 {
@@ -59,6 +59,9 @@ internal static class EditorLinkRoutes
         Dictionary<string, object?> Payload() => new() { ["payload"] = body ?? string.Empty };
 
         Dictionary<string, object?> RequestId() => new() { ["request-id"] = parameters["requestId"] ?? string.Empty };
+
+        Dictionary<string, object?> Query(string name, string arg, string fallback = "") =>
+            new() { [arg] = parameters[name] ?? fallback };
 
         return (isGet, isPost, normalized.ToLowerInvariant()) switch
         {
@@ -91,6 +94,23 @@ internal static class EditorLinkRoutes
             {
                 ["revision"] = int.TryParse(parameters["revision"], out var revision) ? revision : 0,
             }),
+
+            (true, _, "/runtime/targets") => Json("runtime_targets"),
+            (_, true, "/runtime/attach") => Json("runtime_attach", Query("target", "target", "editor:playmode")),
+            (true, _, "/runtime/status") => Json("runtime_status"),
+            (_, true, "/runtime/detach") => Json("runtime_detach"),
+            (true, _, "/runtime/manifest") => Json("runtime_manifest"),
+            (_, true, "/runtime/exec") => Json("runtime_exec", Payload()),
+            (_, true, "/runtime/job/submit") => Json("runtime_job_submit", Payload()),
+            (true, _, "/runtime/job/status") => Json("runtime_job_status", Query("jobId", "job-id")),
+            (_, true, "/runtime/job/cancel") => Json("runtime_job_cancel", Query("jobId", "job-id")),
+            (true, _, "/runtime/job/list") => Json("runtime_job_list"),
+            (_, true, "/runtime/stream/subscribe") => Json("runtime_stream_subscribe", Payload()),
+            (_, true, "/runtime/stream/unsubscribe") => Json("runtime_stream_unsubscribe", Query("subscriptionId", "subscription-id")),
+            (_, true, "/runtime/watch/add") => Json("runtime_watch_add", Payload()),
+            (_, true, "/runtime/watch/remove") => Json("runtime_watch_remove", Query("watchId", "watch-id")),
+            (true, _, "/runtime/watch/list") => Json("runtime_watch_list"),
+            (true, _, "/runtime/watch/poll") => Json("runtime_watch_poll"),
 
             _ => null,
         };

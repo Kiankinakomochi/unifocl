@@ -128,7 +128,7 @@ internal sealed partial class HierarchyTui
         while (true)
         {
             var treeLines = BuildTreeLines(snapshot, cwdId, out var indexMap, out var cwdPath, out _, _collapsedNodeIds);
-            RenderFrame(port, snapshot.Scene, treeLines.Select(line => line.Text).ToList(), commandLog, cwdPath);
+            RenderFrame(snapshot.Scene, treeLines.Select(line => line.Text).ToList(), commandLog, cwdPath);
 
             if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var firstKey))
             {
@@ -800,7 +800,7 @@ internal sealed partial class HierarchyTui
 
             var wrappedStreamLineCount = BuildWrappedStreamRows(commandLog, Math.Max(1, ResolveFrameWidth() - 1)).Count;
             EnsureSelectedTreeVisibility(highlightedTree.Count, wrappedStreamLineCount, selectedEntryPosition + 1);
-            RenderFrame(port, snapshot.Scene, highlightedTree, commandLog, cwdPath, focusModeEnabled: true);
+            RenderFrame(snapshot.Scene, highlightedTree, commandLog, cwdPath, focusModeEnabled: true);
 
             if (!TuiConsoleViewport.WaitForKeyOrResize(ref knownViewportWidth, ref knownViewportHeight, out var key))
             {
@@ -905,7 +905,6 @@ internal sealed partial class HierarchyTui
     }
 
     private void RenderFrame(
-        int daemonPort,
         string scene,
         List<string> treeLines,
         List<string> commandLog,
@@ -939,7 +938,7 @@ internal sealed partial class HierarchyTui
             : $" | Focus Key: {FocusModeKey}";
 
         WriteFrameLine(borderTop);
-        WriteFrameLine(ToFrameLine($" UnityCLI v{CliVersion.SemVer} | MODE: HIERARCHY | Daemon: 127.0.0.1:{daemonPort} | Scene: {scene}{focusLabel}", frameWidth));
+        WriteFrameLine(ToFrameLine($" UnityCLI v{CliVersion.SemVer} | MODE: HIERARCHY | Editor: via Unity CLI | Scene: {scene}{focusLabel}", frameWidth));
         WriteFrameLine(borderMid);
 
         foreach (var line in visibleTree)
