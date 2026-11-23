@@ -272,8 +272,7 @@ namespace UniFocl.EditorBridge
             }
 
             var beforeJson = DaemonDryRunDiffService.SnapshotObject(target);
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl inspector dry-run");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl inspector dry-run");
 
             var (preDryRunScenes, preDryRunDirty) = DaemonDryRunSceneRestoreService.CaptureDirtyState();
 
@@ -330,8 +329,7 @@ namespace UniFocl.EditorBridge
         private static string ExecuteBeginBatchDryRun()
         {
             _batchDryRunPreDirtyState = DaemonDryRunSceneRestoreService.CaptureDirtyState();
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl batch dry-run");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl batch dry-run");
 
             return JsonUtility.ToJson(new InspectorMutationResponse
             {

@@ -246,8 +246,7 @@ namespace UniFocl.EditorBridge
                 var beforeJson = snapshotTarget is null
                     ? BuildSnapshotPayload()
                     : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
-                var undoGroup = Undo.GetCurrentGroup();
-                Undo.SetCurrentGroupName("unifocl hierarchy dry-run");
+                var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy dry-run");
 
                 // Capture which scenes were already dirty before the dry-run so we can
                 // restore clean scenes that Undo.RevertAllDownToGroup leaves dirty.
@@ -518,8 +517,7 @@ namespace UniFocl.EditorBridge
                 parentScene = parentObject.scene;
             }
 
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl hierarchy create");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy create");
             GameObject? lastCreated = null;
             try
             {
@@ -982,8 +980,7 @@ namespace UniFocl.EditorBridge
             }
 
             var scene = target.scene;
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl hierarchy remove");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy remove");
             try
             {
                 Undo.DestroyObjectImmediate(target);
@@ -1162,8 +1159,7 @@ namespace UniFocl.EditorBridge
                 destinationScene = parent.scene;
             }
 
-            var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("unifocl hierarchy duplicate");
+            var undoGroup = DaemonUndo.BeginIsolatedGroup("unifocl hierarchy duplicate");
 
             try
             {
