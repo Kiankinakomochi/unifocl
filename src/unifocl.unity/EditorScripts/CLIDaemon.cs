@@ -506,17 +506,7 @@ namespace UniFocl.EditorBridge
 
                 if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && path.Equals("/project/command-status", StringComparison.OrdinalIgnoreCase))
                 {
-                    var requestedId = request.QueryString["requestId"];
-                    if (!string.IsNullOrWhiteSpace(requestedId)
-                        && DaemonProjectService.TryGetDurableMutationStatus(requestedId, out var durableStatus))
-                    {
-                        durableStatus.isCompiling = _editorIsCompiling;
-                        durableStatus.isUpdating = _editorIsUpdating;
-                        await WriteJsonResponseAsync(context.Response, JsonUtility.ToJson(durableStatus), cancellationToken: cancellationToken);
-                        return;
-                    }
-
-                    await WriteJsonResponseAsync(context.Response, GetProjectCommandStatusPayload(requestedId), cancellationToken: cancellationToken);
+                    await WriteJsonResponseAsync(context.Response, ReadProjectCommandStatus(request.QueryString["requestId"]), cancellationToken: cancellationToken);
                     return;
                 }
 
@@ -1052,7 +1042,7 @@ namespace UniFocl.EditorBridge
             }
         }
 
-        private static string TryExtractProjectAction(string payload)
+        internal static string TryExtractProjectAction(string payload)
         {
             if (string.IsNullOrWhiteSpace(payload))
             {
@@ -1087,7 +1077,7 @@ namespace UniFocl.EditorBridge
             return payload[(valueStart + 1)..valueEnd];
         }
 
-        private static string HandleUnifoclMcpToolPayload(string payload)
+        internal static string HandleUnifoclMcpToolPayload(string payload)
         {
             if (string.IsNullOrWhiteSpace(payload))
             {
@@ -1424,7 +1414,40 @@ namespace UniFocl.EditorBridge
                 .Replace("\t", "\\t");
         }
 
-        private static string? TryExtractProjectRequestId(string payload)
+        /// <summary>The id of this Editor session; it changes when the Editor restarts, not on domain reload.</summary>
+        internal static string RuntimeInstanceId => _runtimeInstanceId;
+
+        /// <summary>
+        /// The status of a project command: the durable record when <paramref name="requestedId"/> names a
+        /// durable mutation, otherwise the in-memory status of the current or last command.
+        /// </summary>
+        internal static string ReadProjectCommandStatus(string? requestedId)
+        {
+            if (!string.IsNullOrWhiteSpace(requestedId)
+                && DaemonProjectService.TryGetDurableMutationStatus(requestedId, out var durableStatus))
+            {
+                durableStatus.isCompiling = _editorIsCompiling;
+                durableStatus.isUpdating = _editorIsUpdating;
+                return JsonUtility.ToJson(durableStatus);
+            }
+
+            return GetProjectCommandStatusPayload(requestedId);
+        }
+
+        /// <summary>
+        /// Runs a project command with the status tracking the HTTP endpoint does. Call it on the main thread.
+        /// </summary>
+        internal static async Task<string> RunProjectCommandAsync(string payload)
+        {
+            MarkActivity();
+            var action = TryExtractProjectAction(payload);
+            BeginProjectCommand(action, TryExtractProjectRequestId(payload));
+            var response = await DaemonProjectService.ExecuteAsync(payload);
+            CompleteProjectCommandFromResponse(response);
+            return response;
+        }
+
+        internal static string? TryExtractProjectRequestId(string payload)
         {
             if (string.IsNullOrWhiteSpace(payload))
             {
@@ -1559,7 +1582,7 @@ namespace UniFocl.EditorBridge
             return false;
         }
 
-        private static void MarkActivity()
+        internal static void MarkActivity()
         {
             _lastActivityUtc = DateTime.UtcNow;
         }
@@ -1923,7 +1946,7 @@ namespace UniFocl.EditorBridge
             }
         }
 
-        private static void BeginProjectCommand(string action, string? requestId)
+        internal static void BeginProjectCommand(string action, string? requestId)
         {
             lock (ProjectCommandStatusLock)
             {
@@ -1946,7 +1969,7 @@ namespace UniFocl.EditorBridge
             }
         }
 
-        private static void CompleteProjectCommandFromResponse(string responsePayload)
+        internal static void CompleteProjectCommandFromResponse(string responsePayload)
         {
             var ok = false;
             var detail = "project command completed";

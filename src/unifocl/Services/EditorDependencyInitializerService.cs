@@ -86,6 +86,7 @@ internal sealed class EditorDependencyInitializerService
     private const string DaemonProBuilderServiceSupportResource = "Payload/EditorScripts/ProBuilder/DaemonProBuilderService.Support.cs";
     // Unity Pipeline commands — ship into their own assembly, see pipelineAsmdef below.
     private const string UnifoclPipelineCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclPipelineCommands.cs";
+    private const string UnifoclBridgeCommandsResource = "Payload/EditorScripts/Pipeline/UnifoclBridgeCommands.cs";
     private const string AddonAssemblyAccessResource = "Payload/EditorScripts/AddonAssemblyAccess.cs";
     // Runtime scripts (player-side)
     private const string RuntimeChunkAccumulatorResource = "Payload/RuntimeScripts/ChunkAccumulator.cs";
@@ -265,6 +266,7 @@ internal sealed class EditorDependencyInitializerService
             // Unity Pipeline commands (optional, own assembly)
             Path.Combine(packagePath, "Editor", "Pipeline", "UniFocl.EditorBridge.Pipeline.asmdef"),
             Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclPipelineCommands.cs"),
+            Path.Combine(packagePath, "Editor", "Pipeline", "UnifoclBridgeCommands.cs"),
             // Runtime scripts (player-side)
             Path.Combine(packagePath, "Runtime", "ChunkAccumulator.cs"),
             Path.Combine(packagePath, "Runtime", "RuntimeCommandRegistry.cs"),
@@ -587,6 +589,7 @@ internal sealed class EditorDependencyInitializerService
                 (DaemonProBuilderServiceSupportResource, Path.Combine("Editor", "ProBuilder", "DaemonProBuilderService.Support.cs")),
                 // Unity Pipeline commands (optional, own assembly)
                 (UnifoclPipelineCommandsResource,        Path.Combine("Editor", "Pipeline", "UnifoclPipelineCommands.cs")),
+                (UnifoclBridgeCommandsResource,          Path.Combine("Editor", "Pipeline", "UnifoclBridgeCommands.cs")),
                 // Runtime scripts (player-side)
                 (RuntimeChunkAccumulatorResource,        Path.Combine("Runtime", "ChunkAccumulator.cs")),
                 (RuntimeCommandRegistryResource,         Path.Combine("Runtime", "RuntimeCommandRegistry.cs")),
