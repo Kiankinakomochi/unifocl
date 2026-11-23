@@ -90,8 +90,10 @@ namespace UniFocl.EditorBridge
         /// </summary>
         private static async Task<string> InvokeWithDryRunAsync(MethodInfo method, CancellationToken ct)
         {
-            var undoGroupBefore = Undo.GetCurrentGroup();
+            // Increment before capturing: reverting down to the group that was current before the
+            // dry-run would also revert earlier daemon requests that share it (#223).
             Undo.IncrementCurrentGroup();
+            var dryRunGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("[unifocl dry-run] eval");
 
             IDisposable dryRunScope = DaemonDryRunContext.Enter();
@@ -107,7 +109,7 @@ namespace UniFocl.EditorBridge
                 var inner = tie.InnerException ?? tie;
                 Debug.LogWarning($"[unifocl] eval dry-run threw: {inner.Message}");
 
-                Undo.RevertAllDownToGroup(undoGroupBefore);
+                Undo.RevertAllDownToGroup(dryRunGroup);
                 AssetDatabase.Refresh();
                 dryRunScope.Dispose();
                 return ErrorResponse($"eval execution failed during dry-run: {inner.Message}\n{inner.StackTrace}");
@@ -116,7 +118,7 @@ namespace UniFocl.EditorBridge
             {
                 Debug.LogWarning($"[unifocl] eval dry-run threw: {ex.Message}");
 
-                Undo.RevertAllDownToGroup(undoGroupBefore);
+                Undo.RevertAllDownToGroup(dryRunGroup);
                 AssetDatabase.Refresh();
                 dryRunScope.Dispose();
                 return ErrorResponse($"eval execution failed during dry-run: {ex.Message}\n{ex.StackTrace}");
@@ -126,7 +128,7 @@ namespace UniFocl.EditorBridge
                 dryRunScope.Dispose();
             }
 
-            Undo.RevertAllDownToGroup(undoGroupBefore);
+            Undo.RevertAllDownToGroup(dryRunGroup);
             AssetDatabase.Refresh();
 
             return JsonUtility.ToJson(new ProjectCommandResponse

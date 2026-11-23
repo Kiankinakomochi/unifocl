@@ -246,6 +246,10 @@ namespace UniFocl.EditorBridge
                 var beforeJson = snapshotTarget is null
                     ? BuildSnapshotPayload()
                     : DaemonDryRunDiffService.SnapshotObject(snapshotTarget);
+                // Open a fresh Undo group first: the Editor only advances the group on user input, so
+                // without this the captured group also holds earlier daemon requests, and reverting or
+                // collapsing it would take that unrelated work with it (#223).
+                Undo.IncrementCurrentGroup();
                 var undoGroup = Undo.GetCurrentGroup();
                 Undo.SetCurrentGroupName("unifocl hierarchy dry-run");
 
@@ -518,6 +522,10 @@ namespace UniFocl.EditorBridge
                 parentScene = parentObject.scene;
             }
 
+            // Open a fresh Undo group first: the Editor only advances the group on user input, so
+            // without this the captured group also holds earlier daemon requests, and reverting or
+            // collapsing it would take that unrelated work with it (#223).
+            Undo.IncrementCurrentGroup();
             var undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("unifocl hierarchy create");
             GameObject? lastCreated = null;
@@ -982,6 +990,10 @@ namespace UniFocl.EditorBridge
             }
 
             var scene = target.scene;
+            // Open a fresh Undo group first: the Editor only advances the group on user input, so
+            // without this the captured group also holds earlier daemon requests, and reverting or
+            // collapsing it would take that unrelated work with it (#223).
+            Undo.IncrementCurrentGroup();
             var undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("unifocl hierarchy remove");
             try
@@ -1162,6 +1174,10 @@ namespace UniFocl.EditorBridge
                 destinationScene = parent.scene;
             }
 
+            // Open a fresh Undo group first: the Editor only advances the group on user input, so
+            // without this the captured group also holds earlier daemon requests, and reverting or
+            // collapsing it would take that unrelated work with it (#223).
+            Undo.IncrementCurrentGroup();
             var undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("unifocl hierarchy duplicate");
 
