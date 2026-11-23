@@ -776,6 +776,15 @@ try
             continue;
         }
 
+        if (matched.Trigger == "/preview")
+        {
+            await AwaitWithCancellationAsync(
+                () => runtimeCommandService.HandlePreviewCommandAsync(
+                    input, session, line => CliLogService.AppendLog(streamLog, line)),
+                appCancellation.Token);
+            continue;
+        }
+
         if (matched.Trigger.StartsWith("/compile", StringComparison.Ordinal))
         {
             await AwaitWithCancellationAsync(

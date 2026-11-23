@@ -271,6 +271,7 @@ internal static class CliCommandCatalog
             new("/profiler annotate frame <json>", "Emit frame metadata into the profiler stream", "/profiler annotate frame", "profiling"),
 
             // ── runtime ──────────────────────────────────────────────────────
+            new("/preview <group> <command> [argsJson]", "Run any Unity Pipeline command in a sandbox: report what it changes, then undo it (e.g. /preview gameobject create {\"name\":\"Probe\"})", "/preview", "preview"),
             new("/runtime target list", "List available runtime targets (Editor PlayMode, devices, standalone builds)", "/runtime target list", "runtime"),
             new("/runtime attach <target>", "Attach to a runtime target by address (e.g. editor:playmode, android:pixel-7)", "/runtime attach", "runtime"),
             new("/runtime status", "Show connection status of the attached runtime target", "/runtime status", "runtime"),

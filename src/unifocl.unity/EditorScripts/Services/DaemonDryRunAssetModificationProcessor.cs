@@ -5,7 +5,8 @@ namespace UniFocl.EditorBridge
 {
     /// <summary>
     /// Blocks AssetDatabase-level file operations (save, move, delete) while a unifocl
-    /// dry-run is in progress. Activated by <see cref="DaemonDryRunContext.IsActive"/>.
+    /// dry-run or a sandbox session is in progress. Activated by <see cref="DaemonDryRunContext.IsActive"/>;
+    /// in a sandbox session each refused operation is noted for its report.
     ///
     /// Coverage:
     ///   ✅ AssetDatabase.SaveAssets()           — OnWillSaveAssets returns empty array
@@ -27,6 +28,11 @@ namespace UniFocl.EditorBridge
                 return paths;
             }
 
+            foreach (var path in paths)
+            {
+                DaemonSandboxSession.RecordBlocked("save", path);
+            }
+
             // Return an empty array — Unity will not persist any of the requested assets.
             return System.Array.Empty<string>();
         }
@@ -38,6 +44,7 @@ namespace UniFocl.EditorBridge
                 return AssetMoveResult.DidNotMove;
             }
 
+            DaemonSandboxSession.RecordBlocked("move", $"{sourcePath} -> {destinationPath}");
             return AssetMoveResult.FailedMove;
         }
 
@@ -48,6 +55,7 @@ namespace UniFocl.EditorBridge
                 return AssetDeleteResult.DidNotDelete;
             }
 
+            DaemonSandboxSession.RecordBlocked("delete", assetPath);
             return AssetDeleteResult.FailedDelete;
         }
     }

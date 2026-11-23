@@ -84,6 +84,8 @@ internal static class PipelineOutput
             bool b => b ? "true" : "false",
             JsonElement { ValueKind: JsonValueKind.String } e => e.GetString() ?? string.Empty,
             JsonElement e => e.GetRawText(),
+            System.Text.Json.Nodes.JsonValue v when v.GetValueKind() == JsonValueKind.String => v.GetValue<string>(),
+            System.Text.Json.Nodes.JsonNode n => n.ToJsonString(),
             IFormattable f when value is not Enum => f.ToString(null, CultureInfo.InvariantCulture),
             Enum e => e.ToString(),
             _ => JsonSerializer.Serialize(value),

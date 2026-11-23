@@ -92,6 +92,11 @@ internal sealed class ExecOperationRouter
             return await _runtimeTarget.HandleAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
+        if (request.Operation.Equals("preview.run", StringComparison.OrdinalIgnoreCase))
+        {
+            return await HandlePreviewAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
         // test.* operations launch Unity as a subprocess — not dispatched through the daemon bridge.
         if (request.Operation.StartsWith("test.", StringComparison.OrdinalIgnoreCase))
         {
@@ -212,6 +217,11 @@ internal sealed class ExecOperationRouter
             return await _runtimeTarget.HandleAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
+        if (request.Operation.Equals("preview.run", StringComparison.OrdinalIgnoreCase))
+        {
+            return await HandlePreviewAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
         return Dispatch(request, intent.DryRun, projectBridge);
     }
 
@@ -257,7 +267,61 @@ internal sealed class ExecOperationRouter
             return await _runtimeTarget.HandleAsync(confirmedRequest, cancellationToken).ConfigureAwait(false);
         }
 
+        if (confirmedRequest.Operation.Equals("preview.run", StringComparison.OrdinalIgnoreCase))
+        {
+            return await HandlePreviewAsync(confirmedRequest, cancellationToken).ConfigureAwait(false);
+        }
+
         return Dispatch(confirmedRequest, dryRun: false, projectBridge);
+    }
+
+    private async Task<ExecV2Response> HandlePreviewAsync(ExecV2Request request, CancellationToken cancellationToken)
+    {
+        var session = _sessions.Get(request.SessionId);
+        if (session is null || string.IsNullOrWhiteSpace(session.ProjectPath))
+        {
+            return Rejected(request.RequestId,
+                "preview.run requires an active session with a projectPath. Open one with operation 'session.open'.");
+        }
+
+        var command = GetString(request.Args, "command");
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return Rejected(request.RequestId, "preview.run requires args.command, as '<group> <name>' (e.g. 'gameobject create')");
+        }
+
+        System.Text.Json.Nodes.JsonObject? commandArgs = null;
+        if (request.Args is { ValueKind: JsonValueKind.Object } args
+            && args.TryGetProperty("args", out var argsElement)
+            && argsElement.ValueKind == JsonValueKind.Object)
+        {
+            commandArgs = System.Text.Json.Nodes.JsonNode.Parse(argsElement.GetRawText()) as System.Text.Json.Nodes.JsonObject;
+        }
+
+        var ttl = 300;
+        if (request.Args is { ValueKind: JsonValueKind.Object } ttlArgs
+            && ttlArgs.TryGetProperty("ttl", out var ttlElement)
+            && ttlElement.TryGetInt32(out var ttlValue))
+        {
+            ttl = ttlValue;
+        }
+
+        var outcome = await PipelinePreviewService.RunAsync(session.ProjectPath, command, commandArgs, ttl, cancellationToken)
+            .ConfigureAwait(false);
+        return new ExecV2Response(
+            outcome.Ok ? ExecV2Status.Completed : ExecV2Status.Failed,
+            request.RequestId,
+            Message: string.Join("\n", PipelinePreviewService.Describe(outcome)),
+            Result: new
+            {
+                command = outcome.Command,
+                commandOk = outcome.CommandOk,
+                commandResult = outcome.CommandResult,
+                commandError = outcome.CommandError,
+                reverted = outcome.Reverted,
+                report = outcome.Report,
+                error = outcome.Error,
+            });
     }
 
     private ExecV2Response Dispatch(ExecV2Request request, bool dryRun, ProjectDaemonBridge projectBridge)

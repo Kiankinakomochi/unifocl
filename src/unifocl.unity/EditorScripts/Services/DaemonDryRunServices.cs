@@ -32,7 +32,11 @@ namespace UniFocl.EditorBridge
     {
         private static readonly AsyncLocal<int> Depth = new();
 
-        public static bool IsActive => Depth.Value > 0;
+        /// <summary>
+        /// True inside a dry-run scope on this call path, or while a sandbox session is open
+        /// (<see cref="DaemonSandboxSession"/>), which covers every command until it ends.
+        /// </summary>
+        public static bool IsActive => Depth.Value > 0 || DaemonSandboxSession.IsActive;
 
         public static IDisposable Enter()
         {
