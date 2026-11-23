@@ -15,14 +15,13 @@ using System.Text.Json;
 /// and returns the command's JSON as the response body, so callers see the reply they always got.
 /// </para>
 /// <para>
-/// Everything else goes out as ordinary HTTP: paths with no command yet (<c>/runtime/*</c>, <c>/stop</c>),
-/// and every request when <c>UNIFOCL_EDITOR_LINK=http</c>. This goes away with the Editor HTTP bridge.
+/// The Editor has no HTTP listener. A request to a registered port whose path has no command gets a
+/// 404, as the old bridge answered unknown paths. Requests to other ports go out as ordinary HTTP: that
+/// is the CLI's own background service (<c>--daemon-service</c>), not an Editor.
 /// </para>
 /// </remarks>
 internal sealed class EditorLinkHandler : DelegatingHandler
 {
-    public const string ModeEnvironmentVariable = "UNIFOCL_EDITOR_LINK";
-
     private static readonly ConcurrentDictionary<int, string> ProjectsByPort = new();
 
     private static readonly EditorLinkHandler Shared = new();
@@ -44,7 +43,10 @@ internal sealed class EditorLinkHandler : DelegatingHandler
         return client;
     }
 
-    /// <summary>Records which project the Editor bridge on <paramref name="port"/> belongs to.</summary>
+    /// <summary>
+    /// Records which project <paramref name="port"/> stands for. The port no longer carries traffic: it is
+    /// the id the CLI's session and daemon records use for a project's Editor link.
+    /// </summary>
     public static void RegisterProject(int port, string? projectPath)
     {
         if (port is > 0 and <= 65535 && !string.IsNullOrWhiteSpace(projectPath))
@@ -57,33 +59,19 @@ internal sealed class EditorLinkHandler : DelegatingHandler
     public static string? TryGetProject(int port) =>
         ProjectsByPort.TryGetValue(port, out var projectPath) ? projectPath : null;
 
-    /// <summary>Whether requests should try the Unity CLI at all (<c>UNIFOCL_EDITOR_LINK</c> is not <c>http</c>).</summary>
-    public static bool PipelineEnabled =>
-        !string.Equals(Environment.GetEnvironmentVariable(ModeEnvironmentVariable), "http", StringComparison.OrdinalIgnoreCase);
-
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (PipelineEnabled
-            && request.RequestUri is { } uri
-            && uri.IsLoopback
-            && ProjectsByPort.TryGetValue(uri.Port, out var projectPath))
+        if (request.RequestUri is not { IsLoopback: true } uri
+            || !ProjectsByPort.TryGetValue(uri.Port, out var projectPath))
         {
-            var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            var route = EditorLinkRoutes.Resolve(request.Method.Method, uri.AbsolutePath, uri.Query.TrimStart('?'), body);
-            if (route is not null)
-            {
-                return await SendThroughPipelineAsync(projectPath, route, cancellationToken);
-            }
-
-            if (body is not null)
-            {
-                // The content stream was consumed above; give the HTTP fallback a fresh copy.
-                var mediaType = request.Content!.Headers.ContentType?.MediaType ?? "application/json";
-                request.Content = new StringContent(body, Encoding.UTF8, mediaType);
-            }
+            return await base.SendAsync(request, cancellationToken);
         }
 
-        return await base.SendAsync(request, cancellationToken);
+        var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+        var route = EditorLinkRoutes.Resolve(request.Method.Method, uri.AbsolutePath, uri.Query.TrimStart('?'), body);
+        return route is null
+            ? Reply(HttpStatusCode.NotFound, "ERR")
+            : await SendThroughPipelineAsync(projectPath, route, cancellationToken);
     }
 
     private static async Task<HttpResponseMessage> SendThroughPipelineAsync(

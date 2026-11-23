@@ -16,7 +16,7 @@ internal sealed class ProjectViewRenderer
         var focusLabel = focusModeEnabled
             ? " | FOCUS: ON (up/down, idx jump, tab, shift+tab, esc)"
             : " | Focus Key: F7";
-        var header = $" UnityCLI v{CliVersion.SemVer} | MODE: PROJECT | DB: {db} | CWD: {cwd}{focusLabel}";
+        var header = $" unifocl v{CliVersion.SemVer} | MODE: PROJECT | DB: {db} | CWD: {cwd}{focusLabel}";
 
         lines.Add(BorderTop(frameWidth));
         lines.Add(BorderBody(header, frameWidth));

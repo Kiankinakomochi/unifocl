@@ -107,7 +107,7 @@ internal static class UnityEditorLifecycle
             return result;
         }
 
-        var compileErrors = ReadCompileErrors(logPath, startedAtUtc);
+        var compileErrors = ReadCompileErrorsFromLog(logPath, startedAtUtc);
         return result with
         {
             CompileErrors = compileErrors,
@@ -205,6 +205,46 @@ internal static class UnityEditorLifecycle
         return new EditorCloseResult(success, unsaved, success ? null : errorMessage ?? "unity close failed");
     }
 
+    /// <summary>
+    /// Adds the <c>com.unity.pipeline</c> package to the project with <c>unity pipeline install</c>, or
+    /// confirms it is already there. Returns an error message, or <c>null</c> on success.
+    /// </summary>
+    public static async Task<string?> InstallPipelinePackageAsync(string projectPath, CancellationToken cancellationToken = default)
+    {
+        var unityCli = UnityCliLocator.Locate();
+        if (unityCli is null)
+        {
+            return UnityCliLocator.InstallHint;
+        }
+
+        var run = await UnityCommandTransport.RunAsync(
+            unityCli,
+            [
+                "pipeline", "install",
+                "--project-path", Path.GetFullPath(projectPath),
+                "--no-banner", "--non-interactive", "--format", "json",
+            ],
+            TimeSpan.FromMinutes(2),
+            cancellationToken);
+        if (run.TimedOut)
+        {
+            return "unity pipeline install did not finish within 2 minutes";
+        }
+
+        return ParseInstall(run.Stdout, run.Stderr);
+    }
+
+    internal static string? ParseInstall(string stdout, string stderr)
+    {
+        if (!TryParseEnvelope(stdout, out var success, out _, out _, out var errorMessage))
+        {
+            var detail = PipelineOutput.ParseError(stderr, string.Empty);
+            return string.IsNullOrWhiteSpace(detail) ? "unity pipeline install returned no result" : detail;
+        }
+
+        return success ? null : errorMessage ?? "unity pipeline install failed";
+    }
+
     /// <summary>Whether the project's Editor answers unifocl's bridge commands.</summary>
     public static async Task<bool> PingAsync(string projectPath, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
@@ -221,7 +261,14 @@ internal static class UnityEditorLifecycle
     internal static List<string> ExtractCompileErrors(IEnumerable<string> lines) =>
         lines.Where(line => CompileErrorLine.IsMatch(line)).Select(line => line.Trim()).Distinct().Take(20).ToList();
 
-    private static IReadOnlyList<string> ReadCompileErrors(string logPath, DateTime startedAtUtc)
+    /// <summary>
+    /// The <c>error CS</c> lines in the log of an Editor unifocl started, when that log was written at or
+    /// after <paramref name="sinceUtc"/>.
+    /// </summary>
+    public static IReadOnlyList<string> ReadCompileErrors(string projectPath, DateTime sinceUtc) =>
+        ReadCompileErrorsFromLog(EditorLogPath(projectPath), sinceUtc);
+
+    private static IReadOnlyList<string> ReadCompileErrorsFromLog(string logPath, DateTime startedAtUtc)
     {
         try
         {

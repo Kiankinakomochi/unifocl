@@ -22,6 +22,22 @@ public class EditorLinkTests
     [InlineData("GET", "/build/log", "build_log")]
     [InlineData("GET", "/compile/status", "compile_status")]
     [InlineData("GET", "/asset-index", "asset_index")]
+    [InlineData("GET", "/runtime/targets", "runtime_targets")]
+    [InlineData("POST", "/runtime/attach", "runtime_attach")]
+    [InlineData("GET", "/runtime/status", "runtime_status")]
+    [InlineData("POST", "/runtime/detach", "runtime_detach")]
+    [InlineData("GET", "/runtime/manifest", "runtime_manifest")]
+    [InlineData("POST", "/runtime/exec", "runtime_exec")]
+    [InlineData("POST", "/runtime/job/submit", "runtime_job_submit")]
+    [InlineData("GET", "/runtime/job/status", "runtime_job_status")]
+    [InlineData("POST", "/runtime/job/cancel", "runtime_job_cancel")]
+    [InlineData("GET", "/runtime/job/list", "runtime_job_list")]
+    [InlineData("POST", "/runtime/stream/subscribe", "runtime_stream_subscribe")]
+    [InlineData("POST", "/runtime/stream/unsubscribe", "runtime_stream_unsubscribe")]
+    [InlineData("POST", "/runtime/watch/add", "runtime_watch_add")]
+    [InlineData("POST", "/runtime/watch/remove", "runtime_watch_remove")]
+    [InlineData("GET", "/runtime/watch/list", "runtime_watch_list")]
+    [InlineData("GET", "/runtime/watch/poll", "runtime_watch_poll")]
     public void EveryBridgeEndpointHasACommand(string method, string path, string command)
     {
         Assert.Equal(command, EditorLinkRoutes.Resolve(method, path, null, "{}")?.Command);
@@ -29,11 +45,11 @@ public class EditorLinkTests
 
     [Theory]
     [InlineData("POST", "/stop")]
-    [InlineData("GET", "/runtime/targets")]
-    [InlineData("POST", "/runtime/exec")]
+    [InlineData("POST", "/agent/exec")]
+    [InlineData("GET", "/runtime/exec")]
     [InlineData("GET", "/hierarchy/command")]
     [InlineData("GET", "/nope")]
-    public void UnmappedRequestsFallThrough(string method, string path)
+    public void UnmappedRequestsHaveNoCommand(string method, string path)
     {
         Assert.Null(EditorLinkRoutes.Resolve(method, path, null, null));
     }
@@ -52,6 +68,13 @@ public class EditorLinkTests
         Assert.Equal(50, log.Args["limit"]);
         Assert.Equal(true, log.Args["errors-only"]);
 
+        var job = EditorLinkRoutes.Resolve("GET", "/runtime/job/status", "jobId=j1", null)!;
+        Assert.Equal("j1", job.Args["job-id"]);
+        Assert.Equal("w1", EditorLinkRoutes.Resolve("POST", "/runtime/watch/remove", "watchId=w1", null)!.Args["watch-id"]);
+        Assert.Equal("s1", EditorLinkRoutes.Resolve("POST", "/runtime/stream/unsubscribe", "subscriptionId=s1", null)!.Args["subscription-id"]);
+        Assert.Equal("editor:playmode", EditorLinkRoutes.Resolve("POST", "/runtime/attach", null, null)!.Args["target"]);
+        Assert.Equal("player:2", EditorLinkRoutes.Resolve("POST", "/runtime/attach", "target=player%3A2", null)!.Args["target"]);
+
         var index = EditorLinkRoutes.Resolve("GET", "/asset-index", "revision=7", null)!;
         Assert.Equal(7, index.Args["revision"]);
         Assert.Equal(0, EditorLinkRoutes.Resolve("GET", "/asset-index", null, null)!.Args["revision"]);
@@ -62,6 +85,19 @@ public class EditorLinkTests
     {
         Assert.True(EditorLinkRoutes.Resolve("POST", "/project/command", null, "{}")!.Timeout >= TimeSpan.FromMinutes(5));
         Assert.True(EditorLinkRoutes.Resolve("GET", "/build/status", null, null)!.Timeout <= TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task EditorPortsNeverFallBackToHttp()
+    {
+        // Nothing listens on the port; a request without a command must be answered locally.
+        const int port = 19999;
+        EditorLinkHandler.RegisterProject(port, Path.GetTempPath());
+        using var client = EditorLinkHandler.CreateClient(TimeSpan.FromSeconds(5));
+
+        using var response = await client.PostAsync($"http://127.0.0.1:{port}/stop", null);
+
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]

@@ -240,7 +240,7 @@ internal sealed class InspectorTuiRenderer
         _ = contentWidth;
 
         var rows = context.CommandStream
-            .Where(line => !line.StartsWith("UnityCLI:", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("unifocl:", StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (context.InteractiveSearchPreviewRows.Count > 0)
         {
@@ -268,7 +268,7 @@ internal sealed class InspectorTuiRenderer
         var focusLabel = focusModeEnabled
             ? " | FOCUS: ON (up/down, idx jump, tab, enter edit, shift+tab, esc, f7)"
             : " | Focus Key: F7";
-        return $"UnityCLI v{CliVersion.SemVer} | MODE: INSPECTOR | Target: {target}{focusLabel}";
+        return $"unifocl v{CliVersion.SemVer} | MODE: INSPECTOR | Target: {target}{focusLabel}";
     }
 
     private static string Border(char left, char right, int innerWidth)
